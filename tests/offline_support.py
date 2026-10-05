@@ -5,7 +5,7 @@ import sys
 import types
 from pathlib import Path
 
-TEMP_ROOT = Path('/root/Project/linshi/autocheckin-python-tests')
+TEMP_ROOT = Path(os.environ.get('AUTOCHECKIN_TEST_TMPDIR') or os.environ.get('TMPDIR') or __import__('tempfile').gettempdir()) / 'autocheckin-python-tests'
 TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 os.environ['AUTOCHECKIN_DATA_DIR'] = str(TEMP_ROOT)
 

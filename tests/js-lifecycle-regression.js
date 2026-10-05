@@ -6,7 +6,7 @@ const { EventEmitter } = require('node:events');
 const { createScheduler } = require('../checkin_scheduler');
 
 async function main() {
-  const tempBase = '/root/Project/linshi';
+  const tempBase = process.env.AUTOCHECKIN_TEST_TMPDIR || require('node:os').tmpdir();
   fs.mkdirSync(tempBase, { recursive: true });
   const root = fs.mkdtempSync(path.join(tempBase, 'js-regression-'));
   try {
