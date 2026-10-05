@@ -1,0 +1,114 @@
+.bot-table {
+  min-width: 820px;
+  table-layout: fixed;
+}
+.bot-table th:nth-child(1) { width: 22%; }
+.bot-table th:nth-child(2) { width: 19%; }
+.bot-table th:nth-child(3) { width: 18%; }
+.bot-table th:nth-child(4) { width: 31%; }
+.bot-table th:nth-child(5) { width: 10%; }
+.bot-table td { vertical-align: middle; }
+.bot-note { background: #fcfcff; }
+
+.mode-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 39px;
+  border: 1px solid #e7e8f5;
+  border-radius: 10px;
+  background: #fbfaff;
+  color: #595477;
+  padding: 5px 10px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  transition: border-color .2s, box-shadow .2s, background .2s;
+}
+.mode-trigger:hover,
+.mode-trigger[aria-expanded="true"] {
+  border-color: #a596ee;
+  background: #f7f4ff;
+  box-shadow: 0 0 0 3px #8270e513;
+}
+.mode-trigger:focus-visible,
+.mode-menu button:focus-visible {
+  outline: 2px solid #8876e4;
+  outline-offset: 2px;
+}
+.mode-icon,
+.menu-option-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: 7px;
+  background: #eeeaff;
+  color: #7569d7;
+}
+.mode-icon { width: 24px; height: 24px; font-size: 15px; }
+.mode-label { flex: 1; white-space: nowrap; }
+.mode-chevron {
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid #9588bd;
+  border-bottom: 1.5px solid #9588bd;
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform .2s;
+  margin-right: 3px;
+}
+.mode-trigger[aria-expanded="true"] .mode-chevron { transform: rotate(225deg) translateY(-2px); }
+.mode-menu {
+  position: fixed;
+  z-index: 40;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid #eae8f7;
+  border-radius: 13px;
+  box-shadow: 0 14px 38px #44406c2b;
+  animation: menu-in .15s ease-out;
+}
+.mode-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 51px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  padding: 7px 8px;
+  text-align: left;
+  color: #424c65;
+}
+.mode-menu button:hover,
+.mode-menu button:focus-visible,
+.mode-menu button[aria-selected="true"] { background: #f2efff; }
+.menu-option-icon { width: 28px; height: 28px; font-size: 17px; }
+.mode-menu button > span:nth-child(2) { flex: 1; }
+.mode-menu strong { display: block; font-size: 11px; }
+.mode-menu small { display: block; font-size: 9px; color: #a4a9ba; margin-top: 2px; white-space: nowrap; }
+.selected-mark { color: #8b79e2; font-size: 13px; visibility: hidden; }
+.mode-menu button[aria-selected="true"] .selected-mark { visibility: visible; }
+@keyframes menu-in { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+.account-grid { grid-template-columns: 1fr; }
+.account-card .account-fields { padding-bottom: 22px; }
+.account-bots-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid #eef0f6; padding: 20px 0 14px; }
+.account-bots-head strong { color: #303a55; font-size: 13px; }
+.account-bots-head small { display: block; color: #a0aabc; font-size: 10px; margin-top: 5px; }
+.account-card .table-wrap { padding: 0; }
+.account-card .bot-table { min-width: 790px; }
+.account-card .bot-table td, .account-card .bot-table th { padding-left: 11px; padding-right: 11px; }
+@media (max-width: 720px) { .account-card .account-fields { padding-bottom: 17px; } .account-bots-head { align-items: start; flex-direction: column; } }
+.checkin-head { margin-top: 22px; }
+.checkin-status:not(:empty) { color: #7264bd; }
+.checkin-status.error:not(:empty) { color: #d87583; }
+.checkin-rules { display: grid; gap: 12px; }
+.checkin-rule { border: 1px solid #e9eaf5; border-radius: 13px; background: #fcfbff; padding: 16px 18px; }
+.checkin-rule-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; color: #39425d; font-size: 12px; }
+.checkin-rule-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.checkin-segments { display: flex; width: 100%; height: 39px; padding: 3px; gap: 3px; border: 1px solid #e7ebf3; border-radius: 9px; background: #f2f1fa; }
+.checkin-segments button { flex: 1; border: 0; border-radius: 7px; background: transparent; color: #8490a8; font-size: 11px; font-weight: 700; cursor: pointer; }
+.checkin-segments button[aria-pressed="true"] { background: #fff; color: #7160d5; box-shadow: 0 2px 7px #54508a18; }
+.checkin-segments button:focus-visible { outline: 2px solid #8876e4; outline-offset: 1px; }
+@media (max-width: 720px) { .checkin-rule-fields { grid-template-columns: 1fr; } }

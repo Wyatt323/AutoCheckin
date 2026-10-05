@@ -1,0 +1,13 @@
+{
+  "telegram": {
+    "users": []
+  },
+  "ai": {
+    "model": "",
+    "providers": []
+  },
+  "automations": {
+    "schedules": [],
+    "forwards": []
+  }
+}

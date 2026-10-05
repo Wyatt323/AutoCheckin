@@ -1,0 +1,17 @@
+services:
+  autocheckin:
+    build: .
+    init: true
+    restart: unless-stopped
+    environment:
+      AUTOCHECKIN_DATA_DIR: /data
+      BIND_HOST: 0.0.0.0
+      PUBLIC_HOST: 127.0.0.1
+      PORT: "8765"
+      PYTHON_BIN: /opt/venv/bin/python
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - ./data:/data
+    stop_grace_period: 15s
