@@ -1,11 +1,13 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
+
 const path = require('node:path');
 const { createScheduler } = require('../checkin_scheduler');
 
 async function main() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'autocheckin-scheduler-'));
+  const tempBase = '/root/Project/linshi';
+  fs.mkdirSync(tempBase, { recursive: true });
+  const root = fs.mkdtempSync(path.join(tempBase, 'autocheckin-scheduler-'));
   try {
     let current = new Date('2027-01-02T01:30:00Z');
     const runs = [];
@@ -30,7 +32,7 @@ async function main() {
     assert.ok(fs.existsSync(path.join(root, '.checkin-schedule-state.json')));
     console.log('签到计划按账号触发、每日重复和重启去重检查通过');
   } finally {
-    if (root.startsWith(path.resolve(os.tmpdir()) + path.sep)) fs.rmSync(root, { recursive:true, force:true });
+    if (root.startsWith(tempBase + path.sep)) fs.rmSync(root, { recursive:true, force:true });
   }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

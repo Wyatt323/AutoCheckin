@@ -1,0 +1,14 @@
+config.json
+data/
+*.session
+*.session-*
+.automation-state.json*
+.checkin-schedule-state.json*
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+*.log

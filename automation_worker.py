@@ -21,15 +21,59 @@ def emit(message, level="info", kind="log"):
     print(json.dumps({"type": kind, "level": level, "message": str(message)}, ensure_ascii=False), flush=True)
 
 
+def parse_config_text(text):
+    """Accept full-line # comments and trailing commas, never edit strings."""
+    output = []
+    in_string = escaped = False
+    line_start = True
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            output.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+            output.append(char)
+        elif char == '#' and line_start:
+            while index < len(text) and text[index] != '\n':
+                index += 1
+            continue
+        elif char == ',':
+            following = index + 1
+            while following < len(text):
+                if text[following].isspace():
+                    following += 1
+                elif text[following] == '#' and text[text.rfind('\n', 0, following) + 1:following].strip() == '':
+                    end = text.find('\n', following)
+                    following = len(text) if end == -1 else end + 1
+                else:
+                    break
+            if following >= len(text) or text[following] not in '}]':
+                output.append(char)
+        else:
+            output.append(char)
+        if char == '\n':
+            line_start = True
+        elif not char.isspace():
+            line_start = False
+        index += 1
+    return json.loads(''.join(output))
+
+
 def load_config():
-    text = "\n".join(line for line in CONFIG_PATH.read_text(encoding="utf-8").splitlines() if not line.lstrip().startswith("#"))
-    return json.loads(re.sub(r",\s*([}\]])", r"\1", text))
+    return parse_config_text(CONFIG_PATH.read_text(encoding="utf-8"))
 
 
 def load_sent():
     try:
         data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-        return data.get("sent", {}) if isinstance(data, dict) else {}
+        return data["sent"] if isinstance(data, dict) and isinstance(data.get("sent"), dict) else {}
     except (FileNotFoundError, ValueError):
         return {}
 
@@ -69,6 +113,8 @@ async def main():
     users = {str(user.get("session") or user["name"]): user for user in config.get("telegram", {}).get("users", [])}
     clients = {}
     forward_tasks = []
+    schedule_tasks = set()
+    connected_clients = []
     sent = load_sent()
     in_flight = set()
     retry_after = {}
@@ -80,15 +126,18 @@ async def main():
                 emit(f"账号 {session} 不存在，跳过其规则", "error")
                 continue
             client = TelegramClient(str(DATA_DIR / session), int(user["api_id"]), user["api_hash"], device_model="AutoCheckin")
+            connected_clients.append(client)
             try:
                 await client.connect()
                 if not await client.is_user_authorized():
                     emit(f"账号 {session} 尚未登录，请先在终端完成登录", "error")
                     await client.disconnect()
+                    connected_clients.remove(client)
                     continue
             except Exception as error:
                 emit(f"账号 {session} 连接失败：{error}", "error")
                 await client.disconnect()
+                connected_clients.remove(client)
                 continue
             clients[session] = client
             emit(f"账号 {session} 已连接")
@@ -171,15 +220,24 @@ async def main():
                 if key in sent or key in in_flight or time.monotonic() < retry_after.get(key, 0):
                     continue
                 in_flight.add(key)
-                asyncio.create_task(send_schedule(rule, key))
+                task = asyncio.create_task(send_schedule(rule, key))
+                schedule_tasks.add(task)
+                task.add_done_callback(schedule_tasks.discard)
             await asyncio.sleep(5)
     finally:
-        for task in forward_tasks:
+        tasks = [*forward_tasks, *schedule_tasks]
+        for task in tasks:
             task.cancel()
-        if forward_tasks:
-            await asyncio.gather(*forward_tasks, return_exceptions=True)
-        for client in clients.values():
-            await client.disconnect()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        # Include clients whose connect/authorization was interrupted.
+        results = await asyncio.gather(
+            *(client.disconnect() for client in connected_clients),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, Exception):
+                emit(f"账号断开失败：{result}", "error")
 
 
 if __name__ == "__main__":
