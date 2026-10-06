@@ -12,7 +12,7 @@ const {spawn}=require('node:child_process');
     for(const file of ['server.js','admin_auth.js','automation.js','login.js','schedule_time.js', 'checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
     fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
     fs.copyFileSync(path.join(__dirname,'fixtures/login_worker.py'),path.join(root,'login_worker.py'));
-    fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({telegram:{users:['offline','cancel'].map(session=>({name:session,session,api_id:123,api_hash:'offline-hash',bots:[]}))},ai:{providers:[]},automations:{schedules:[],forwards:[]}}));
+    fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({telegram:{api_id:123,api_hash:'global-offline-hash',users:['offline','cancel'].map(session=>({name:session,session,...(session==='cancel'?{api_id:123,api_hash:'offline-hash'}:{}),bots:[]}))},ai:{providers:[]},automations:{schedules:[],forwards:[]}}));
     const sock=net.createServer(); await new Promise(r=>sock.listen(0,'127.0.0.1',r)); const port=sock.address().port; await new Promise(r=>sock.close(r));
     const base=`http://127.0.0.1:${port}`;
     server=spawn(process.execPath,[path.join(root,'server.js')],{env:{...process.env,PORT:String(port),AUTOCHECKIN_DATA_DIR:root},stdio:'ignore'});

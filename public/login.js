@@ -37,7 +37,7 @@ document.addEventListener('click', async event => {
   if (!button) return;
   const user = config?.users[Number(button.dataset.loginAccount)];
   if (!user) return;
-  if (user.sourceIndex < 0 || !user.hasApiHash) { toast('请先保存账号名称、Session 和 API 凭据，再登录', true); return; }
+  if (user.sourceIndex < 0) { toast('请先保存账号名称和 Session，再登录', true); return; }
   button.disabled = true;
   try { dismissedLoginId = null; renderLogin((await api('/api/login/start', { method:'POST', body:JSON.stringify({ account:user.session }) })).login); }
   catch (error) { toast(error.message, true); }
