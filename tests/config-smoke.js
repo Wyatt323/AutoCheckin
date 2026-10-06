@@ -36,7 +36,7 @@ async function main() {
     const state = await response.json();
     assert.equal(state.config.users[0].bots[0].note, '');
     assert.equal(state.config.users[1].bots[0].name, '@example_bot');
-    state.config.users[0].bots[0].note = '每日签到站点';
+    state.config.users[0].bots[0].note = '每日签到站点 ,} ,] "quoted"';
     state.config.users[0].bots[0].mode = 'command';
     state.config.users[0].bots[0].command = '/checkin';
     state.config.users[1].bots = [{ name:'@another_bot', mode:'button', command:'/sign', note:'第二账号专属' }];
@@ -47,7 +47,7 @@ async function main() {
     const saved = await fetch(`${base}/api/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.config) });
     assert.equal(saved.status, 200);
     const persisted = JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8'));
-    assert.equal(persisted.telegram.users[0].bot_notes['@example_bot'], '每日签到站点');
+    assert.equal(persisted.telegram.users[0].bot_notes['@example_bot'], '每日签到站点 ,} ,] "quoted"');
     assert.deepEqual(persisted.telegram.users[0].bot_groups.command, [{ bot: '@example_bot', command: '/checkin' }]);
     assert.deepEqual(persisted.telegram.users[1].bot_groups.button, ['@another_bot']);
     assert.equal(persisted.bot_groups, undefined);
@@ -59,7 +59,7 @@ async function main() {
     assert.equal(persisted.telegram.users[0].checkin_schedules[0].time, '09:30');
     assert.equal(persisted.telegram.users[1].checkin_schedules[0].enabled, false);
     const refreshed = await (await fetch(`${base}/api/state`)).json();
-    assert.equal(refreshed.config.users[0].bots[0].note, '每日签到站点');
+    assert.equal(refreshed.config.users[0].bots[0].note, '每日签到站点 ,} ,] "quoted"');
     assert.equal(refreshed.config.users[1].bots[0].name, '@another_bot');
     assert.equal(refreshed.config.automations.schedules[0].message, '测试定时消息');
     assert.equal(refreshed.config.users[0].checkinSchedules[0].repeat, 'daily');

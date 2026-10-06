@@ -1,84 +1,179 @@
-# AutoCheckin 管理页
+# AutoCheckin
 
-一个运行在本机的 Telegram 批量签到管理页。支持账号、Bot、AI 服务配置，定时签到、定时消息、频道转发和实时日志。
+Telegram 多账号签到与消息自动化工具，提供本地 Web 管理界面。Node.js 负责配置管理、日志与任务调度，Python / Telethon 负责 Telegram 操作。
 
-## 启动
+> **安全边界：管理页没有登录认证，默认只允许本机访问。不要直接暴露到公网。** `config.json`、Telegram Session 和备份均包含敏感数据，请妥善保存。
 
-需要 Node.js 18 或更新版本。此管理页不需要安装 npm 包。
+## 功能
 
-```powershell
+- **多账号管理**：每个账号独立保存 API ID、API Hash、Session、签到 Bot 与对话分组。
+- **Bot 签到**：支持按钮交互和自定义命令；结合 AI / OCR 处理脚本支持的验证码及交互场景。不同 Bot 的交互流程不保证全部兼容。
+- **签到计划**：按账号配置每日或一次性任务，手动与定时签到串行执行。
+- **定时消息**：按账号向指定会话发送纯文本消息。
+- **监听转发**：监听群组或频道的新消息，转发至目标会话；不会重放历史消息或重新转发编辑消息。
+- **配置与日志**：网页编辑配置、查看运行状态与最近日志；密钥不回显，留空保存时保留已有密钥。
+
+## 快速开始：本机运行
+
+需要 Node.js **22 或更新版本**、Python **3.10 或更新版本**。Node 服务只使用内置模块，无需 `npm install`。Python 依赖包含 OCR / 推理组件，安装体积较大，具体平台支持以依赖包为准。
+
+```bash
+git clone https://github.com/Wyatt323/AutoCheckin.git
+cd AutoCheckin
+python3 -m pip install -r requirements.txt
 node server.js
 ```
 
-随后打开 [http://127.0.0.1:8765](http://127.0.0.1:8765)。服务只监听 `127.0.0.1`。如需换端口，可在启动前设置 `PORT` 环境变量。首次运行会从不含凭据的 `config.example.json` 生成本机 `config.json`。
+如果系统禁止向全局 Python 安装依赖（PEP 668），使用虚拟环境：
 
-运行签到和消息自动化还需要 Python 3 及脚本依赖。Windows 下推荐在项目目录创建独立环境：
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+node server.js
+```
+
+Windows PowerShell：
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+node server.js
 ```
 
-管理页优先使用项目内的 `.venv`，然后依次尝试 `py -3`、`python`、`python3`。若 Python 不在 PATH 中，可以设置 `PYTHON_BIN` 为解释器的完整路径，再启动 Node 服务。
+打开 **http://127.0.0.1:8765**（不要替换成 `localhost`，服务会校验 Host）。首次启动自动从 `config.example.json` 创建空配置，不包含真实账号或密钥。
 
-## Docker Compose 部署
+Python 选择顺序：显式 `PYTHON_BIN` → 项目 `.venv` → 系统解释器。Windows 会优先尝试 `py -3`，Linux 优先 `python3`。
 
-安装 Docker Desktop（或其他支持 Docker Compose 的环境）后，在项目目录运行：
+## 首次配置与登录
 
-```powershell
-docker compose up -d --build
+1. 在网页添加账号，填写名称、Session 名称、该账号的 API ID / API Hash。API 凭据可从 [my.telegram.org](https://my.telegram.org) 获取。
+2. 添加该账号的签到 Bot，选择按钮方式或命令方式，例如 `/sign`；添加 AI 服务的兼容 API 地址、API Key 和模型名称，然后保存。
+3. 在项目目录执行以下命令，按脚本提示扫码登录；启用两步验证的账号还需输入密码：
+
+   ```bash
+   python3 allinone.py --account Session名称
+   # 使用虚拟环境时：.venv/bin/python allinone.py --account Session名称
+   ```
+
+4. 登录成功后刷新网页，确认 Session 就绪。此命令同时运行该账号的签到，不是仅登录命令。
+5. 通过账号卡片的执行按钮手动签到，或添加定时计划。
+
+Session 名称需与网页完全一致，只能包含字母、数字、下划线、点和连字符，不允许路径。**修改 Session 名称不会自动迁移原文件**。存在 Session 文件也不代表凭据仍有效，失效后需要重新登录。
+
+## Docker Compose
+
+仓库提供直接使用 Docker Hub 镜像 `wyatt323/autocheckin:latest` 的 Compose 配置（当前发布平台为 `linux/amd64`）：
+
+```bash
+mkdir -p data
+# 容器以 node 用户（UID 1000）运行；Linux 上需确保挂载目录可写。
+sudo chown 1000:1000 data
+docker compose pull
+docker compose up -d
 docker compose logs -f autocheckin
 ```
 
-打开 [http://127.0.0.1:8765](http://127.0.0.1:8765)。Compose 只把管理页发布到宿主机的 `127.0.0.1:8765`。如果本机的 `node server.js` 已占用 8765 端口，先停止该进程，再启动容器。
+打开 **http://127.0.0.1:8765**。Compose 只向宿主机回环地址发布端口；启动前确保本机 Node 服务没有占用 8765。
 
-容器把 `./data` 挂载到 `/data`，其中保存 `config.json`、Telegram 的 `.session` 文件和定时任务状态；重建容器不会清除这些数据。首次启动会自动生成不含密钥的初始配置，随后可在网页添加账号、Bot 和 AI 服务。如果要迁移已有本机数据，启动前把 `config.json`、`*.session` 和状态文件复制到 `data/`。
+配置保存后，在容器中完成账号登录 / 签到：
 
-新账号先在网页保存 API ID、API Hash、至少一个 Bot 和 AI 服务，再运行以下命令扫码登录（把 `Session名称` 换成网页中填写的值）：
-
-```powershell
+```bash
 docker compose exec autocheckin python -u allinone.py --account Session名称
 ```
 
-登录生成的 Session 会留在 `data/`。查看运行记录用 `docker compose logs -f autocheckin`，停止服务用 `docker compose down`；`down` 不删除 `data/`。Docker 镜像构建时通过 `.dockerignore` 排除本机配置和 Session，凭据不会被复制进镜像。
+`./data` 挂载到 `/data`，保存配置、Session 与定时状态。重建镜像和 `docker compose down` 不会删除此目录。镜像构建通过 `.dockerignore` 排除真实配置、Session、缓存和数据目录。需要从源码构建时运行 `docker build -t autocheckin:local .`。
 
-## 消息自动化
+更新：
 
-在“账号管理”中点击对应账号，再进入“定时消息”或“监听转发”可以配置：
+```bash
+git pull --ff-only
+docker compose pull
+docker compose up -d
+```
 
-- 一次性或每日定时发送纯文本消息。时间统一按北京时间（UTC+8）计算；每日任务错过当分钟后不会补发，一次性任务最多允许延迟 5 分钟。
-- 监听群组或频道的**新消息**，逐条转发到目标群组或频道。编辑已有消息不会再次转发。
+迁移本机数据时，**先停止服务**，把 `config.json`、`*.session`、`.automation-state.json` 和 `.checkin-schedule-state.json` 放入 `data/`，再调整目录权限并启动。不要同时在多个实例中使用同一份 Session。
 
-规则使用当前账号的 Telegram Session。来源和目标可填写公开 `@用户名`、公开 `https://t.me/用户名` 链接或数字会话 ID（私有频道通常形如 `-100...`）。账号须已加入来源会话，并有向目标发消息或转发的权限。规则保存后由后台进程执行；服务停止后自动化停止。批量签到运行期间自动化暂停，结束后恢复。发送结果和错误显示在账号的“监听转发”页面，成功发送的一次性和每日记录写入 `.automation-state.json`，用于避免服务重启后重复发送。
+## 定时任务与转发规则
 
-## 初次登录
+所有计划均按 **北京时间（UTC+8）** 计算，不随浏览器时区变化。
 
-新 Telegram 账号须先在终端运行 `allinone.py`，按提示扫码登录并生成对应的 `.session` 文件。网页会显示 Session 是否就绪；配置了 Bot 的账号缺少 Session 时会阻止启动，以免网页登录流程停在需要输入密码的终端提示上。
+- **每日任务**：仅在指定分钟触发，停机错过后不补跑。
+- **一次性任务**：仅在指定时间之后 5 分钟内触发，过期不补跑。
+- **签到排队**：与手动签到互斥，已触发任务在忙碌时排队；持久化触发记录用于避免重启后再次触发。触发记录不等于 Telegram 签到成功。
+- **消息自动化**：使用规则所属账号的 Session；批量签到期间暂停，结束后恢复。暂停期间的监听消息不保证补转发。
+- **转发会话**：支持公开 `@用户名`、公开 `https://t.me/用户名` 或数字会话 ID（频道常见 `-100…`），不支持私有邀请链接。账号必须有读取来源、发送至目标的权限。
+- **规则校验**：拒绝同源同目标与可检测的同账号转发循环。不同账号之间、或同一会话使用不同标识时的循环仍需自行避免。
 
-## 按账号配置签到 Bot
+成功发送记录写入 `.automation-state.json`，签到触发记录写入 `.checkin-schedule-state.json`。**这不是严格的 exactly-once 保证**：在 Telegram 操作与本地写盘之间发生崩溃时，仍可能遗漏或重复执行。
 
-在“账号管理”中，每个账号都可以单独配置 Bot、签到方式、命令、备注和 Telegram 对话分组。运行签到时只处理该账号的 Bot；一个账号的 Bot 签到失败不会阻止后续账号运行。没有配置 Bot 的账号会被跳过。
+服务停止后所有自动任务停止；任务必须已有可用 Session，网页不会提供交互式 Telegram 登录。
 
-账号页以卡片展示登录状态和配置数量。点击卡片进入账号资料，或使用卡片下方入口直接打开 Bot、定时签到、定时消息、监听转发；“执行”按钮只运行该账号的签到。消息与转发规则在所属账号中编辑，保存时仍保留原有 `automations` 配置格式。
+## 环境变量
 
-旧版顶层 `bots`、`bot_groups` 和 `bot_notes` 会在管理页中显示为各账号的初始 Bot 列表。首次保存后，配置会迁移到各账号的 `bot_groups` 和 `bot_notes`，不再依赖顶层 Bot 列表。
+- `PORT`：监听端口，默认 `8765`。
+- `AUTOCHECKIN_DATA_DIR`：配置、Session 和状态所在目录；本机默认项目目录，Compose 为 `/data`。
+- `PYTHON_BIN`：Python 解释器路径，例如 `/usr/bin/python3`。
+- `BIND_HOST`：监听地址，本机默认 `127.0.0.1`，容器使用 `0.0.0.0`。
+- `PUBLIC_HOST`：允许的请求 Host 中的主机名，默认 `127.0.0.1`。它不是公网认证开关，也不是完整 URL。
 
-## 按账号定时签到
+Linux 指定端口示例：
 
-在每个账号卡片的“定时任务”中，可以添加每日或仅一次的签到计划、设置北京时间并启用或停用。保存后，后台会在指定时间运行该账号配置的全部签到 Bot；账号必须已有 Bot 和可用的 Session。仅一次的任务只在指定时间之后 5 分钟内触发，过期不补跑。每日任务只在指定分钟触发。
+```bash
+PORT=9000 PYTHON_BIN=/usr/bin/python3 node server.js
+```
 
-任务按顺序执行，不会与手动签到并行；忙碌时已触发的任务会排队。触发记录保存在 `.checkin-schedule-state.json`，服务重启后不会重复触发同一次任务。关闭 `node server.js` 后定时任务停止。也可在终端运行 `python allinone.py --account Session名称`，只签到指定账号。
+此时访问 `http://127.0.0.1:9000`。远程管理建议通过 SSH 隧道：
 
-## 配置与数据
+```bash
+ssh -N -L 8765:127.0.0.1:8765 user@服务器
+```
 
-- 网页读取并更新数据目录中的 `config.json`（本机默认为项目根目录，Docker 为 `data/`）。保存时会保留已有账号的 API Hash 和 AI 服务的 API Key，除非你填写新值。
-- Bot 备注保存在账号的 `bot_notes` 字段中，仅供管理页展示，不影响 `allinone.py` 的签到流程。
-- `config.json` 和 `.session` 都包含敏感凭据。管理页不会提供这些文件的下载入口，也不会把密钥回显到浏览器。
-- 运行日志只保存在 Node 进程内存中，重启服务后清空；页面最多显示最近 800 行。
-- 修改配置时，运行中的签到任务会继续使用启动时读取的配置。运行期间网页会拒绝保存新配置。
+不建议直接配置公网反向代理；目前 Host / Origin 校验不等同于用户认证，也不提供完整的 HTTPS 反代支持。
 
-原脚本目前将 `MAX_FAILED_ROUNDS` 设为 `0`；某账号首轮有 Bot 失败时，该账号会结束本轮处理，随后继续下一个账号。相关重试策略仍由 `allinone.py` 控制。
+## 数据、安全与备份
 
-## 上传 GitHub 前
+- 账号密钥、AI Key 明文保存于数据目录，Session 相当于账号登录凭据。限制目录访问权限，不要分享这些文件。
+- API Hash / API Key 输入框留空会保留该项已有密钥；要更换密钥需显式输入新值。
+- 运行中的签到使用启动时读取的配置；启动及运行期间拒绝配置保存和自动化重启，避免争用 Session。
+- 日志仅保存在 Node 进程内存，重启后清空。签到保留最近 800 行；自动化日志也有数量上限。
+- 旧版顶层 `bots` / `bot_groups` / `bot_notes` 会作为账号初始配置读取，首次网页保存后迁移到账号独立配置。
+- 备份前停止服务，再备份整个数据目录；恢复时保持 Session 名称、文件名和目录权限一致。
+- `.gitignore` 排除真实配置、Session、虚拟环境与缓存，但不能撤销 Git 历史中的泄露；若曾提交真实凭据，应立即轮换密钥并撤销泄露的登录会话。
 
-只提交源码、`config.example.json`、Docker 文件和文档。真实的 `config.json`、`data/`、`*.session`、虚拟环境、缓存和运行状态均由 `.gitignore` 排除；不要使用 `git add -f` 强制提交这些文件，也不要通过网页直接拖入整个项目目录。若凭据曾被提交到历史记录，仅删除当前文件不足以撤销泄露，应轮换相应密钥和 Session。
+## 常见问题
+
+**页面返回 403**：确认使用 `http://127.0.0.1:8765` 或与你设置的 `PUBLIC_HOST` / `PORT` 完全一致的地址。
+
+**未找到 Python / 缺少依赖**：用服务实际选择的解释器安装 `requirements.txt`，必要时设置 `PYTHON_BIN`，重启服务。解释器探测有短时间缓存。
+
+**Docker 提示 Permission denied**：检查 `data/` 是否允许 UID 1000 写入；不要用 `chmod 777` 代替权限管理。
+
+**无法运行签到**：确认账号有 Bot、已完成登录、Session 文件位于数据目录；查看日志中的实际错误。
+
+**某个 Bot 失败**：先确认命令和交互模式；验证码或界面变动可能需要适配。`MAX_FAILED_ROUNDS` 当前为 `0`，首轮失败后不进入额外重试轮次，但会继续后续账号。
+
+**定时任务没有补跑**：检查北京时间、启用状态、服务运行状态和上述触发窗口；不要直接删除状态文件来“修复”，这可能导致重复执行。
+
+## 开发与离线测试
+
+```bash
+python3 -m pip install -r requirements.txt
+node tests/run-tests.js
+```
+
+测试使用隔离配置、模拟客户端与本地服务，不需要真实 Telegram / AI 凭据，不会执行真实签到或发送消息。GitHub Actions 会运行同一测试入口。
+
+## 项目结构
+
+```text
+server.js               Web 服务、配置校验、签到进程管理
+checkin_scheduler.js    按账号签到调度与持久化队列
+automation.js           自动化子进程管理
+automation_worker.py    定时消息与新消息转发
+allinone.py             Telegram 登录及 Bot 签到
+public/                 Web 界面
+config.example.json     不含凭据的初始配置
+tests/                  离线回归测试
+```
+
+仅用于你有权访问的账号和会话，请遵守 Telegram 与目标 Bot 的使用规则，避免高频自动操作及垃圾消息。

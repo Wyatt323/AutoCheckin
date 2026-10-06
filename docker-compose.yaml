@@ -1,6 +1,6 @@
 services:
   autocheckin:
-    build: .
+    image: wyatt323/autocheckin:latest
     init: true
     restart: unless-stopped
     environment:

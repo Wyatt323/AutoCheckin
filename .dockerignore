@@ -1,0 +1,15 @@
+.git
+.github
+data
+config.json
+**/*.session
+**/*.session-*
+**/__pycache__
+**/*.py[cod]
+.venv
+venv
+.env
+.env.*
+*.log
+.*-state.json*
+tests

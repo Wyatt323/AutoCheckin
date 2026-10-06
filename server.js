@@ -24,7 +24,19 @@ let run = { state: 'idle', startedAt: null, finishedAt: null, exitCode: null, li
 
 function readConfig() {
   const raw = fs.readFileSync(CONFIG, 'utf8');
-  return JSON.parse(raw.split(/\r?\n/).filter(line => !line.trimStart().startsWith('#')).join('\n').replace(/,\s*([}\]])/g, '$1'));
+  try { return JSON.parse(raw); } catch {}
+  // Legacy configs allow full-line comments and trailing commas, not inside strings.
+  const text = raw.split(/\r?\n/).filter(line => !line.trimStart().startsWith('#')).join('\n');
+  let output = '', quoted = false, escaped = false;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (!quoted && char === ',' && /^\s*[}\]]/.test(text.slice(index + 1))) continue;
+    output += char;
+    if (quoted && escaped) escaped = false;
+    else if (quoted && char === '\\') escaped = true;
+    else if (char === '"') quoted = !quoted;
+  }
+  return JSON.parse(output);
 }
 
 function viewConfig(config) {
@@ -225,14 +237,20 @@ function saveConfig(input) {
   return viewConfig(original);
 }
 
+let pythonCache = { expires: 0, value: null };
 function pythonCommand() {
+  if (Date.now() < pythonCache.expires) return pythonCache.value;
   const localPython = path.join(ROOT, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
   const names = process.env.PYTHON_BIN ? [process.env.PYTHON_BIN] : [localPython, ...(process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'])];
   for (const name of names) {
     const args = name === 'py' ? ['-3', '--version'] : ['--version'];
     const result = spawnSync(name, args, { timeout: 3000, encoding: 'utf8', windowsHide: true });
-    if (!result.error && result.status === 0) return { name, prefix: name === 'py' ? ['-3'] : [], version: (result.stdout || result.stderr).trim() };
+    if (!result.error && result.status === 0) {
+      pythonCache = { expires: Date.now() + 60000, value: { name, prefix: name === 'py' ? ['-3'] : [], version: (result.stdout || result.stderr).trim() } };
+      return pythonCache.value;
+    }
   }
+  pythonCache = { expires: Date.now() + 5000, value: null };
   return null;
 }
 
@@ -286,7 +304,10 @@ async function launchRun(account = null, trigger = 'manual') {
     await automation.stop();
     try { startRun(account, trigger); }
     catch (error) { automation.start(); throw error; }
-  } finally { runStarting = false; }
+  } finally {
+    runStarting = false;
+    if (!child && !shuttingDown) automation.start();
+  }
 }
 
 function send(res, status, data) {
@@ -305,7 +326,7 @@ function bodyJson(req) {
 }
 
 const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
-automation.configure({ root: ROOT, dataDir: DATA_ROOT, readConfig, pythonCommand, canRun: () => !child && !shuttingDown });
+automation.configure({ root: ROOT, dataDir: DATA_ROOT, readConfig, pythonCommand, canRun: () => !child && !runStarting && !shuttingDown });
 const scheduler = createScheduler({ root: DATA_ROOT, readConfig, runAccount: account => launchRun(account, 'scheduled'), isBusy: () => !!child || runStarting || shuttingDown });
 http.createServer(async (req, res) => {
   try {
@@ -315,8 +336,9 @@ http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/')) {
       if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, { config: viewConfig(readConfig()), run: { ...run, lines: run.lines.slice(-150) }, automation: automation.getState(), checkinScheduler: scheduler.getState(), python: pythonCommand()?.version || null });
       if (req.method === 'POST' && url.pathname === '/api/config') {
-        if (child) throw new Error('运行期间不能修改配置');
-        const config = saveConfig(await bodyJson(req));
+        const input = await bodyJson(req);
+        if (child || runStarting || shuttingDown) throw new Error('运行期间不能修改配置');
+        const config = saveConfig(input);
         await automation.restart();
         return send(res, 200, { config, automation: automation.getState(), checkinScheduler: scheduler.getState() });
       }
@@ -326,7 +348,7 @@ http.createServer(async (req, res) => {
         await launchRun(account);
         return send(res, 200, { ok: true });
       }
-      if (req.method === 'POST' && url.pathname === '/api/automation/restart') { await automation.restart(); return send(res, 200, { automation: automation.getState() }); }
+      if (req.method === 'POST' && url.pathname === '/api/automation/restart') { if (child || runStarting || shuttingDown) throw new Error('运行期间不能重启自动化'); await automation.restart(); return send(res, 200, { automation: automation.getState() }); }
       if (req.method === 'POST' && url.pathname === '/api/stop') {
         if (!child) throw new Error('当前没有运行中的任务');
         run.state = 'stopping';

@@ -6,6 +6,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from offline_support import TEMP_ROOT
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import allinone
 
@@ -20,7 +22,7 @@ def config(users):
     }
 
 
-with tempfile.TemporaryDirectory(prefix="autocheckin-accounts-") as directory:
+with tempfile.TemporaryDirectory(dir=TEMP_ROOT, prefix="autocheckin-accounts-") as directory:
     file = Path(directory) / "config.json"
     users = [
         {"name": "first", "session": "first", "api_id": 1, "api_hash": "dummy"},

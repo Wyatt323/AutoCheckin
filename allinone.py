@@ -31,7 +31,7 @@ DATA_DIR = Path(os.environ.get("AUTOCHECKIN_DATA_DIR") or Path(__file__).resolve
 # 单个 Bot 内部重试阈值：计数加 1 后达到此值即停止，设为 2 时最多追加重试 1 次。
 MAX_RETRY = 2
 # 批量签到总轮数上限（含首轮）；0 或 1 均只运行首轮，不再追加运行失败的 Bot。
-# 注意：当前逻辑在达到上限且仍有失败时，也会停止处理后续用户账号。
+# 达到上限且仍有失败时结束当前账号，继续处理后续用户账号。
 MAX_FAILED_ROUNDS = 0
 # 图片验证码的预期字符数，用于截取和校验 OCR 识别结果。
 CAPTCHA_LENGTH = 4
@@ -47,13 +47,56 @@ POEM_BUTTON_POLL_SECONDS = 1
 
 
 # ========= 工具函数 =========
+def parse_config_text(text):
+    """Accept full-line # comments and trailing commas, never edit strings."""
+    output = []
+    in_string = escaped = False
+    line_start = True
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            output.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+            output.append(char)
+        elif char == '#' and line_start:
+            while index < len(text) and text[index] != '\n':
+                index += 1
+            continue
+        elif char == ',':
+            following = index + 1
+            while following < len(text):
+                if text[following].isspace():
+                    following += 1
+                elif text[following] == '#' and text[text.rfind('\n', 0, following) + 1:following].strip() == '':
+                    end = text.find('\n', following)
+                    following = len(text) if end == -1 else end + 1
+                else:
+                    break
+            if following >= len(text) or text[following] not in '}]':
+                output.append(char)
+        else:
+            output.append(char)
+        if char == '\n':
+            line_start = True
+        elif not char.isspace():
+            line_start = False
+        index += 1
+    return json.loads(''.join(output))
+
+
 def load_config(file_path=None):
     if file_path is None:
         file_path = DATA_DIR / "config.json"
     with open(file_path, "r", encoding="utf-8") as f:
-        content = "\n".join(line for line in f if not line.lstrip().startswith("#"))
-        content = re.sub(r",\s*([}\]])", r"\1", content)
-        config = json.loads(content)
+        config = parse_config_text(f.read())
 
     telegram = config["telegram"]
     ai = config["ai"]
@@ -129,7 +172,7 @@ def build_ai_clients(ai_providers):
         api_key = provider.get("api_key")
         base_url = provider.get("base_url")
         if api_key and base_url:
-            clients.append((provider["name"], OpenAI(api_key=api_key, base_url=base_url)))
+            clients.append((provider["name"], OpenAI(api_key=api_key, base_url=base_url, timeout=30, max_retries=1)))
     return clients
 
 
@@ -379,15 +422,20 @@ class BotSigner:
             if self.attempt_started_at and msg.date < self.attempt_started_at - datetime.timedelta(seconds=5):
                 continue
             if msg.photo:
-                file = await msg.download_media()
-                code = recognize_captcha(file)
+                # Keep downloaded captcha in memory; never leave images in cwd.
+                data = await msg.download_media(file=bytes)
+                if not data:
+                    await self.retry_run()
+                    return False
+                code = await asyncio.to_thread(recognize_captcha, io.BytesIO(data))
+                if self.done or not self.active:
+                    return False
                 print(f"  🧠 OCR验证码: {code}")
-                if len(code) == 4:
+                if len(code) == CAPTCHA_LENGTH:
                     await event.respond(code)
                     print(f"  📨 已提交验证码")
                 else:
                     await self.retry_run()
-                os.remove(file)
                 return True
         return False
 
@@ -443,7 +491,12 @@ class BotSigner:
 
             available = list(btn_map.keys())
             print(f"  🤖 AI解析诗句 (可用按钮: {', '.join(available)})")
-            answers = solve_poem_ai_with_fallback(text, self.ai_clients, self.ai_model, available_buttons=available)
+            answers = await asyncio.to_thread(
+                solve_poem_ai_with_fallback, text, self.ai_clients, self.ai_model,
+                available_buttons=available,
+            )
+            if self.done or not self.active:
+                return
             if not answers:
                 print(f"  ❌ AI未能解析诗句")
                 await self.retry_run()
@@ -458,6 +511,8 @@ class BotSigner:
 
             for idx, ch in enumerate(answers):
                 await asyncio.sleep(1.5)
+                if self.done or not self.active:
+                    return
                 try:
                     fresh = await self.client.get_messages(self.bot, ids=event.message.id)
                     if fresh and fresh.buttons:
@@ -498,12 +553,13 @@ class BotSigner:
             self.retrying = False
             return
         print(f"  🔁 重试 {self.retry}/{MAX_RETRY}")
-        await asyncio.sleep(random.uniform(1, 3))
-        if await self.check_recent_result():
+        try:
+            await asyncio.sleep(random.uniform(1, 3))
+            if self.done or not self.active or await self.check_recent_result():
+                return
+            await self.start()
+        finally:
             self.retrying = False
-            return
-        await self.start()
-        self.retrying = False
 
     async def start(self):
         print(f"\n🚀 开始处理 {self.bot}")
@@ -536,6 +592,11 @@ async def run_signer_once(signer, bot):
             signer.done = True
 
         return signer.is_success()
+    except Exception as error:
+        print(f"  ❌ {bot} 签到失败: {error}")
+        signer.result = "❌ 失败"
+        signer.done = True
+        return False
     finally:
         signer.active = False
 
@@ -551,6 +612,7 @@ async def resolve_dialog_folder(client, folder_name):
     filters = await client(functions.messages.GetDialogFiltersRequest())
     for dialog_filter in filters:
         title = getattr(dialog_filter, "title", None)
+        title = getattr(title, "text", title)
         if isinstance(title, str) and title.strip() == folder_name:
             return getattr(dialog_filter, "id", None)
     return None
@@ -613,13 +675,16 @@ def install_handlers(client, signers):
         username = getattr(sender, "username", None)
         if not username:
             return
-        bot = f"@{username}"
-        if bot not in signers:
+        bot = next((key for key in signers if key.lstrip("@").lower() == username.lower()), None)
+        if bot is None:
             return
         signer = signers[bot]
         if signer.done or not signer.active:
             return
 
+        message_date = getattr(event.message, "date", None)
+        if signer.attempt_started_at and message_date and message_date < signer.attempt_started_at - datetime.timedelta(seconds=5):
+            return
         text = event.raw_text or ""
         print(f"{bot} 📩 {text[:120]}")
 
@@ -694,15 +759,14 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
     signers = {}
     install_handlers(client, signers)
 
-    await client.connect()
-    if not await client.is_user_authorized():
-        try:
-            await login_by_qr(client)
-        except FloodWaitError as e:
-            print(f"❌ Telegram 暂时禁止登录，还需等待 {e.seconds} 秒（约 {e.seconds / 3600:.1f} 小时）")
-            await client.disconnect()
-            return False
     try:
+        await client.connect()
+        if not await client.is_user_authorized():
+            try:
+                await login_by_qr(client)
+            except FloodWaitError as e:
+                print(f"❌ Telegram 暂时禁止登录，还需等待 {e.seconds} 秒（约 {e.seconds / 3600:.1f} 小时）")
+                return False
         account_bots = await get_account_bots(client, bots, dialog_folder)
         signers.update({bot: BotSigner(client, ai_clients, ai_model, bot, bot_commands.get(bot)) for bot in account_bots})
         print(f"\n====== 👤 开始用户 {user_name} ({session_name}) ======")
@@ -753,8 +817,10 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
             print(f"  {display_name} -> {signers[bot].result or '⚠️ 未知'}")
         return not stopped_by_limit
     finally:
-        await mark_all_read(client, signers.keys())
-        await client.disconnect()
+        try:
+            await mark_all_read(client, signers.keys())
+        finally:
+            await client.disconnect()
         print(f"🛑 用户 {user_name} 结束")
 
 

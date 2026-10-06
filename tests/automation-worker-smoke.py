@@ -7,6 +7,8 @@ import tempfile
 import types
 from pathlib import Path
 
+from offline_support import TEMP_ROOT
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import automation_worker as worker
 
@@ -47,7 +49,7 @@ async def exercise():
     fake.TelegramClient = FakeClient
     fake.events = types.SimpleNamespace(NewMessage=lambda **kwargs: kwargs)
     sys.modules["telethon"] = fake
-    with tempfile.TemporaryDirectory(prefix="autocheckin-worker-") as directory:
+    with tempfile.TemporaryDirectory(dir=TEMP_ROOT, prefix="autocheckin-worker-") as directory:
         worker.CONFIG_PATH = Path(directory) / "config.json"
         worker.STATE_PATH = Path(directory) / ".automation-state.json"
         now = worker.dt.datetime.now(worker.CHINA_TIME)
