@@ -90,11 +90,16 @@ function renderConfig() {
   $('#stat-bots').textContent = config.users.reduce((sum, user) => sum + user.bots.length, 0);
   $('#stat-providers').textContent = config.providers.length;
   $('#model-input').value = config.model;
+  config.telegram ||= { apiId: '', hasApiHash: false };
+  $('#global-api-id').value = config.telegram.apiId || '';
+  $('#global-api-hash').value = config.telegram.apiHash || '';
+  $('#global-api-hash').placeholder = config.telegram.hasApiHash ? '已保存 · 留空保持不变' : '填写全局 API Hash';
+  $('#global-api-status').textContent = config.telegram.apiId && (config.telegram.hasApiHash || config.telegram.apiHash) ? '全局凭据已配置' : '全局凭据未完整配置（独立账号仍可使用）';
   $('#account-list').innerHTML = config.users.map((user, index) => {
     const messageCount = config.automations.schedules.filter(item => item.account === user.session).length;
     const forwardCount = config.automations.forwards.filter(item => item.account === user.session).length;
     const latest = checkinSchedulerState?.events?.filter(item => item.account === user.session).at(-1);
-    return `<article class="account-tile" data-account-index="${index}"><button type="button" class="account-tile-main" data-open-account="${index}" data-section="settings"><span class="account-tile-top"><span class="account-tile-avatar">${escapeHtml((user.name || '?').slice(0, 1).toUpperCase())}</span><span class="account-tile-title"><strong>${escapeHtml(user.name || '新账号')}</strong><small>${escapeHtml(user.session || '待设置 Session')}</small></span><span class="account-health ${user.sessionReady ? 'ready' : 'pending'}">${user.sessionReady ? '● 正常' : '○ 待登录'}</span></span><span class="account-tile-info"><span><small>Telegram API ID</small><strong>${escapeHtml(user.apiId || '未设置')}</strong></span><span><small>签到 Bot</small><strong>${user.bots.length} 个</strong></span></span><span class="account-tile-activity"><span>最近运行</span><strong>${latest ? escapeHtml(latest.message) : '暂无定时签到记录'}</strong><small>${latest ? formatDate(latest.time) : `${(user.checkinSchedules || []).length} 个签到计划 · ${messageCount} 个定时消息 · ${forwardCount} 个转发`}</small></span></button><div class="account-tile-actions"><button type="button" data-login-account="${index}" title="Telegram 登录">▣<span>登录</span></button><button type="button" data-run-account="${index}" title="立即签到">▶<span>执行</span></button><button type="button" data-open-account="${index}" data-section="bots" title="签到 Bot">▦<span>Bot</span></button><button type="button" data-open-account="${index}" data-section="checkins" title="定时签到">◷<span>定时</span></button><button type="button" data-open-account="${index}" data-section="messages" title="定时消息">✉<span>消息</span></button><button type="button" data-open-account="${index}" data-section="forwards" title="监听转发">↗<span>转发</span></button><button type="button" data-open-account="${index}" data-section="settings" title="账号资料">✎<span>资料</span></button></div></article>`;
+    return `<article class="account-tile" data-account-index="${index}"><button type="button" class="account-tile-main" data-open-account="${index}" data-section="settings"><span class="account-tile-top"><span class="account-tile-avatar">${escapeHtml((user.name || '?').slice(0, 1).toUpperCase())}</span><span class="account-tile-title"><strong>${escapeHtml(user.name || '新账号')}</strong><small>${escapeHtml(user.session || '待设置 Session')}</small></span><span class="account-health ${user.sessionReady ? 'ready' : 'pending'}">${user.sessionReady ? '● 正常' : '○ 待登录'}</span></span><span class="account-tile-info"><span><small>Telegram API ID</small><strong>${escapeHtml(user.apiId || config.telegram.apiId || '未设置')}</strong></span><span><small>签到 Bot</small><strong>${user.bots.length} 个</strong></span></span><span class="account-tile-activity"><span>最近运行</span><strong>${latest ? escapeHtml(latest.message) : '暂无定时签到记录'}</strong><small>${latest ? formatDate(latest.time) : `${(user.checkinSchedules || []).length} 个签到计划 · ${messageCount} 个定时消息 · ${forwardCount} 个转发`}</small></span></button><div class="account-tile-actions"><button type="button" data-login-account="${index}" title="Telegram 登录">▣<span>登录</span></button><button type="button" data-run-account="${index}" title="立即签到">▶<span>执行</span></button><button type="button" data-open-account="${index}" data-section="bots" title="签到 Bot">▦<span>Bot</span></button><button type="button" data-open-account="${index}" data-section="checkins" title="定时签到">◷<span>定时</span></button><button type="button" data-open-account="${index}" data-section="messages" title="定时消息">✉<span>消息</span></button><button type="button" data-open-account="${index}" data-section="forwards" title="监听转发">↗<span>转发</span></button><button type="button" data-open-account="${index}" data-section="settings" title="账号资料">✎<span>资料</span></button></div></article>`;
   }).join('') || '<div class="automation-empty">还没有账号。点击右上角添加账号。</div>';
   if (selectedAccountIndex !== null && !config.users[selectedAccountIndex]) selectedAccountIndex = null;
   $('#account-overview').hidden = selectedAccountIndex !== null;
@@ -103,7 +108,25 @@ function renderConfig() {
     const user = config.users[selectedAccountIndex];
     $('#account-detail-name').textContent = user.name || '新账号';
     $('#account-detail-subtitle').textContent = `${user.sessionReady ? 'Session 已就绪' : '等待登录 Session'} · ${user.bots.length} 个 Bot · ${(user.checkinSchedules || []).length} 个签到计划`;
-    $('#account-editor').innerHTML = `<article class="account-card" data-index="${selectedAccountIndex}"><section class="account-pane" data-account-pane="settings"><div class="account-editor-title"><div><h2>账号资料</h2><p>维护 Telegram Session、API 凭据和对话分组。</p></div><button class="delete-btn" data-delete="user" data-index="${selectedAccountIndex}">删除账号</button></div><div class="notice"><span>ⓘ</span><p>先保存账号 API 凭据，再点击登录并使用 Telegram 手机客户端扫码。</p><button type="button" class="outline-btn" data-login-account="${selectedAccountIndex}">登录 Telegram</button></div><div class="field-grid account-fields"><label class="field"><span>显示名称</span><input data-field="name" value="${escapeHtml(user.name)}" placeholder="账号名称"></label><label class="field"><span>Session 名称</span><input data-field="session" value="${escapeHtml(user.session)}" placeholder="例如 myaccount"></label><label class="field"><span>Telegram API ID</span><input data-field="apiId" value="${escapeHtml(user.apiId)}" inputmode="numeric" placeholder="数字 ID"></label><label class="field"><span>API Hash</span><input data-field="apiHash" type="password" value="${escapeHtml(user.apiHash || '')}" placeholder="${user.hasApiHash ? '已保存 · 留空保持不变' : '填写 API Hash'}" autocomplete="new-password"></label><label class="field"><span>Telegram 对话分组 <small>可选</small></span><input data-field="dialogFolder" value="${escapeHtml(user.dialogFolder || '')}" placeholder="留空表示全部对话"><small>填写分组名称或数字 ID，仅签到该分组中的 Bot。</small></label></div></section><section class="account-pane" data-account-pane="bots">${renderAccountBots(user, selectedAccountIndex)}</section><section class="account-pane" data-account-pane="checkins">${renderCheckinSchedules(user, selectedAccountIndex)}</section></article>`;
+    $('#account-editor').innerHTML = `<article class="account-card" data-index="${selectedAccountIndex}"><section class="account-pane" data-account-pane="settings"><div class="account-editor-title"><div><h2>账号资料</h2><p>维护 Telegram Session、API 凭据和对话分组。</p></div><button class="delete-btn" data-delete="user" data-index="${selectedAccountIndex}">删除账号</button></div><div class="notice"><span>ⓘ</span><p>先保存全局或账号 API 凭据，再点击登录并使用 Telegram 手机客户端扫码。</p><button type="button" class="outline-btn" data-login-account="${selectedAccountIndex}">登录 Telegram</button></div><div class="field-grid account-fields"><label class="field"><span>显示名称</span><input data-field="name" value="${escapeHtml(user.name)}" placeholder="账号名称"></label><label class="field"><span>Session 名称</span><input data-field="session" value="${escapeHtml(user.session)}" placeholder="例如 myaccount"></label><label class="field"><span>Telegram API ID</span><input data-field="apiId" value="${escapeHtml(user.apiId)}" inputmode="numeric" placeholder="留空继承全局 API ID"></label><label class="field"><span>API Hash</span><input data-field="apiHash" type="password" value="${escapeHtml(user.apiHash || '')}" placeholder="${user.hasApiHash ? '已保存 · 留空保持不变' : '留空继承全局 Hash'}" autocomplete="new-password"></label><label class="field"><span>Telegram 对话分组 <small>可选</small></span><input data-field="dialogFolder" value="${escapeHtml(user.dialogFolder || '')}" placeholder="留空表示全部对话"><small>填写分组名称或数字 ID，仅签到该分组中的 Bot。</small></label></div></section><section class="account-pane" data-account-pane="bots">${renderAccountBots(user, selectedAccountIndex)}</section><section class="account-pane" data-account-pane="checkins">${renderCheckinSchedules(user, selectedAccountIndex)}</section></article>`;
+    const fields = $('#account-editor .account-fields');
+    const controls = document.createElement('div');
+    controls.className = 'notice credential-controls';
+    controls.innerHTML = `<div><label><input type="checkbox" data-use-global ${user.useGlobalCredentials ? 'checked' : ''}> 使用全局凭据（保存时清空此账号的 ID / Hash 覆盖）</label><p data-credential-status></p><p>未填写的字段逐项继承全局；已有 Hash 输入留空保持原覆盖。</p><button type="button" class="outline-btn" data-clear-api-hash>清空账号 Hash 覆盖，改用全局 Hash</button></div>`;
+    fields.before(controls);
+    const updateCredentials = () => {
+      const inherited = controls.querySelector('[data-use-global]').checked;
+      fields.querySelector('[data-field="apiId"]').disabled = inherited;
+      fields.querySelector('[data-field="apiHash"]').disabled = inherited;
+      const idOwn = !inherited && Boolean(fields.querySelector('[data-field="apiId"]').value.trim());
+      const hashOwn = !inherited && !user.clearApiHash && Boolean(user.hasApiHash || fields.querySelector('[data-field="apiHash"]').value.trim());
+      controls.querySelector('[data-credential-status]').textContent = `API ID：${idOwn ? '账号覆盖' : '继承全局'} · API Hash：${hashOwn ? '账号覆盖' : '继承全局'}`;
+    };
+    controls.querySelector('[data-use-global]').addEventListener('change', updateCredentials);
+    fields.querySelector('[data-field="apiId"]').addEventListener('input', updateCredentials);
+    fields.querySelector('[data-field="apiHash"]').addEventListener('input', () => { user.clearApiHash = false; updateCredentials(); });
+    controls.querySelector('[data-clear-api-hash]').addEventListener('click', () => { user.clearApiHash = true; fields.querySelector('[data-field="apiHash"]').value = ''; fields.querySelector('[data-field="apiHash"]').placeholder = '保存后继承全局 Hash'; updateCredentials(); });
+    updateCredentials();
     const deleteAccount = $('#account-editor [data-delete="user"]');
     deleteAccount.disabled = config.users.length === 1;
     if (deleteAccount.disabled) deleteAccount.title = '至少保留一个账号';
@@ -248,9 +271,13 @@ function chooseMode(mode) {
 }
 
 function readEditors() {
+  config.telegram ||= {};
+  config.telegram.apiId = $('#global-api-id').value;
+  config.telegram.apiHash = $('#global-api-hash').value;
   $$('#account-editor .account-card').forEach(card => {
     const item = config.users[Number(card.dataset.index)];
     const previousSession = item.session;
+    item.useGlobalCredentials = card.querySelector('[data-use-global]').checked;
     card.querySelectorAll('.account-fields [data-field]').forEach(input => { item[input.dataset.field] = input.value; });
     if (item.session !== previousSession) {
       for (const kind of ['schedules', 'forwards']) config.automations[kind].forEach(rule => { if (rule.account === previousSession) rule.account = item.session; });

@@ -38,5 +38,9 @@ function fake() {
   const pending = createLoginController({...opts, stopAutomation:() => new Promise(resolve => {release=resolve;})});
   const starting = pending.start('offline'); assert.ok(pending.active()); pending.cancel(pending.status().id); release(); await assert.rejects(starting); assert.equal(pending.active(),false);
   const timeout = createLoginController({...opts,timeoutMs:5}); await timeout.start('offline'); await new Promise(resolve => setTimeout(resolve,20)); assert.equal(timeout.status().state,'error'); child.emit('close',null);
+  const inherited = createLoginController({...opts, readConfig:() => ({telegram:{api_id:789,api_hash:'global-secret',users:[{session:'offline'}]}})});
+  await inherited.start('offline'); assert.ok(inherited.active()); child.emit('close',0);
+  const missing = createLoginController({...opts, readConfig:() => ({telegram:{users:[{session:'offline'}]}})});
+  await assert.rejects(missing.start('offline')); assert.equal(missing.active(),false);
   console.log('login controller: busy, QR, 2FA retry, cancellation, shutdown, redaction, timeout PASS');
 })().catch(error => {console.error(error); process.exitCode=1;});

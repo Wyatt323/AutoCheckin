@@ -17,6 +17,7 @@ async function main() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'autocheckin-smoke-'));
   let child;
   try {
+    fs.copyFileSync(path.join(__dirname, '..', 'telegram_credentials.js'), path.join(directory, 'telegram_credentials.js'));
     fs.copyFileSync(path.join(__dirname, '..', 'server.js'), path.join(directory, 'server.js'));
     fs.copyFileSync(path.join(__dirname, '..', 'login.js'), path.join(directory, 'login.js'));
     fs.copyFileSync(path.join(__dirname, '..', 'automation.js'), path.join(directory, 'automation.js'));

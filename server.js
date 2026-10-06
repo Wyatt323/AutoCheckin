@@ -5,6 +5,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const automation = require('./automation');
 const { createScheduler } = require('./checkin_scheduler');
 const { createLoginController } = require('./login');
+const { resolveCredentials, credentialText } = require('./telegram_credentials');
 
 const ROOT = __dirname;
 const DATA_ROOT = path.resolve(process.env.AUTOCHECKIN_DATA_DIR || ROOT);
@@ -61,9 +62,13 @@ function viewConfig(config) {
     return bots;
   };
   return {
+    telegram: { apiId: telegram.api_id || '', hasApiHash: Boolean(credentialText(telegram.api_hash)) },
     users: (telegram.users || config.users || []).map((user, sourceIndex) => ({
       sourceIndex, name: user.name || '', session: user.session || user.name || '',
-      apiId: user.api_id || '', hasApiHash: Boolean(user.api_hash),
+      apiId: user.api_id || '', hasApiHash: Boolean(credentialText(user.api_hash)),
+      useGlobalCredentials: !credentialText(user.api_id) && !credentialText(user.api_hash),
+      apiIdSource: credentialText(user.api_id) ? 'account' : 'global',
+      apiHashSource: credentialText(user.api_hash) ? 'account' : 'global',
       sessionReady: fs.existsSync(path.join(DATA_ROOT, `${user.session || user.name}.session`)),
       dialogFolder: user.dialog_folder ?? telegram.dialog_folder ?? '',
       bots: parseBots(('bots' in user || 'bot_groups' in user) ? user : config, user.bot_notes || config.bot_notes || {}),
@@ -179,6 +184,14 @@ function saveConfig(input) {
   const original = readConfig();
   const oldUsers = original.telegram?.users || original.users || [];
   const oldProviders = original.ai?.providers || [{ api_key: original.ai?.api_key }];
+  const telegram = { ...(original.telegram || {}) };
+  if (input.telegram !== undefined) {
+    if (!input.telegram || typeof input.telegram !== 'object' || Array.isArray(input.telegram)) throw new Error('全局 Telegram 配置格式不正确');
+    const rawId = credentialText(input.telegram.apiId);
+    if (rawId && (!/^\d+$/.test(rawId) || !Number.isSafeInteger(Number(rawId)) || Number(rawId) <= 0)) throw new Error('全局 Telegram API ID 无效');
+    telegram.api_id = rawId ? Number(rawId) : '';
+    telegram.api_hash = credentialText(input.telegram.apiHash) || credentialText(telegram.api_hash);
+  }
   const seenSessions = new Set();
   const users = input.users.map((item, index) => {
     const old = oldUsers[item.sourceIndex] || {};
@@ -187,10 +200,12 @@ function saveConfig(input) {
     if (!/^[\w.-]+$/.test(session) || session === '.' || session === '..') throw new Error(`账号 ${name} 的 Session 名称无效`);
     if (seenSessions.has(session.toLowerCase())) throw new Error(`Session ${session} 被多个账号重复使用`);
     seenSessions.add(session.toLowerCase());
-    const apiId = Number(item.apiId);
-    if (!Number.isSafeInteger(apiId) || apiId <= 0) throw new Error(`账号 ${name} 的 API ID 无效`);
-    const apiHash = String(item.apiHash || '').trim() || old.api_hash;
-    if (!apiHash) throw new Error(`账号 ${name} 缺少 API Hash`);
+    const rawId = item.useGlobalCredentials === true ? '' : credentialText(item.apiId);
+    const apiId = rawId ? Number(rawId) : '';
+    const apiHash = item.useGlobalCredentials === true || item.clearApiHash === true ? '' : credentialText(item.apiHash) || credentialText(old.api_hash);
+    if (rawId && (!/^\d+$/.test(rawId) || !Number.isSafeInteger(apiId) || apiId <= 0)) throw new Error(`账号 ${name} 的 API ID 无效`);
+    try { resolveCredentials({ telegram }, { api_id: apiId, api_hash: apiHash }); }
+    catch (error) { throw new Error(`账号 ${name}：${error.message}`); }
     const botItems = Array.isArray(item.bots) ? item.bots : (input.bots || []);
     if (!Array.isArray(botItems) || botItems.length > 500) throw new Error(`账号 ${name} 的 Bot 配置过多或格式不正确`);
     const seenBots = new Set();
@@ -221,7 +236,7 @@ function saveConfig(input) {
     if (!apiKey) throw new Error(`AI 服务 ${name} 缺少 API Key`);
     return { ...old, name, base_url: baseUrl, api_key: apiKey };
   });
-  original.telegram = { ...(original.telegram || {}), users };
+  original.telegram = { ...telegram, users };
   delete original.telegram.dialog_folder;
   original.ai = { ...(original.ai || {}), model: providers.length ? nonempty(input.model, 'AI 模型', 120) : String(input.model || '').trim(), providers };
   delete original.ai.api_key;

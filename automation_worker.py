@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Long-running Telegram scheduler and new-message forwarder."""
 
+from telegram_credentials import resolve_credentials
 import asyncio
 import datetime as dt
 import json
@@ -125,7 +126,8 @@ async def main():
             if not user:
                 emit(f"账号 {session} 不存在，跳过其规则", "error")
                 continue
-            client = TelegramClient(str(DATA_DIR / session), int(user["api_id"]), user["api_hash"], device_model="AutoCheckin")
+            api_id, api_hash = resolve_credentials(config, user)
+            client = TelegramClient(str(DATA_DIR / session), api_id, api_hash, device_model="AutoCheckin")
             connected_clients.append(client)
             try:
                 await client.connect()

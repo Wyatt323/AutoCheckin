@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+from telegram_credentials import resolve_credentials
 import asyncio
 import json
 import random
@@ -142,10 +143,7 @@ def load_config(file_path=None):
         session = str(user.get("session", name)).strip() or name
         if not name:
             continue
-        if "api_id" not in user or "api_hash" not in user:
-            raise ValueError(f"用户 {name} 缺少 api_id 或 api_hash")
-        user_api_id = int(user["api_id"])
-        user_api_hash = user["api_hash"]
+        user_api_id, user_api_hash = resolve_credentials(config, user)
         has_own_bots = "bots" in user or "bot_groups" in user
         user_bots, user_commands = parse_bots(
             user.get("bots", []) if has_own_bots else legacy_bots,

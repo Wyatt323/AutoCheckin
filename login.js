@@ -1,6 +1,7 @@
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const path = require('node:path');
+const { resolveCredentials } = require('./telegram_credentials');
 
 function createLoginController({ root, dataDir, readConfig, pythonCommand, isBusy, stopAutomation, resumeAutomation, spawnWorker = spawn, timeoutMs = 490000 }) {
   let worker = null, pending = false, timer = null, killTimer = null;
@@ -12,10 +13,11 @@ function createLoginController({ root, dataDir, readConfig, pythonCommand, isBus
   }
   async function start(account) {
     if (active() || isBusy()) throw new Error('有任务正在运行，请稍后登录');
-    const users = readConfig().telegram?.users || readConfig().users || [];
+    const config = readConfig();
+    const users = config.telegram?.users || config.users || [];
     const user = users.find(user => (user.session || user.name) === account);
     if (!user || typeof account !== 'string' || !/^[\w.-]+$/.test(account) || ['.', '..'].includes(account)) throw new Error('账号不存在或 Session 无效');
-    if (!Number.isSafeInteger(Number(user.api_id)) || Number(user.api_id) <= 0 || !user.api_hash) throw new Error('请先保存有效的 API 凭据');
+    resolveCredentials(config, user);
     const python = pythonCommand();
     if (!python) throw new Error('未找到 Python');
     pending = true;
