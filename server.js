@@ -1,3 +1,4 @@
+const { validateTime } = require('./schedule_time');
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -117,17 +118,9 @@ function validateAutomations(input, users) {
   };
   const normalizedSchedules = schedules.map((item, index) => {
     const label = `定时消息 ${index + 1}`;
-    const repeat = item.repeat === 'daily' ? 'daily' : item.repeat === 'once' ? 'once' : null;
-    if (!repeat) throw new Error(`${label} 的时间类型无效`);
-    const time = nonempty(item.time, `${label} 时间`, 30);
-    if (repeat === 'daily' && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error(`${label} 的每日时间无效`);
-    if (repeat === 'once' && !/^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error(`${label} 的发送时间无效`);
-    if (repeat === 'once') {
-      const parsed = new Date(`${time}:00+08:00`);
-      if (Number.isNaN(parsed.getTime()) || new Date(parsed.getTime() + 8 * 3600000).toISOString().slice(0, 16) !== time) throw new Error(`${label} 的日期无效`);
-    }
+    const timing = validateTime(item, label);
     const message = nonempty(item.message, `${label} 内容`, 4000);
-    return { id: idFor(item, label), enabled: item.enabled !== false, account: accountFor(item, label), target: chatRef(item.target, `${label} 目标`), repeat, time, message };
+    return { id: idFor(item, label), enabled: item.enabled !== false, account: accountFor(item, label), target: chatRef(item.target, `${label} 目标`), ...timing, message };
   });
   const normalizedForwards = forwards.map((item, index) => {
     const label = `转发规则 ${index + 1}`;
@@ -164,17 +157,9 @@ function validateCheckinSchedules(input, name, botCount) {
     const id = nonempty(item.id, `${label} ID`, 100);
     if (!/^[A-Za-z0-9_-]{8,}$/.test(id) || ids.has(id)) throw new Error(`${label} ID 无效或重复`);
     ids.add(id);
-    const repeat = item.repeat;
-    const time = nonempty(item.time, `${label} 时间`, 30);
-    if (repeat === 'daily' && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error(`${label} 的每日时间无效`);
-    if (repeat === 'once') {
-      if (!/^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error(`${label} 的执行时间无效`);
-      const parsed = new Date(`${time}:00+08:00`);
-      if (Number.isNaN(parsed.getTime()) || new Date(parsed.getTime() + 8 * 3600000).toISOString().slice(0, 16) !== time) throw new Error(`${label} 的日期无效`);
-    }
-    if (!['once', 'daily'].includes(repeat)) throw new Error(`${label} 的频率无效`);
+    const timing = validateTime(item, label);
     if (item.enabled !== false && !botCount) throw new Error(`${label} 已启用，请先添加此账号的签到 Bot`);
-    return { id, enabled: item.enabled !== false, repeat, time };
+    return { id, enabled: item.enabled !== false, ...timing };
   });
 }
 

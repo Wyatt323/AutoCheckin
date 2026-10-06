@@ -73,12 +73,26 @@ function renderAccountBots(user, accountIndex) {
   return `<div class="account-bots-head"><div><strong>签到 Bot <span class="count-pill">${user.bots.length}</span></strong><small>仅当前账号会运行这些 Bot</small></div><button class="outline-btn" data-add-bot="${accountIndex}">＋ 添加 Bot</button></div><div class="table-wrap"><table class="bot-table"><thead><tr><th>Bot 用户名</th><th>签到方式</th><th>命令</th><th>备注</th><th></th></tr></thead><tbody class="account-bot-table">${rows}</tbody></table></div>`;
 }
 
+function scheduleTimeFields(item, kind) {
+  const random = item.repeat === 'daily' && item.timeMode === 'random';
+  return `${item.repeat === 'daily' ? `<label class="auto-field"><span>时间模式</span><select data-field="timeMode" data-time-mode="${kind}"><option value="fixed" ${!random ? 'selected' : ''}>固定时间</option><option value="random" ${random ? 'selected' : ''}>每日区间随机</option></select></label>` : ''}${random ? `<label class="auto-field"><span>区间开始 · 北京时间</span><input data-field="rangeStart" type="time" step="1" value="${escapeHtml(item.rangeStart || '09:00:00')}"></label><label class="auto-field"><span>区间结束 · 北京时间</span><input data-field="rangeEnd" type="time" step="1" value="${escapeHtml(item.rangeEnd || '10:30:00')}"></label>` : `<label class="auto-field"><span>${item.repeat === 'once' ? '执行时间' : '每日时间'} · 北京时间</span><input data-field="time" type="${item.repeat === 'once' ? 'datetime-local' : 'time'}" step="1" value="${escapeHtml(item.time || '')}"></label>`}<small data-planned-kind="${kind}" data-planned-id="${escapeHtml(item.id)}" data-planned-account="${escapeHtml(item.account || config.users[selectedAccountIndex]?.session || '')}"></small>`;
+}
+function renderPlannedTimes() {
+  const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+  $$('[data-planned-id]').forEach(element => {
+    const plans = element.dataset.plannedKind === 'checkin' ? checkinSchedulerState?.planned : automationState?.planned;
+    const plan = plans?.find(plan => plan.account === element.dataset.plannedAccount && plan.ruleId === element.dataset.plannedId && plan.date === today);
+    const row = element.closest('.checkin-rule,.automation-card');
+    const mode = row?.querySelector('[data-field="timeMode"]')?.value;
+    element.textContent = mode === 'random' ? (plan ? `今日抽中：${plan.time}（北京时间）` : '今日抽中：等待保存并启动计划') : '';
+  });
+}
 function renderCheckinSchedules(user, accountIndex) {
   const schedules = user.checkinSchedules || [];
   const rows = schedules.length ? schedules.map((item, index) => `
     <div class="checkin-rule" data-checkin-index="${index}">
       <div class="checkin-rule-head"><strong>任务 ${index + 1}</strong><div class="automation-card-actions"><label class="auto-switch"><input type="checkbox" data-field="enabled" ${item.enabled !== false ? 'checked' : ''}><i></i>启用</label><button class="delete-btn" data-delete="checkin" data-account-index="${accountIndex}" data-index="${index}">删除</button></div></div>
-      <div class="checkin-rule-fields"><div class="auto-field"><span>执行频率</span><div class="checkin-segments" role="group" aria-label="执行频率"><button type="button" data-checkin-repeat="daily" data-account-index="${accountIndex}" data-index="${index}" aria-pressed="${item.repeat === 'daily'}">每天</button><button type="button" data-checkin-repeat="once" data-account-index="${accountIndex}" data-index="${index}" aria-pressed="${item.repeat === 'once'}">仅一次</button></div></div><label class="auto-field"><span>${item.repeat === 'once' ? '执行时间' : '每日时间'} · 北京时间</span><input data-field="time" type="${item.repeat === 'once' ? 'datetime-local' : 'time'}" value="${escapeHtml(item.time || '')}"></label></div>
+      <div class="checkin-rule-fields"><div class="auto-field"><span>执行频率</span><div class="checkin-segments" role="group" aria-label="执行频率"><button type="button" data-checkin-repeat="daily" data-account-index="${accountIndex}" data-index="${index}" aria-pressed="${item.repeat === 'daily'}">每天</button><button type="button" data-checkin-repeat="once" data-account-index="${accountIndex}" data-index="${index}" aria-pressed="${item.repeat === 'once'}">仅一次</button></div></div>${scheduleTimeFields(item, 'checkin')}</div>
     </div>`).join('') : '<div class="automation-empty">还没有定时签到任务。添加后会自动运行此账号的全部签到 Bot。</div>';
   return `<div class="account-bots-head checkin-head"><div><strong>定时任务 <span class="count-pill">${schedules.length}</span></strong><small>按北京时间执行此账号的签到 Bot；一次性任务过期 5 分钟后不补跑。</small><small class="checkin-status" data-checkin-status="${accountIndex}"></small></div><button class="outline-btn" data-add-checkin="${accountIndex}">＋ 添加任务</button></div><div class="checkin-rules">${rows}</div>`;
 }
@@ -140,6 +154,7 @@ function renderConfig() {
 }
 
 function renderCheckinStatus() {
+  renderPlannedTimes();
   $$('.checkin-status').forEach(element => {
     const account = config.users[Number(element.dataset.checkinStatus)]?.session;
     const event = checkinSchedulerState?.events?.filter(item => item.account === account).at(-1);
@@ -163,7 +178,8 @@ function renderAutomation() {
   const forwards = config.automations.forwards.map((item, index) => ({ item, index })).filter(entry => entry.item.account === account);
   $('#schedule-list').innerHTML = schedules.length ? schedules.map(({ item, index }) => `
     <article class="automation-card" data-auto-kind="schedules" data-index="${index}"><div class="automation-card-head"><div class="automation-card-symbol">◷</div><div><strong>定时消息 ${index + 1}</strong><small>${item.repeat === 'once' ? '指定时间发送一次' : '每天定时发送'}</small></div><div class="automation-card-actions"><label class="auto-switch"><input type="checkbox" data-field="enabled" ${item.enabled !== false ? 'checked' : ''}><i></i>启用</label><button class="delete-btn" data-delete="schedule" data-index="${index}">删除</button></div></div>
-    <div class="auto-field-grid"><div class="auto-field"><span>发送频率</span>${autoSelect('schedules', index, 'repeat', item.repeat === 'once' ? '发送一次' : '每天发送')}</div><label class="auto-field"><span>${item.repeat === 'once' ? '发送时间' : '每日时间'} · 北京时间</span><input data-field="time" type="${item.repeat === 'once' ? 'datetime-local' : 'time'}" value="${escapeHtml(item.time || '')}"></label><label class="auto-field wide"><span>目标群组 / 频道</span><input data-field="target" value="${escapeHtml(item.target || '')}" placeholder="@群组用户名 或 -100..." maxlength="120"></label><label class="auto-field wide"><span>消息内容</span><textarea data-field="message" maxlength="4000" placeholder="输入要定时发送的消息">${escapeHtml(item.message || '')}</textarea><small>仅发送纯文本；一次性任务过期超过 5 分钟后不会补发。</small></label></div></article>`).join('') : '<div class="automation-empty">当前账号还没有定时消息。添加规则后，保存即可启用。</div>';
+    <div class="auto-field-grid"><div class="auto-field"><span>发送频率</span>${autoSelect('schedules', index, 'repeat', item.repeat === 'once' ? '发送一次' : '每天发送')}</div>${scheduleTimeFields(item, 'message')}<label class="auto-field wide"><span>目标群组 / 频道</span><input data-field="target" value="${escapeHtml(item.target || '')}" placeholder="@群组用户名 或 -100..." maxlength="120"></label><label class="auto-field wide"><span>消息内容</span><textarea data-field="message" maxlength="4000" placeholder="输入要定时发送的消息">${escapeHtml(item.message || '')}</textarea><small>仅发送纯文本；一次性任务过期超过 5 分钟后不会补发。</small></label></div></article>`).join('') : '<div class="automation-empty">当前账号还没有定时消息。添加规则后，保存即可启用。</div>';
+  renderPlannedTimes();
   $('#forward-list').innerHTML = forwards.length ? forwards.map(({ item, index }) => `
     <article class="automation-card" data-auto-kind="forwards" data-index="${index}"><div class="automation-card-head"><div class="automation-card-symbol">↗</div><div><strong>转发规则 ${index + 1}</strong><small>来源有新消息时自动转发</small></div><div class="automation-card-actions"><label class="auto-switch"><input type="checkbox" data-field="enabled" ${item.enabled !== false ? 'checked' : ''}><i></i>启用</label><button class="delete-btn" data-delete="forward" data-index="${index}">删除</button></div></div>
     <div class="auto-field-grid"><label class="auto-field"><span>来源群组 / 频道</span><input data-field="source" value="${escapeHtml(item.source || '')}" placeholder="@来源用户名 或 -100..." maxlength="120"></label><label class="auto-field"><span>转发到</span><input data-field="target" value="${escapeHtml(item.target || '')}" placeholder="@目标用户名 或 -100..." maxlength="120"></label></div></article>`).join('') : '<div class="automation-empty">当前账号还没有转发规则。添加来源与目标后，保存即可开始监听。</div>';
@@ -207,7 +223,7 @@ function chooseAutoOption(value) {
   const { kind, index, field } = openAutoSelect;
   readEditors();
   config.automations[kind][index][field] = value;
-  if (field === 'repeat') config.automations[kind][index].time = '';
+  if (field === 'repeat') { config.automations[kind][index].time = ''; if (value === 'once') config.automations[kind][index].timeMode = 'fixed'; }
   closeAutoSelect();
   renderAutomation();
   document.querySelector(`[data-auto-select="${kind}"][data-index="${index}"][data-field="${field}"]`)?.focus();
@@ -297,7 +313,7 @@ function readEditors() {
   });
   $$('.automation-card[data-auto-kind]').forEach(card => {
     const item = config.automations[card.dataset.autoKind][Number(card.dataset.index)];
-    card.querySelectorAll('input[data-field],textarea[data-field]').forEach(input => { item[input.dataset.field] = input.type === 'checkbox' ? input.checked : input.value; });
+    card.querySelectorAll('input[data-field],textarea[data-field],select[data-field]').forEach(input => { item[input.dataset.field] = input.type === 'checkbox' ? input.checked : input.value; });
   });
   config.model = $('#model-input').value;
 }
@@ -440,10 +456,21 @@ document.addEventListener('click', event => {
     if (rule.repeat !== repeatButton.dataset.checkinRepeat) {
       rule.repeat = repeatButton.dataset.checkinRepeat;
       rule.time = rule.repeat === 'daily' ? '09:00' : '';
+      if (rule.repeat === 'once') rule.timeMode = 'fixed';
       renderConfig();
       document.querySelector(`#account-editor .checkin-rule[data-checkin-index="${index}"] input[data-field="time"]`)?.focus();
     }
   }
+});
+document.addEventListener('change', event => {
+  if (!event.target.matches('[data-time-mode]')) return;
+  readEditors();
+  const row = event.target.closest('.checkin-rule,.automation-card');
+  const rule = event.target.dataset.timeMode === 'checkin'
+    ? config.users[selectedAccountIndex].checkinSchedules[Number(row.dataset.checkinIndex)]
+    : config.automations.schedules[Number(row.dataset.index)];
+  rule.rangeStart ||= '09:00:00'; rule.rangeEnd ||= '10:30:00';
+  renderConfig();
 });
 document.addEventListener('keydown', event => {
   const autoTrigger = event.target.closest('[data-auto-select]');

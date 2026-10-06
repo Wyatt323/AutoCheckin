@@ -1,3 +1,4 @@
+const timing = require('./schedule_time');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -5,15 +6,16 @@ function beijingParts(date) {
   return new Date(date.getTime() + 8 * 3600000).toISOString().slice(0, 16);
 }
 
-function createScheduler({ root, readConfig, runAccount, isBusy, now = () => new Date(), intervalMs = 5000 }) {
+function createScheduler({ root, readConfig, runAccount, isBusy, now = () => new Date(), rng = Math.random, intervalMs = 1000 }) {
   const file = path.join(root, '.checkin-schedule-state.json');
-  let state = { claimed: {}, pending: [], events: [] };
+  let state = { claimed: {}, pending: [], events: [], planned: {} };
   let saved;
   try {
     const loaded = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (loaded && typeof loaded === 'object') {
       if (loaded.claimed && typeof loaded.claimed === 'object' && !Array.isArray(loaded.claimed)) state.claimed = loaded.claimed;
       if (Array.isArray(loaded.pending)) state.pending = loaded.pending.filter(item => item && typeof item.key === 'string' && typeof item.account === 'string');
+      if (loaded.planned && typeof loaded.planned === 'object') state.planned = loaded.planned;
       if (Array.isArray(loaded.events)) state.events = loaded.events.slice(-30);
     }
   } catch (error) { if (error.code !== 'ENOENT') console.error('读取签到计划状态失败:', error); }
@@ -42,15 +44,6 @@ function createScheduler({ root, readConfig, runAccount, isBusy, now = () => new
     state.events.push({ time: now().toISOString(), message, level, account });
     state.events = state.events.slice(-30);
   }
-  function due(rule, minute, timestamp) {
-    if (rule.enabled === false) return false;
-    if (rule.repeat === 'daily') return rule.time === minute.slice(11);
-    if (rule.repeat === 'once') {
-      const dueAt = new Date(`${rule.time}:00+08:00`).getTime();
-      return Number.isFinite(dueAt) && timestamp >= dueAt && timestamp < dueAt + 5 * 60000;
-    }
-    return false;
-  }
   async function tick() {
     if (ticking) return;
     ticking = true;
@@ -64,12 +57,12 @@ function createScheduler({ root, readConfig, runAccount, isBusy, now = () => new
         const account = user.session || user.name;
         if (!account) continue;
         for (const rule of user.checkin_schedules || []) {
-          if (rule.enabled === false) continue;
           const occurrence = rule.repeat === 'daily' ? minute.slice(0, 10) : rule.time;
           // Tuple encoding avoids both cross-account collisions and delimiter ambiguity.
           const key = JSON.stringify([account, rule.id, occurrence]);
           const legacyKey = `${rule.id}:${occurrence}`;
           valid.add(key);
+          if (rule.enabled === false) { delete state.planned[key]; continue; }
           active.set(JSON.stringify([account, rule.id]), rule);
           if (Object.hasOwn(state.claimed, legacyKey) && !Object.hasOwn(state.claimed, key)) state.claimed[key] = state.claimed[legacyKey];
           for (const item of state.pending) {
@@ -78,7 +71,15 @@ function createScheduler({ root, readConfig, runAccount, isBusy, now = () => new
               item.ruleId = rule.id;
             }
           }
-          if (!Object.hasOwn(state.claimed, key) && due(rule, minute, current.getTime())) {
+          if (rule.repeat === 'daily' && rule.timeMode === 'random') {
+            const fingerprint = timing.signature(rule);
+            if (!state.planned[key] || (state.planned[key].signature !== fingerprint && !Object.hasOwn(state.claimed, key))) {
+              const start = timing.seconds(rule.rangeStart), end = timing.seconds(rule.rangeEnd);
+              if (end < start) throw new Error('不支持跨午夜随机区间');
+              state.planned[key] = { account, ruleId: rule.id, date: occurrence, time: timing.clock(start + Math.floor(rng() * (end - start + 1))), signature: fingerprint };
+            }
+          } else delete state.planned[key];
+          if (!Object.hasOwn(state.claimed, key) && timing.due(rule, current, state.planned[key])) {
             state.claimed[key] = current.toISOString();
             state.pending.push({ key, ruleId: rule.id, account, name: user.name || user.session });
             event('签到计划已触发', 'info', account);
@@ -93,6 +94,7 @@ function createScheduler({ root, readConfig, runAccount, isBusy, now = () => new
       });
       const queuedKeys = new Set(state.pending.map(item => item.key));
       for (const key of Object.keys(state.claimed)) if (!valid.has(key) && !queuedKeys.has(key)) delete state.claimed[key];
+      for (const key of Object.keys(state.planned)) if (!valid.has(key)) delete state.planned[key];
       persist();
       if (!isBusy() && state.pending.length) {
         const item = state.pending.shift();
@@ -110,7 +112,7 @@ function createScheduler({ root, readConfig, runAccount, isBusy, now = () => new
     start() { if (!timer) { timer = setInterval(tick, intervalMs); timer.unref?.(); tick(); } },
     stop() { if (timer) clearInterval(timer); timer = null; },
     tick,
-    getState() { return { queued: state.pending.length, events: state.events.slice(-20) }; }
+    getState() { return { planned: Object.values(state.planned).map(({signature, ...plan}) => plan), queued: state.pending.length, events: state.events.slice(-20) }; }
   };
 }
 

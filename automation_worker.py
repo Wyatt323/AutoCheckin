@@ -7,6 +7,7 @@ import datetime as dt
 import json
 import os
 import re
+import random
 import sys
 import time
 from pathlib import Path
@@ -71,18 +72,55 @@ def load_config():
     return parse_config_text(CONFIG_PATH.read_text(encoding="utf-8"))
 
 
-def load_sent():
+def load_state():
     try:
         data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-        return data["sent"] if isinstance(data, dict) and isinstance(data.get("sent"), dict) else {}
+        return {name: data[name] if isinstance(data, dict) and isinstance(data.get(name), dict) else {} for name in ("sent", "planned", "claimed")}
     except (FileNotFoundError, ValueError):
-        return {}
+        return {"sent": {}, "planned": {}, "claimed": {}}
 
 
-def save_sent(sent):
+def load_sent():
+    return load_state()["sent"]
+
+
+def save_sent(sent, planned=None, claimed=None):
+    data = {"sent": sent, "planned": planned or {}, "claimed": claimed or {}}
+    serialized = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    if STATE_PATH.exists() and STATE_PATH.read_text(encoding="utf-8") == serialized:
+        return
     temp = STATE_PATH.with_suffix(".tmp")
-    temp.write_text(json.dumps({"sent": sent}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temp.write_text(serialized, encoding="utf-8")
+    os.chmod(temp, 0o600)
     os.replace(temp, STATE_PATH)
+
+
+def clock_seconds(value):
+    if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?", value):
+        raise ValueError("Invalid schedule time")
+    parts = [int(part) for part in value.split(":")]
+    return parts[0] * 3600 + parts[1] * 60 + (parts[2] if len(parts) == 3 else 0)
+
+
+def plan_schedules(schedules, now, planned, claimed, rng=random.randint):
+    active = set()
+    for rule in schedules:
+        if rule.get("enabled", True) is False or rule["repeat"] != "daily" or rule.get("timeMode") != "random":
+            continue
+        key = json.dumps([rule["account"], rule["id"], now.date().isoformat()], separators=(",", ":"))
+        active.add(key)
+        signature = [rule["rangeStart"], rule["rangeEnd"]]
+        if key not in planned or (planned[key]["signature"] != signature and key not in claimed):
+            start, end = clock_seconds(rule["rangeStart"]), clock_seconds(rule["rangeEnd"])
+            if start > end:
+                raise ValueError("Random interval must not cross midnight")
+            value = rng(start, end)
+            planned[key] = {"account": rule["account"], "ruleId": rule["id"], "date": now.date().isoformat(),
+                            "time": f"{value // 3600:02}:{value // 60 % 60:02}:{value % 60:02}", "signature": signature}
+    for key in list(planned):
+        if key not in active:
+            del planned[key]
+    return planned
 
 
 def chat_value(value):
@@ -90,13 +128,20 @@ def chat_value(value):
     return int(text) if re.fullmatch(r"-?\d+", text) else text
 
 
-def occurrence(rule, now):
-    """Return the current due occurrence; missed daily windows are not replayed."""
+def occurrence(rule, now, plan=None):
+    """Daily minute legacy: 60s; seconds/random: 10s; once: 300s."""
+    value = plan["time"] if rule.get("timeMode") == "random" and plan else rule.get("time")
+    if not value:
+        return None
     if rule["repeat"] == "daily":
-        return now.date().isoformat() if now.strftime("%H:%M") == rule["time"] else None
-    scheduled = dt.datetime.strptime(rule["time"], "%Y-%m-%dT%H:%M").replace(tzinfo=CHINA_TIME)
+        scheduled = now.replace(hour=0, minute=0, second=0, microsecond=0) + dt.timedelta(seconds=clock_seconds(value))
+        grace = 60 if len(value) == 5 and rule.get("timeMode", "fixed") == "fixed" else 10
+        result = now.date().isoformat()
+    else:
+        scheduled = dt.datetime.fromisoformat(value).replace(tzinfo=CHINA_TIME)
+        grace, result = 300, value
     seconds = (now - scheduled).total_seconds()
-    return rule["time"] if 0 <= seconds < 300 else None
+    return result if 0 <= seconds < grace else None
 
 
 async def main():
@@ -116,7 +161,9 @@ async def main():
     forward_tasks = []
     schedule_tasks = set()
     connected_clients = []
-    sent = load_sent()
+    persisted = load_state()
+    sent, planned, claimed = (persisted[name] for name in ("sent", "planned", "claimed"))
+    last_plans = None
     in_flight = set()
     retry_after = {}
 
@@ -201,7 +248,7 @@ async def main():
                 target = await client.get_input_entity(chat_value(rule["target"]))
                 await client.send_message(target, rule["message"])
                 sent[key] = dt.datetime.now(CHINA_TIME).isoformat(timespec="seconds")
-                save_sent(sent)
+                save_sent(sent, planned, claimed)
                 emit(f"定时消息已发送至 {rule['target']}")
             except Exception as error:
                 wait = getattr(error, "seconds", None)
@@ -212,20 +259,47 @@ async def main():
 
         while True:
             now = dt.datetime.now(CHINA_TIME)
+            # Commit plans before exposing or dispatching; failed writes dispatch nothing.
+            try:
+                plan_schedules(schedules, now, planned, claimed)
+                active_keys = {json.dumps([r["account"], r["id"], now.date().isoformat() if r["repeat"] == "daily" else r["time"]], separators=(",", ":")) for r in rules.get("schedules", [])}
+                claimed = {key: value for key, value in claimed.items() if key in active_keys}
+                save_sent(sent, planned, claimed)
+            except Exception as error:
+                emit(f"计划保存失败，不执行定时消息：{error}", "error")
+                persisted = load_state()
+                sent, planned, claimed = (persisted[name] for name in ("sent", "planned", "claimed"))
+                await asyncio.sleep(1)
+                continue
+            public_plans = [{k: v for k, v in plan.items() if k != "signature"} for plan in planned.values()]
+            if public_plans != last_plans:
+                print(json.dumps({"type": "planned", "planned": public_plans}, ensure_ascii=False), flush=True)
+                last_plans = public_plans
             for rule in schedules:
                 if rule["account"] not in clients:
                     continue
-                due = occurrence(rule, now)
+                plan_key = json.dumps([rule["account"], rule["id"], now.date().isoformat() if rule["repeat"] == "daily" else rule["time"]], separators=(",", ":"))
+                due = occurrence(rule, now, planned.get(plan_key))
                 if not due:
                     continue
-                key = f"{rule['id']}|{rule['time']}|{due}"
-                if key in sent or key in in_flight or time.monotonic() < retry_after.get(key, 0):
+                key = plan_key
+                legacy_key = f"{rule['id']}|{rule.get('time', '')}|{due}"
+                if key in sent or legacy_key in sent or key in claimed or key in in_flight or time.monotonic() < retry_after.get(key, 0):
+                    continue
+                # At-most-once dispatch, including crash during send. Persistence failure
+                # must never reach Telegram. A failed send is not automatically retried.
+                claimed[key] = now.isoformat(timespec="seconds")
+                try:
+                    save_sent(sent, planned, claimed)
+                except Exception as error:
+                    claimed.pop(key, None)
+                    emit(f"执行记录保存失败，不发送消息：{error}", "error")
                     continue
                 in_flight.add(key)
                 task = asyncio.create_task(send_schedule(rule, key))
                 schedule_tasks.add(task)
                 task.add_done_callback(schedule_tasks.discard)
-            await asyncio.sleep(5)
+            await asyncio.sleep(1)
     finally:
         tasks = [*forward_tasks, *schedule_tasks]
         for task in tasks:

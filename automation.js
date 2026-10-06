@@ -6,10 +6,20 @@ let processHandle = null;
 let desired = false;
 let retryTimer = null;
 let stopping = null;
-let state = { status: 'idle', startedAt: null, message: '尚未配置自动化规则', lines: [] };
+let state = { status: 'idle', startedAt: null, message: '尚未配置自动化规则', lines: [], planned: [] };
 
 function configure(options) { context = options; }
-function getState() { return { ...state, lines: state.lines.slice(-120) }; }
+function getState() {
+  // Read the committed snapshot, including while paused/unavailable after restart.
+  let plans = [];
+  try {
+    const persisted = JSON.parse(require('node:fs').readFileSync(path.join(context.dataDir || context.root, '.automation-state.json'), 'utf8'));
+    const today = new Date(Date.now() + 28800000).toISOString().slice(0, 10);
+    const rules = enabledRules(context.readConfig());
+    plans = Object.entries(persisted.planned || {}).filter(([key, plan]) => plan.date === today && rules.some(rule => rule.account === plan.account && rule.id === plan.ruleId && rule.timeMode === 'random' && (persisted.claimed?.[key] || JSON.stringify(plan.signature) === JSON.stringify([rule.rangeStart, rule.rangeEnd])))).map(([, {account, ruleId, date, time}]) => ({account, ruleId, date, time}));
+  } catch {}
+  return { ...state, planned: plans, lines: state.lines.slice(-120) };
+}
 function line(message, level = 'info') {
   state.lines.push({ time: new Date().toISOString(), level, message: String(message).slice(0, 1000) });
   if (state.lines.length > 300) state.lines.splice(0, state.lines.length - 300);
@@ -26,6 +36,20 @@ function start() {
   retryTimer = null;
   const config = context.readConfig();
   const rules = enabledRules(config);
+  try {
+    const fs = require('node:fs');
+    const file = path.join(context.dataDir || context.root, '.automation-state.json');
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const plans = data.planned || {};
+    const today = new Date(Date.now() + 28800000).toISOString().slice(0, 10);
+    const retained = Object.fromEntries(Object.entries(plans).filter(([key, plan]) => plan.date === today && rules.some(rule => rule.account === plan.account && rule.id === plan.ruleId && rule.timeMode === 'random' && (data.claimed?.[key] || JSON.stringify(plan.signature) === JSON.stringify([rule.rangeStart, rule.rangeEnd])))));
+    if (JSON.stringify(plans) !== JSON.stringify(retained)) {
+      data.planned = retained;
+      fs.writeFileSync(file + '.tmp', JSON.stringify(data, null, 2) + '\n', {mode:0o600});
+      fs.renameSync(file + '.tmp', file);
+    }
+  } catch (error) { if (error.code !== 'ENOENT') line(`清理定时计划失败：${error.message}`, 'error'); }
+  state.planned = state.planned.filter(plan => rules.some(rule => rule.account === plan.account && rule.id === plan.ruleId && rule.timeMode === 'random'));
   if (!rules.length) {
     desired = false;
     state.status = 'idle';
@@ -82,7 +106,8 @@ function start() {
         if (level === 'error') { line(part, 'error'); continue; }
         try {
           const event = JSON.parse(part);
-          if (event.type === 'ready' && desired) { state.status = 'running'; state.message = event.message || '监听中'; }
+          if (event.type === 'planned') { state.planned = Array.isArray(event.planned) ? event.planned.map(({account, ruleId, date, time}) => ({account, ruleId, date, time})) : []; }
+          else if (event.type === 'ready' && desired) { state.status = 'running'; state.message = event.message || '监听中'; }
           else if (event.type === 'fatal') { state.status = 'failed'; state.message = event.message || '自动化启动失败'; line(state.message, 'error'); }
           else line(event.message || part, event.level || 'info');
         } catch { line(part); }
