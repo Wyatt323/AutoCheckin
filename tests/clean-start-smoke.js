@@ -1,3 +1,4 @@
+const { authenticatePage } = require('./auth-support');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -17,7 +18,7 @@ async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'autocheckin-clean-'));
   let child;
   try {
-    for (const name of ['server.js', 'automation.js', 'login.js', 'schedule_time.js', 'checkin_scheduler.js', 'telegram_credentials.js', 'config.example.json']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(root, name));
+    for (const name of ['server.js', 'admin_auth.js', 'automation.js', 'login.js', 'schedule_time.js', 'checkin_scheduler.js', 'telegram_credentials.js', 'config.example.json']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(root, name));
     const port = await freePort();
     child = spawn(process.execPath, [path.join(root, 'server.js')], { env: { ...process.env, PORT: String(port), AUTOCHECKIN_DATA_DIR: root }, stdio: 'ignore' });
     let state;

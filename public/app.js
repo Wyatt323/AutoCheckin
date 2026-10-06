@@ -1,4 +1,11 @@
 let config = null;
+document.querySelector('#admin-logout')?.addEventListener('click', async () => {
+  try {
+    await api('/api/auth/logout', { method: 'POST', body: '{}' });
+    document.body.style.visibility = 'hidden';
+    location.replace('/login');
+  } catch (error) { toast(error.message, true); }
+});
 let currentRun = null;
 let pythonVersion = null;
 let currentView = 'overview';
@@ -25,6 +32,11 @@ function toast(message, error = false) {
 
 async function api(url, options = {}) {
   const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+  if (response.status === 401) {
+    document.body.style.visibility = 'hidden';
+    location.replace('/login');
+    throw new Error('会话已过期，请重新登录');
+  }
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || '请求失败');
   return data;

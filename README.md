@@ -2,7 +2,7 @@
 
 Telegram 多账号签到与消息自动化工具，提供本地 Web 管理界面。Node.js 负责配置管理、日志与任务调度，Python / Telethon 负责 Telegram 操作。
 
-> **安全边界：管理页没有登录认证，默认只允许本机访问。不要直接暴露到公网。** `config.json`、Telegram Session 和备份均包含敏感数据，请妥善保存。
+> **管理后台使用单密码登录：必须配置 `ADMIN_PASSWORD`，否则所有管理接口拒绝访问。公网访问必须使用 HTTPS 反向代理；默认仍只发布本机端口。** `config.json`、Telegram Session 和备份均包含敏感数据，请妥善保存。
 
 ## 功能
 
@@ -21,7 +21,7 @@ Telegram 多账号签到与消息自动化工具，提供本地 Web 管理界面
 git clone https://github.com/Wyatt323/AutoCheckin.git
 cd AutoCheckin
 python3 -m pip install -r requirements.txt
-node server.js
+ADMIN_PASSWORD="replace-with-a-long-random-password" node server.js
 ```
 
 如果系统禁止向全局 Python 安装依赖（PEP 668），使用虚拟环境：
@@ -29,7 +29,7 @@ node server.js
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-node server.js
+ADMIN_PASSWORD="replace-with-a-long-random-password" node server.js
 ```
 
 Windows PowerShell：
@@ -37,6 +37,7 @@ Windows PowerShell：
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+$env:ADMIN_PASSWORD="replace-with-a-long-random-password"
 node server.js
 ```
 
@@ -62,6 +63,8 @@ Session 名称需与网页完全一致，只能包含字母、数字、下划线
 mkdir -p data
 # 容器以 node 用户（UID 1000）运行；Linux 上需确保挂载目录可写。
 sudo chown 1000:1000 data
+cp .env.example .env
+# 编辑 .env，替换 ADMIN_PASSWORD 示例值；切勿提交 .env。
 docker compose pull
 docker compose up -d
 docker compose logs -f autocheckin
@@ -101,6 +104,8 @@ docker compose up -d
 ## 环境变量
 
 - `PORT`：监听端口，默认 `8765`。
+- `ADMIN_PASSWORD`：必填，只从环境读取，不通过配置 API 返回或保存。修改后重启服务，现有会话失效。
+- `TRUST_PROXY`：默认 `false`；仅明确设为 `true` 且请求来源是回环地址时信任单一 `X-Forwarded-Proto: https`。不信任转发 IP，代理下登录限流按代理统一计算。
 - `AUTOCHECKIN_DATA_DIR`：配置、Session 和状态所在目录；本机默认项目目录，Compose 为 `/data`。
 - `PYTHON_BIN`：Python 解释器路径，例如 `/usr/bin/python3`。
 - `BIND_HOST`：监听地址，本机默认 `127.0.0.1`，容器使用 `0.0.0.0`。
@@ -109,7 +114,7 @@ docker compose up -d
 Linux 指定端口示例：
 
 ```bash
-PORT=9000 PYTHON_BIN=/usr/bin/python3 node server.js
+PORT=9000 PYTHON_BIN=/usr/bin/python3 ADMIN_PASSWORD="replace-with-a-long-random-password" node server.js
 ```
 
 此时访问 `http://127.0.0.1:9000`。远程管理建议通过 SSH 隧道：
@@ -118,7 +123,9 @@ PORT=9000 PYTHON_BIN=/usr/bin/python3 node server.js
 ssh -N -L 8765:127.0.0.1:8765 user@服务器
 ```
 
-不建议直接配置公网反向代理；目前 Host / Origin 校验不等同于用户认证，也不提供完整的 HTTPS 反代支持。
+HTTPS 反代必须保留浏览器的 Origin，把上游 Host 设置为 `${PUBLIC_HOST}:${PORT}`（必须与浏览器访问地址一致），并设置 `X-Forwarded-Proto: https`。仅在反代通过回环地址连接 Node 时开启 `TRUST_PROXY=true`；不要把任意远端来源当成可信代理。Docker bridge 来源不属于回环地址，需采用保证本地来源的部署网络方式，不能靠伪造转发头绕过校验。
+
+登录接口为 `/api/auth/login`，与 Telegram 的 `/api/login/*` 独立。会话采用随机令牌、HttpOnly / SameSite=Strict Cookie，可信 HTTPS 下附加 Secure；12 小时固定到期，不滑动延期，重启或退出登录立即失效。最多 256 个会话；登录错误每个可信连接 IP 15 分钟最多 10 次，最多跟踪 2048 个 IP。密码不写入浏览器存储，无“记住密码”。所有管理 API（包括 Telegram 登录状态/密码接口）和后台 HTML/JS 均需会话，只有登录页面、其资源和共享样式公开。
 
 ## 数据、安全与备份
 

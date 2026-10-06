@@ -1,3 +1,5 @@
+const { createAdminAuth, requestSecurity } = require('./admin_auth');
+const adminAuth = createAdminAuth();
 const { validateTime } = require('./schedule_time');
 const http = require('node:http');
 const fs = require('node:fs');
@@ -331,9 +333,30 @@ automation.configure({ root: ROOT, dataDir: DATA_ROOT, readConfig, pythonCommand
 const scheduler = createScheduler({ root: DATA_ROOT, readConfig, runAccount: account => launchRun(account, 'scheduled'), isBusy: () => !!child || runStarting || login.active() || shuttingDown });
 http.createServer(async (req, res) => {
   try {
-    if (req.headers.host !== `${PUBLIC_HOST}:${PORT}`) return send(res, 403, { error: '仅允许本地访问' });
+    const security = requestSecurity(req, { publicHost: PUBLIC_HOST, port: Number(process.env.PUBLIC_PORT || PORT), trustProxy: process.env.TRUST_PROXY === 'true' });
+    if (security.error) return send(res, 403, { error: security.error });
     const url = new URL(req.url, `http://${PUBLIC_HOST}:${PORT}`);
-    if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== `http://${PUBLIC_HOST}:${PORT}`) return send(res, 403, { error: '跨站请求被拒绝' });
+    if (req.method === 'GET' && url.pathname === '/api/auth/status') return send(res, 200, { authenticated: adminAuth.authenticated(req), configured: adminAuth.configured });
+    if (req.method === 'POST' && url.pathname === '/api/auth/login') {
+      const result = adminAuth.login(req, await bodyJson(req), security.secure);
+      if (result.cookie) res.setHeader('Set-Cookie', result.cookie);
+      return send(res, result.status, result.error ? { error: result.error } : { ok: true });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
+      res.setHeader('Set-Cookie', adminAuth.logout(req, security.secure));
+      return send(res, 200, { ok: true });
+    }
+    const authenticated = adminAuth.authenticated(req);
+    const publicFiles = new Set(['/login', '/auth.css', '/auth.js', '/styles.css']);
+    if (!authenticated && !publicFiles.has(url.pathname)) {
+      if (url.pathname.startsWith('/api/')) return send(res, 401, { error: '请先登录管理后台' });
+      res.writeHead(302, { Location: '/login', 'Cache-Control': 'no-store' });
+      return res.end();
+    }
+    if (url.pathname === '/login' && authenticated) {
+      res.writeHead(302, { Location: '/', 'Cache-Control': 'no-store' });
+      return res.end();
+    }
     if (url.pathname.startsWith('/api/')) {
       if (req.method === 'GET' && url.pathname === '/api/login/status') return send(res, 200, { login: login.status() });
       if (req.method === 'POST' && url.pathname.startsWith('/api/login/')) {
@@ -368,8 +391,8 @@ http.createServer(async (req, res) => {
       return send(res, 404, { error: '接口不存在' });
     }
     if (req.method !== 'GET') return send(res, 405, { error: '不支持的请求' });
-    const file = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
-    if (!['index.html', 'app.js', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css'].includes(file)) return send(res, 404, { error: '页面不存在' });
+    const file = url.pathname === '/' ? 'index.html' : url.pathname === '/login' ? 'auth.html' : url.pathname.slice(1);
+    if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css'].includes(file)) return send(res, 404, { error: '页面不存在' });
     const target = path.join(PUBLIC, file);
     res.writeHead(200, { 'Content-Type': types[path.extname(file)], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     fs.createReadStream(target).pipe(res);

@@ -1,3 +1,4 @@
+const { authenticatePage } = require('./auth-support');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),net=require('node:net'),assert=require('node:assert/strict');
 const {spawn}=require('node:child_process');
 (async()=>{
@@ -5,7 +6,7 @@ const {spawn}=require('node:child_process');
  const {chromium}=require(process.env.PLAYWRIGHT_MODULE);
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'random-browser-'));let server,browser;
  try{
-  for(const file of ['server.js','automation.js','login.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
+  for(const file of ['server.js','admin_auth.js','automation.js','login.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
   fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
   const today=new Date(Date.now()+28800000).toISOString().slice(0,10);
   const rule={id:'random_rule_01',enabled:true,repeat:'daily',timeMode:'random',rangeStart:'09:00:01',rangeEnd:'09:00:01'};
@@ -18,7 +19,7 @@ const {spawn}=require('node:child_process');
   for(let i=0;i<60;i++){try{if((await fetch(base+'/api/state')).ok)break;}catch{}await new Promise(r=>setTimeout(r,50));}
   browser=await chromium.launch({headless:true,args:['--no-sandbox']});const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/*',route=>route.request().url().startsWith(base)?route.continue():route.abort());
-  await page.goto(base+'/#accounts');await page.locator('[data-open-account="0"][data-section="checkins"]').click();
+  await authenticatePage(page, base); await page.goto(base+'/#accounts');await page.locator('[data-open-account="0"][data-section="checkins"]').click();
   const checkin=page.locator('.checkin-rule');
   assert.equal(await checkin.locator('[data-field="rangeStart"]').getAttribute('step'),'1');
   await page.waitForFunction(()=>document.querySelector('[data-planned-kind="checkin"]').textContent.includes('09:00:01'));

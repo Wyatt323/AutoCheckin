@@ -1,10 +1,11 @@
+const { authenticatePage } = require('./auth-support');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),net=require('node:net'),assert=require('node:assert/strict');
 const {spawn}=require('node:child_process');
 const {resolveCredentials}=require('../telegram_credentials');
 (async()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'global-api-')); let server,browser;
  try {
-  for(const file of ['server.js','automation.js','login.js','schedule_time.js', 'checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(dir,file));
+  for(const file of ['server.js','admin_auth.js','automation.js','login.js','schedule_time.js', 'checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(dir,file));
   fs.cpSync(path.join(__dirname,'../public'),path.join(dir,'public'),{recursive:true});
   const original={telegram:{users:[{name:'legacy',session:'legacy',api_id:123,api_hash:'old-hash',bot_groups:{button:['@example_bot'],command:[]}}]},ai:{providers:[]}};
   fs.writeFileSync(path.join(dir,'config.json'),JSON.stringify(original));
@@ -33,7 +34,7 @@ const {resolveCredentials}=require('../telegram_credentials');
   c=await state();delete c.telegram;assert.equal((await save(c)).status,200);assert.equal(read().telegram.api_hash,'global-secret');
   if(process.env.PLAYWRIGHT_MODULE){
    const {chromium}=require(process.env.PLAYWRIGHT_MODULE);browser=await chromium.launch({headless:true,args:['--no-sandbox']});const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.route('**/*',route=>route.request().url().startsWith(base)?route.continue():route.abort());
-   await page.goto(base+'/#accounts');await page.locator('#global-api-id').waitFor();
+   await authenticatePage(page, base); await page.goto(base+'/#accounts');await page.locator('#global-api-id').waitFor();
    const clickSave=async selector=>{const response=page.waitForResponse(r=>r.url()===base+'/api/config'&&r.request().method()==='POST');await page.locator(selector).first().click();const res=await response;assert.equal(res.status(),200);await page.waitForTimeout(100);};
    await page.fill('#global-api-id','999');await page.fill('#global-api-hash','browser-secret');await clickSave('.global-telegram .save-btn');assert.equal(read().telegram.api_hash,'browser-secret');assert.equal(await page.inputValue('#global-api-hash'),'');
    await page.locator('[data-open-account="0"]').first().click();assert.equal(await page.locator('[data-use-global]').isChecked(),true);

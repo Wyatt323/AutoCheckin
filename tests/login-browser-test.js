@@ -1,3 +1,4 @@
+const { authenticatePage } = require('./auth-support');
 // Optional real-browser offline integration: PLAYWRIGHT_MODULE=/path/to/playwright.
 const fs=require('node:fs'), path=require('node:path'), os=require('node:os'), net=require('node:net');
 const assert=require('node:assert/strict');
@@ -8,7 +9,7 @@ const {spawn}=require('node:child_process');
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'login-browser-'));
   let server,browser;
   try {
-    for(const file of ['server.js','automation.js','login.js','schedule_time.js', 'checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
+    for(const file of ['server.js','admin_auth.js','automation.js','login.js','schedule_time.js', 'checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
     fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
     fs.copyFileSync(path.join(__dirname,'fixtures/login_worker.py'),path.join(root,'login_worker.py'));
     fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({telegram:{users:['offline','cancel'].map(session=>({name:session,session,api_id:123,api_hash:'offline-hash',bots:[]}))},ai:{providers:[]},automations:{schedules:[],forwards:[]}}));
@@ -19,7 +20,7 @@ const {spawn}=require('node:child_process');
     browser=await chromium.launch({headless:true,args:['--no-sandbox']});
     const page=await browser.newPage(); const errors=[]; page.on('pageerror',e=>errors.push(e.message));
     page.route('**/*',route=>route.request().url().startsWith(base)?route.continue():route.abort());
-    await page.goto(base+'/#accounts'); await page.locator('[data-login-account="0"]').click();
+    await authenticatePage(page, base); await page.goto(base+'/#accounts'); await page.locator('[data-login-account="0"]').click();
     await page.locator('#login-qr:not([hidden])').waitFor();
     await page.waitForFunction(()=>document.querySelector('#login-qr').naturalWidth>0);
     let status=await (await fetch(base+'/api/login/status')).json(); assert.equal(status.login.active,true);
