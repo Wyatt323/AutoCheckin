@@ -62,13 +62,14 @@ Session 名称需与网页完全一致，只能包含字母、数字、下划线
 
 ## Docker Compose
 
-仓库提供从源码构建的 Compose 配置：
+仓库提供直接使用 Docker Hub 镜像 `wyatt323/autocheckin:latest` 的 Compose 配置（当前发布平台为 `linux/amd64`）：
 
 ```bash
 mkdir -p data
 # 容器以 node 用户（UID 1000）运行；Linux 上需确保挂载目录可写。
 sudo chown 1000:1000 data
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 docker compose logs -f autocheckin
 ```
 
@@ -80,13 +81,14 @@ docker compose logs -f autocheckin
 docker compose exec autocheckin python -u allinone.py --account Session名称
 ```
 
-`./data` 挂载到 `/data`，保存配置、Session 与定时状态。重建镜像和 `docker compose down` 不会删除此目录。源码构建通过 `.dockerignore` 排除真实配置、Session、缓存和数据目录。
+`./data` 挂载到 `/data`，保存配置、Session 与定时状态。重建镜像和 `docker compose down` 不会删除此目录。镜像构建通过 `.dockerignore` 排除真实配置、Session、缓存和数据目录。需要从源码构建时运行 `docker build -t autocheckin:local .`。
 
 更新：
 
 ```bash
 git pull --ff-only
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 迁移本机数据时，**先停止服务**，把 `config.json`、`*.session`、`.automation-state.json` 和 `.checkin-schedule-state.json` 放入 `data/`，再调整目录权限并启动。不要同时在多个实例中使用同一份 Session。
