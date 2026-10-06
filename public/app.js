@@ -19,8 +19,8 @@ let accountSection = 'settings';
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]);
-const formatDate = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—';
-const statusText = { idle:'待运行', running:'运行中', stopping:'正在停止', completed:'已完成', failed:'运行失败' };
+const formatDate = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '—';
+const statusText = { idle:'待运行', running:'运行中', stopping:'正在停止', completed:'已完成', failed:'运行失败', stopped:'已停止' };
 
 function toast(message, error = false) {
   const el = $('#toast');
@@ -347,9 +347,10 @@ async function saveConfig() {
 
 async function startRun(account = null) {
   try {
-    await api('/api/run', { method:'POST', body:JSON.stringify(account ? { account } : {}) });
+    const data = await api('/api/run', { method:'POST', body:JSON.stringify(account ? { account } : {}) });
+    currentRun = data.run;
+    openRunLog(data.run);
     toast(account ? `${account} 的签到任务已启动` : '签到任务已启动');
-    navigate('activity');
     await poll();
   } catch (error) { toast(error.message, true); }
 }
@@ -374,17 +375,7 @@ function renderRun() {
   $('#stop-run').disabled = !['running','stopping'].includes(state);
   $$('#hero-run,#activity-run').forEach(button => { button.disabled = ['running','stopping'].includes(state) || (typeof loginState !== 'undefined' && loginState?.active); });
   const lines = currentRun.lines || [];
-  $('#log-count').textContent = `${lines.length} 行`;
-  const consoleEl = $('#log-console');
-  if (!lines.length) {
-    consoleEl.innerHTML = '<div class="log-empty">运行日志会显示在这里。</div>';
-    lastLogId = 0;
-  } else if (lines.at(-1).id !== lastLogId) {
-    const nearBottom = consoleEl.scrollHeight - consoleEl.scrollTop - consoleEl.clientHeight < 80;
-    consoleEl.innerHTML = lines.map(line => `<div class="log-line ${line.stream}"><time>${new Date(line.time).toLocaleTimeString('zh-CN',{hour12:false})}</time><span>${escapeHtml(line.text)}</span></div>`).join('');
-    if (nearBottom) consoleEl.scrollTop = consoleEl.scrollHeight;
-    lastLogId = lines.at(-1).id;
-  }
+  if (typeof refreshRunLogs === 'function') refreshRunLogs();
   const latest = $('#latest-activity');
   if (lines.length) latest.className = 'latest-lines', latest.innerHTML = lines.slice(-5).reverse().map(line => `<div class="latest-line"><time>${new Date(line.time).toLocaleTimeString('zh-CN',{hour12:false})}</time><span>${escapeHtml(line.text)}</span></div>`).join('');
 }
@@ -557,6 +548,7 @@ $('#today').textContent = new Date().toLocaleDateString('zh-CN', { year:'numeric
     const hash = location.hash.slice(1);
     if (['overview','bots','accounts','ai','automation','activity'].includes(hash)) navigate(hash);
     if (!pythonVersion) toast('未检测到 Python，配置可编辑，运行需安装 Python 环境', true);
-    setInterval(poll, 2000);
+    const statePollTimer = setInterval(poll, 2000);
+    window.addEventListener('pagehide', () => clearInterval(statePollTimer), { once: true });
   } catch (error) { toast(`加载失败：${error.message}`, true); }
 })();

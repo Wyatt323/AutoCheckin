@@ -6,7 +6,7 @@ const {spawn}=require('node:child_process');
  const {chromium}=require(process.env.PLAYWRIGHT_MODULE);
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'random-browser-'));let server,browser;
  try{
-  for(const file of ['server.js','admin_auth.js','automation.js','login.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
+  for(const file of ['server.js','admin_auth.js','automation.js','login.js','schedule_time.js','run_history.js', 'checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
   fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
   const today=new Date(Date.now()+28800000).toISOString().slice(0,10);
   const rule={id:'random_rule_01',enabled:true,repeat:'daily',timeMode:'random',rangeStart:'09:00:01',rangeEnd:'09:00:01'};

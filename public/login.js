@@ -1,6 +1,8 @@
 // Login UI keeps passwords in an input/request only, never in config or storage.
 let loginState = null;
 let dismissedLoginId = null;
+let refreshedLoginId = null;
+let refreshingLoginId = null;
 const loginDialog = document.createElement('dialog');
 loginDialog.id = 'login-dialog';
 loginDialog.setAttribute('aria-labelledby', 'login-title');
@@ -21,11 +23,23 @@ function renderLogin(state) {
   $('#login-password-form').hidden = state.state !== 'password_required';
   if (state.state === 'password_required' && previous?.state !== state.state) $('#login-password').focus();
   $('#login-cancel').textContent = state.active ? '取消登录' : '关闭';
-  if (state.state === 'success' && !state.active && previous?.active) {
+  if (state.state === 'success' && !state.active && refreshedLoginId !== state.id && refreshingLoginId !== state.id && config) {
+    const completedId = state.id;
+    refreshingLoginId = completedId;
     api('/api/state').then(data => {
+      if (loginState?.id !== completedId) return;
+      readEditors(); // Preserve unsaved settings while updating only session readiness.
       config.users.forEach(user => { user.sessionReady = data.config.users.find(saved => saved.session === user.session)?.sessionReady || false; });
       renderConfig();
-    }).catch(error => toast(error.message, true));
+      if (loginState?.id === completedId && loginState.state === 'success' && !loginState.active) {
+        refreshedLoginId = completedId;
+        dismissedLoginId = completedId;
+        $('#login-password').value = '';
+        $('#login-qr').removeAttribute('src');
+        loginDialog.close();
+        toast('Telegram 登录成功');
+      }
+    }).catch(error => toast(error.message, true)).finally(() => { if (refreshingLoginId === completedId) refreshingLoginId = null; });
   }
 }
 async function pollLogin() {
@@ -63,4 +77,5 @@ async function closeLogin() {
 $('#login-cancel').addEventListener('click', closeLogin);
 loginDialog.addEventListener('cancel', event => { event.preventDefault(); closeLogin(); });
 pollLogin();
-setInterval(pollLogin, 1000);
+const loginPollTimer = setInterval(pollLogin, 1000);
+window.addEventListener('pagehide', () => clearInterval(loginPollTimer), { once: true });

@@ -23,9 +23,10 @@ const PUBLIC_HOST = process.env.PUBLIC_HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 8765);
 const MAX_BODY = 256 * 1024;
 const MAX_LINES = 800;
+const history = require('./run_history').createRunHistory(DATA_ROOT);
 let child = null;
 let runStarting = false;
-let run = { state: 'idle', startedAt: null, finishedAt: null, exitCode: null, lines: [] };
+let run = history.latest() || { state: 'idle', startedAt: null, finishedAt: null, exitCode: null, lines: [] };
 
 function readConfig() {
   const raw = fs.readFileSync(CONFIG, 'utf8');
@@ -258,8 +259,9 @@ function pythonCommand() {
 
 function addLine(text, stream = 'stdout') {
   const clean = text.replace(/\x1b\[[0-9;]*m/g, '').replace(/tg:\/\/login\?token=[^\s]+/gi, 'tg://login?token=[已隐藏]');
-  run.lines.push({ id: (run.lines.at(-1)?.id || 0) + 1, time: new Date().toISOString(), stream, text: clean.slice(0, 2000) });
+  run.lines.push({ id: (run.lines.at(-1)?.id || 0) + 1, time: new Date().toISOString(), stream, text: clean.slice(0, 2000), runId: run.id, account: run.account, trigger: run.trigger });
   if (run.lines.length > MAX_LINES) run.lines.splice(0, run.lines.length - MAX_LINES);
+  history.changed();
 }
 
 function startRun(account = null, trigger = 'manual') {
@@ -271,7 +273,7 @@ function startRun(account = null, trigger = 'manual') {
   if (!selected.length) throw new Error(`找不到账号 ${account}`);
   if (!selected.some(user => user.bots.length)) throw new Error('该账号没有配置签到 Bot，请先在账号管理中添加 Bot。');
   if (selected.some(user => user.bots.length && !user.sessionReady)) throw new Error('有配置了 Bot 的账号缺少 Session 文件。请先在账号管理中点击登录完成 Telegram 登录。');
-  run = { state: 'running', trigger, account, startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, lines: [] };
+  run = history.create(account, trigger);
   addLine(`使用 ${python.version} 启动${account ? `账号 ${account} 的` : '批量'}签到`, 'system');
   child = spawn(python.name, [...python.prefix, '-u', 'allinone.py', ...(account ? ['--account', account] : [])], {
     cwd: ROOT, env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
@@ -287,12 +289,14 @@ function startRun(account = null, trigger = 'manual') {
     });
     pipe.on('end', () => { if (buffer) addLine(buffer, stream); });
   }
-  child.on('error', error => { addLine(error.message, 'stderr'); run.state = 'failed'; run.finishedAt = new Date().toISOString(); child = null; });
+  child.on('error', error => { addLine(error.message, 'stderr'); run.state = 'failed'; run.finishedAt = new Date().toISOString(); child = null; history.changed(true); });
   child.on('close', code => {
     run.exitCode = code;
     run.finishedAt = new Date().toISOString();
-    if (run.state === 'running') run.state = code === 0 ? 'completed' : 'failed';
+    if (run.state === 'stopping') run.state = 'stopped';
+    else if (run.state === 'running') run.state = code === 0 ? 'completed' : 'failed';
     addLine(`任务结束，退出码 ${code}`, 'system');
+    history.changed(true);
     child = null;
     if (scheduler.getState().queued) scheduler.tick().finally(() => { if (!child && !shuttingDown) automation.start(); });
     else automation.start();
@@ -366,6 +370,7 @@ http.createServer(async (req, res) => {
         if (url.pathname === '/api/login/password') return send(res, 200, { login: login.password(input.id, input.password) });
         if (url.pathname === '/api/login/cancel') return send(res, 200, { login: login.cancel(input.id) });
       }
+      if (req.method === 'GET' && url.pathname === '/api/runs') return send(res, 200, history.snapshot());
       if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, { config: viewConfig(readConfig()), run: { ...run, lines: run.lines.slice(-150) }, automation: automation.getState(), checkinScheduler: scheduler.getState(), python: pythonCommand()?.version || null });
       if (req.method === 'POST' && url.pathname === '/api/config') {
         const input = await bodyJson(req);
@@ -378,10 +383,12 @@ http.createServer(async (req, res) => {
         const input = await bodyJson(req);
         const account = input.account == null ? null : nonempty(input.account, '签到账号', 100);
         await launchRun(account);
-        return send(res, 200, { ok: true });
+        return send(res, 200, { ok: true, run: { ...run } });
       }
       if (req.method === 'POST' && url.pathname === '/api/automation/restart') { if (child || runStarting || login.active() || shuttingDown) throw new Error('运行或登录期间不能重启自动化'); await automation.restart(); return send(res, 200, { automation: automation.getState() }); }
       if (req.method === 'POST' && url.pathname === '/api/stop') {
+        const input = await bodyJson(req);
+        if (input.id && input.id !== run.id) throw new Error('此任务已结束，不能停止其他任务');
         if (!child) throw new Error('当前没有运行中的任务');
         run.state = 'stopping';
         addLine('正在停止任务…', 'system');
@@ -392,7 +399,7 @@ http.createServer(async (req, res) => {
     }
     if (req.method !== 'GET') return send(res, 405, { error: '不支持的请求' });
     const file = url.pathname === '/' ? 'index.html' : url.pathname === '/login' ? 'auth.html' : url.pathname.slice(1);
-    if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css'].includes(file)) return send(res, 404, { error: '页面不存在' });
+    if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css', 'run-log.js', 'run-log.css'].includes(file)) return send(res, 404, { error: '页面不存在' });
     const target = path.join(PUBLIC, file);
     res.writeHead(200, { 'Content-Type': types[path.extname(file)], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     fs.createReadStream(target).pipe(res);
@@ -415,6 +422,7 @@ async function shutdown() {
   scheduler.stop();
   await login.shutdown();
   await automation.stop();
+  history.flush();
   process.exit(0);
 }
 process.on('SIGINT', shutdown);

@@ -16,4 +16,4 @@ async function authenticatePage(page, base) {
   await global.fetch(base + '/api/auth/status');
   await page.context().addCookies([{ name: 'ac_session', value: cookies.get(base).slice(11), url: base, httpOnly: true, sameSite: 'Strict' }]);
 }
-module.exports = { authenticatePage };
+module.exports = { authenticatePage, resetAuth: base => cookies.delete(base) };

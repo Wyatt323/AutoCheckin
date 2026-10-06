@@ -83,7 +83,7 @@ const { createAdminAuth, requestSecurity } = require('../admin_auth');
       await page.click('#admin-logout'); await page.waitForURL('**/login');
       assert.equal((await page.request.get(base + '/api/state')).status(), 401);
       await page.fill('#admin-password', 'integration-secret'); await page.click('#auth-submit'); await page.waitForURL(base + '/'); await page.context().clearCookies();
-      await page.evaluate(() => fetch('/api/state').then(() => {}));
+      // Natural application polling detects expiry; evaluating during redirect races navigation.
       await page.waitForURL('**/login', { timeout: 15000 }); assert.deepEqual(errors, []);
       console.log('Real Chromium admin auth PASS: desktop/mobile/error screenshots, autofocus, reveal, password clearing, login/logout, 401 expiry redirect, no browser storage');
     }
