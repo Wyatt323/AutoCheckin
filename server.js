@@ -4,6 +4,7 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const automation = require('./automation');
 const { createScheduler } = require('./checkin_scheduler');
+const { createLoginController } = require('./login');
 
 const ROOT = __dirname;
 const DATA_ROOT = path.resolve(process.env.AUTOCHECKIN_DATA_DIR || ROOT);
@@ -267,7 +268,7 @@ function startRun(account = null, trigger = 'manual') {
   const selected = account ? config.users.filter(user => user.session === account) : config.users;
   if (!selected.length) throw new Error(`找不到账号 ${account}`);
   if (!selected.some(user => user.bots.length)) throw new Error('该账号没有配置签到 Bot，请先在账号管理中添加 Bot。');
-  if (selected.some(user => user.bots.length && !user.sessionReady)) throw new Error('有配置了 Bot 的账号缺少 Session 文件。请先在终端运行原脚本完成 Telegram 登录。');
+  if (selected.some(user => user.bots.length && !user.sessionReady)) throw new Error('有配置了 Bot 的账号缺少 Session 文件。请先在账号管理中点击登录完成 Telegram 登录。');
   run = { state: 'running', trigger, account, startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, lines: [] };
   addLine(`使用 ${python.version} 启动${account ? `账号 ${account} 的` : '批量'}签到`, 'system');
   child = spawn(python.name, [...python.prefix, '-u', 'allinone.py', ...(account ? ['--account', account] : [])], {
@@ -297,7 +298,7 @@ function startRun(account = null, trigger = 'manual') {
 }
 
 async function launchRun(account = null, trigger = 'manual') {
-  if (child || runStarting) throw new Error('签到任务正在运行');
+  if (child || runStarting || login.active()) throw new Error('签到或登录任务正在运行');
   runStarting = true;
   try {
     await automation.stop();
@@ -325,18 +326,27 @@ function bodyJson(req) {
 }
 
 const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
-automation.configure({ root: ROOT, dataDir: DATA_ROOT, readConfig, pythonCommand, canRun: () => !child && !runStarting && !shuttingDown });
-const scheduler = createScheduler({ root: DATA_ROOT, readConfig, runAccount: account => launchRun(account, 'scheduled'), isBusy: () => !!child || runStarting || shuttingDown });
+const login = createLoginController({ root: ROOT, dataDir: DATA_ROOT, readConfig, pythonCommand, isBusy: () => !!child || runStarting || shuttingDown, stopAutomation: () => automation.stop(), resumeAutomation: () => { if (!shuttingDown) automation.start(); } });
+automation.configure({ root: ROOT, dataDir: DATA_ROOT, readConfig, pythonCommand, canRun: () => !child && !runStarting && !login.active() && !shuttingDown });
+const scheduler = createScheduler({ root: DATA_ROOT, readConfig, runAccount: account => launchRun(account, 'scheduled'), isBusy: () => !!child || runStarting || login.active() || shuttingDown });
 http.createServer(async (req, res) => {
   try {
     if (req.headers.host !== `${PUBLIC_HOST}:${PORT}`) return send(res, 403, { error: '仅允许本地访问' });
     const url = new URL(req.url, `http://${PUBLIC_HOST}:${PORT}`);
     if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== `http://${PUBLIC_HOST}:${PORT}`) return send(res, 403, { error: '跨站请求被拒绝' });
     if (url.pathname.startsWith('/api/')) {
+      if (req.method === 'GET' && url.pathname === '/api/login/status') return send(res, 200, { login: login.status() });
+      if (req.method === 'POST' && url.pathname.startsWith('/api/login/')) {
+        const input = await bodyJson(req);
+        if (shuttingDown) throw new Error('服务正在停止');
+        if (url.pathname === '/api/login/start') return send(res, 200, { login: await login.start(input.account) });
+        if (url.pathname === '/api/login/password') return send(res, 200, { login: login.password(input.id, input.password) });
+        if (url.pathname === '/api/login/cancel') return send(res, 200, { login: login.cancel(input.id) });
+      }
       if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, { config: viewConfig(readConfig()), run: { ...run, lines: run.lines.slice(-150) }, automation: automation.getState(), checkinScheduler: scheduler.getState(), python: pythonCommand()?.version || null });
       if (req.method === 'POST' && url.pathname === '/api/config') {
         const input = await bodyJson(req);
-        if (child || runStarting || shuttingDown) throw new Error('运行期间不能修改配置');
+        if (child || runStarting || login.active() || shuttingDown) throw new Error('运行或登录期间不能修改配置');
         const config = saveConfig(input);
         await automation.restart();
         return send(res, 200, { config, automation: automation.getState(), checkinScheduler: scheduler.getState() });
@@ -347,7 +357,7 @@ http.createServer(async (req, res) => {
         await launchRun(account);
         return send(res, 200, { ok: true });
       }
-      if (req.method === 'POST' && url.pathname === '/api/automation/restart') { if (child || runStarting || shuttingDown) throw new Error('运行期间不能重启自动化'); await automation.restart(); return send(res, 200, { automation: automation.getState() }); }
+      if (req.method === 'POST' && url.pathname === '/api/automation/restart') { if (child || runStarting || login.active() || shuttingDown) throw new Error('运行或登录期间不能重启自动化'); await automation.restart(); return send(res, 200, { automation: automation.getState() }); }
       if (req.method === 'POST' && url.pathname === '/api/stop') {
         if (!child) throw new Error('当前没有运行中的任务');
         run.state = 'stopping';
@@ -359,7 +369,7 @@ http.createServer(async (req, res) => {
     }
     if (req.method !== 'GET') return send(res, 405, { error: '不支持的请求' });
     const file = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
-    if (!['index.html', 'app.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css'].includes(file)) return send(res, 404, { error: '页面不存在' });
+    if (!['index.html', 'app.js', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css'].includes(file)) return send(res, 404, { error: '页面不存在' });
     const target = path.join(PUBLIC, file);
     res.writeHead(200, { 'Content-Type': types[path.extname(file)], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     fs.createReadStream(target).pipe(res);
@@ -380,6 +390,7 @@ async function shutdown() {
   deadline.unref();
   if (child) child.kill();
   scheduler.stop();
+  await login.shutdown();
   await automation.stop();
   process.exit(0);
 }

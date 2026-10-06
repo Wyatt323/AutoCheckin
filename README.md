@@ -47,15 +47,9 @@ Python 选择顺序：显式 `PYTHON_BIN` → 项目 `.venv` → 系统解释器
 ## 首次配置与登录
 
 1. 在网页添加账号，填写名称、Session 名称、该账号的 API ID / API Hash。API 凭据可从 [my.telegram.org](https://my.telegram.org) 获取。
-2. 添加该账号的签到 Bot，选择按钮方式或命令方式，例如 `/sign`；添加 AI 服务的兼容 API 地址、API Key 和模型名称，然后保存。
-3. 在项目目录执行以下命令，按脚本提示扫码登录；启用两步验证的账号还需输入密码：
-
-   ```bash
-   python3 allinone.py --account Session名称
-   # 使用虚拟环境时：.venv/bin/python allinone.py --account Session名称
-   ```
-
-4. 登录成功后刷新网页，确认 Session 就绪。此命令同时运行该账号的签到，不是仅登录命令。
+2. 保存账号配置。登录不需要 Bot 或 AI 服务。
+3. 点击账号卡片的「登录」或账号资料中的「登录 Telegram」，使用手机 Telegram 的「设置 → 设备 → 连接桌面设备」扫描网页二维码；启用两步验证时，在弹窗中输入密码。
+4. 登录成功后 Session 状态自动更新。二维码过期会自动刷新；可取消登录，刷新网页也可恢复进行中的登录弹窗。登录独立进程不执行签到，密码不写入配置或日志。
 5. 通过账号卡片的执行按钮手动签到，或添加定时计划。
 
 Session 名称需与网页完全一致，只能包含字母、数字、下划线、点和连字符，不允许路径。**修改 Session 名称不会自动迁移原文件**。存在 Session 文件也不代表凭据仍有效，失效后需要重新登录。
@@ -75,11 +69,7 @@ docker compose logs -f autocheckin
 
 打开 **http://127.0.0.1:8765**。Compose 只向宿主机回环地址发布端口；启动前确保本机 Node 服务没有占用 8765。
 
-配置保存后，在容器中完成账号登录 / 签到：
-
-```bash
-docker compose exec autocheckin python -u allinone.py --account Session名称
-```
+配置保存后，直接在网页点击账号的「登录」完成扫码和两步验证，无需进入容器。登录期间自动化暂停，结束后恢复；为避免 Session 冲突，签到运行期间不能登录，登录期间不能签到、保存配置或重启自动化。不要同时从终端操作同一 Session。
 
 `./data` 挂载到 `/data`，保存配置、Session 与定时状态。重建镜像和 `docker compose down` 不会删除此目录。镜像构建通过 `.dockerignore` 排除真实配置、Session、缓存和数据目录。需要从源码构建时运行 `docker build -t autocheckin:local .`。
 
@@ -106,7 +96,7 @@ docker compose up -d
 
 成功发送记录写入 `.automation-state.json`，签到触发记录写入 `.checkin-schedule-state.json`。**这不是严格的 exactly-once 保证**：在 Telegram 操作与本地写盘之间发生崩溃时，仍可能遗漏或重复执行。
 
-服务停止后所有自动任务停止；任务必须已有可用 Session，网页不会提供交互式 Telegram 登录。
+服务停止后所有自动任务及进行中的登录停止；任务必须已有可用 Session，可先在网页完成 Telegram 登录。
 
 ## 环境变量
 

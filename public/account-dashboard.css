@@ -45,3 +45,12 @@
 .account-detail .automation-log { margin-top: 25px; }
 @media (max-width: 1250px) { #view-accounts .account-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) { #view-accounts .account-grid { grid-template-columns: 1fr; } .account-detail-header { flex-wrap: wrap; } .account-detail-header .save-btn { margin-left: auto; } .account-tabs button { padding: 11px 12px 14px; } }
+#login-dialog { width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; border: 1px solid #dce1ed; border-radius: 18px; padding: 28px; color: #253048; box-shadow: 0 24px 80px #18233833; }
+#login-dialog::backdrop { background: #15213d88; }
+#login-dialog h2 { margin: 0 0 12px; }
+#login-dialog p { line-height: 1.6; }
+#login-qr { display: block; max-width: 100%; height: auto; margin: 16px auto; }
+#login-qr[hidden], #login-password-form[hidden] { display: none; }
+#login-password-form label { display: grid; gap: 8px; margin: 16px 0; }
+#login-password { padding: 12px; border: 1px solid #cbd3e1; border-radius: 8px; width: 100%; box-sizing: border-box; }
+#login-cancel { margin-top: 16px; }

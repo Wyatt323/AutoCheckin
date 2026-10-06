@@ -18,6 +18,7 @@ async function main() {
   let child;
   try {
     fs.copyFileSync(path.join(__dirname, '..', 'server.js'), path.join(directory, 'server.js'));
+    fs.copyFileSync(path.join(__dirname, '..', 'login.js'), path.join(directory, 'login.js'));
     fs.copyFileSync(path.join(__dirname, '..', 'automation.js'), path.join(directory, 'automation.js'));
     fs.copyFileSync(path.join(__dirname, '..', 'checkin_scheduler.js'), path.join(directory, 'checkin_scheduler.js'));
     fs.writeFileSync(path.join(directory, 'config.json'), JSON.stringify({

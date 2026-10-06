@@ -130,7 +130,7 @@ async def main():
             try:
                 await client.connect()
                 if not await client.is_user_authorized():
-                    emit(f"账号 {session} 尚未登录，请先在终端完成登录", "error")
+                    emit(f"账号 {session} 尚未登录，请先在账号管理中完成登录", "error")
                     await client.disconnect()
                     connected_clients.remove(client)
                     continue

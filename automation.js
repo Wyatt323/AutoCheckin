@@ -49,7 +49,7 @@ function start() {
   for (const session of sessions) {
     if (!users.some(user => (user.session || user.name) === session) || !require('node:fs').existsSync(path.join(context.dataDir || context.root, `${session}.session`))) {
       state.status = 'unavailable';
-      state.message = `账号 ${session} 缺少 Session 文件，请先在终端登录`;
+      state.message = `账号 ${session} 缺少 Session 文件，请先在账号管理中登录`;
       return;
     }
   }
