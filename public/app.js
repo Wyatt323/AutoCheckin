@@ -130,6 +130,7 @@ function renderConfig() {
   if (selectedAccountIndex !== null && !config.users[selectedAccountIndex]) selectedAccountIndex = null;
   $('#account-overview').hidden = selectedAccountIndex !== null;
   $('#account-detail').hidden = selectedAccountIndex === null;
+  if (selectedAccountIndex === null) $('#account-editor').replaceChildren();
   if (selectedAccountIndex !== null) {
     const user = config.users[selectedAccountIndex];
     $('#account-detail-name').textContent = user.name || '新账号';
@@ -154,8 +155,7 @@ function renderConfig() {
     controls.querySelector('[data-clear-api-hash]').addEventListener('click', () => { user.clearApiHash = true; fields.querySelector('[data-field="apiHash"]').value = ''; fields.querySelector('[data-field="apiHash"]').placeholder = '保存后继承全局 Hash'; updateCredentials(); });
     updateCredentials();
     const deleteAccount = $('#account-editor [data-delete="user"]');
-    deleteAccount.disabled = config.users.length === 1;
-    if (deleteAccount.disabled) deleteAccount.title = '至少保留一个账号';
+    deleteAccount.disabled = false;
     showAccountSection(accountSection);
   }
   $('#provider-list').innerHTML = config.providers.map((provider, index) => `
@@ -304,6 +304,7 @@ function readEditors() {
   config.telegram.apiHash = $('#global-api-hash').value;
   $$('#account-editor .account-card').forEach(card => {
     const item = config.users[Number(card.dataset.index)];
+    if (!item) return; // Discard stale editors after deleting an account.
     const previousSession = item.session;
     item.useGlobalCredentials = card.querySelector('[data-use-global]').checked;
     card.querySelectorAll('.account-fields [data-field]').forEach(input => { item[input.dataset.field] = input.value; });

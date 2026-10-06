@@ -44,6 +44,18 @@ const {spawn}=require('node:child_process');
     assert.equal(status.login.state,'cancelled'); assert.equal(status.login.active,false); assert.equal(status.login.png,undefined);
     await page.waitForFunction(()=>!document.querySelector('[data-login-account="1"]').disabled);
     await page.locator('[data-login-account="1"]').click(); await page.locator('#login-qr:not([hidden])').waitFor();
+    await page.locator('#login-cancel').click();
+    await page.waitForFunction(()=>!document.querySelector('[data-login-account="1"]').disabled);
+    await page.locator('[data-open-account="1"][data-section="settings"]').first().click();
+    await page.locator('[data-delete="user"]').click();
+    assert.equal(await page.locator('#account-editor .account-card').count(),0, 'removed editor must not survive deletion');
+    await page.evaluate(()=>readEditors());
+    await page.locator('#add-account').click();
+    await page.locator('[data-delete="user"]').click();
+    await page.locator('[data-open-account="0"][data-section="settings"]').first().click();
+    await page.locator('[data-delete="user"]').click();
+    await page.evaluate(()=>readEditors());
+    assert.equal(await page.locator('.account-tile').count(),0);
     server.kill(); await new Promise(r=>server.once('close',r)); server=null;
     assert.deepEqual(errors,[]); console.log('Real Chromium offline integration PASS: PNG loaded, reload, wrong/correct 2FA, session refresh, cancel, API locks');
   } finally {
