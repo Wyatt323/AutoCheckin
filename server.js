@@ -174,7 +174,6 @@ function validateCheckinSchedules(input, name, botCount) {
 
 function saveConfig(input) {
   if (!Array.isArray(input.users) || !Array.isArray(input.providers)) throw new Error('配置格式不正确');
-  if (!input.users.length || !input.providers.length) throw new Error('至少需要一个账号和一个 AI 服务');
   if (input.users.length > 30 || input.providers.length > 20) throw new Error('配置条目过多');
   const original = readConfig();
   const oldUsers = original.telegram?.users || original.users || [];
@@ -223,7 +222,7 @@ function saveConfig(input) {
   });
   original.telegram = { ...(original.telegram || {}), users };
   delete original.telegram.dialog_folder;
-  original.ai = { ...(original.ai || {}), model: nonempty(input.model, 'AI 模型', 120), providers };
+  original.ai = { ...(original.ai || {}), model: providers.length ? nonempty(input.model, 'AI 模型', 120) : String(input.model || '').trim(), providers };
   delete original.ai.api_key;
   delete original.ai.base_url;
   delete original.users;

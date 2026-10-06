@@ -36,6 +36,20 @@ async function main() {
     const state = await response.json();
     assert.equal(state.config.users[0].bots[0].note, '');
     assert.equal(state.config.users[1].bots[0].name, '@example_bot');
+    const accountOnly = structuredClone(state.config);
+    accountOnly.providers = [];
+    accountOnly.model = '';
+    const partial = await fetch(`${base}/api/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(accountOnly) });
+    assert.equal(partial.status, 200, 'accounts can be saved before AI setup');
+    const aiOnly = structuredClone(state.config);
+    aiOnly.users = [];
+    aiOnly.providers[0].apiKey = 'secret-key';
+    const aiSaved = await fetch(`${base}/api/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(aiOnly) });
+    assert.equal(aiSaved.status, 200, 'AI can be saved before accounts');
+    // Restore initial keys before exercising empty-input secret retention.
+    state.config.users[0].apiHash = 'secret-hash';
+    state.config.users[1].apiHash = 'second-hash';
+    state.config.providers[0].apiKey = 'secret-key';
     state.config.users[0].bots[0].note = '每日签到站点 ,} ,] "quoted"';
     state.config.users[0].bots[0].mode = 'command';
     state.config.users[0].bots[0].command = '/checkin';
