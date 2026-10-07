@@ -35,6 +35,13 @@ if (typeof document !== 'undefined') {
   dialog.setAttribute('aria-labelledby', 'run-log-title');
   dialog.innerHTML = '<div class="run-modal-head"><h2 id="run-log-title">本次执行日志</h2><button id="run-log-close" class="outline-btn" type="button" aria-label="关闭执行日志">关闭</button></div><p id="run-log-target"></p><p id="run-log-status" role="status" aria-live="polite"></p><div id="run-log-output" class="log-console"></div><div class="run-modal-foot"><small>关闭窗口不会停止任务；日志按北京时间显示。</small><button id="run-log-stop" class="danger-btn" type="button">停止本次任务</button></div><p id="run-log-error" role="alert"></p>';
   document.body.append(dialog);
+  const historyContent = $('#log-history-content');
+  const historyHome = historyContent.parentElement;
+  const accountDialog = document.createElement('dialog');
+  accountDialog.id = 'account-log-dialog';
+  accountDialog.setAttribute('aria-labelledby', 'log-page-title');
+  accountDialog.innerHTML = '<div class="account-log-toolbar"><span class="kicker">ACCOUNT ACTIVITY</span><button id="account-log-close" class="outline-btn" type="button" aria-label="关闭账号日志" autofocus>关闭</button></div>';
+  document.body.append(accountDialog);
   const filters = document.createElement('form');
   filters.id = 'log-filters'; filters.className = 'log-filters';
   filters.innerHTML = `<label>日志分类<select id="log-filter-category"><option value="">全部分类</option>${Object.entries(categories).map(([value,label]) => `<option value="${value}">${label}</option>`).join('')}</select></label><label>账号<select id="log-filter-account"><option value="">所有账号</option><option value="__all__">全部账号（批量执行）</option></select></label><label>日期 · 北京时间<input id="log-filter-date" type="date"></label><label>开始时间<input id="log-filter-start" type="time" step="1"></label><label>结束时间<input id="log-filter-end" type="time" step="1"></label><label>运行状态<select id="log-filter-status"><option value="">所有状态</option>${Object.entries(statusText).map(([value,label]) => `<option value="${value}">${label}</option>`).join('')}</select></label><div class="log-filter-actions"><button class="primary-btn" type="submit">筛选</button><button class="outline-btn" type="reset">重置筛选</button></div><small id="log-scope-hint">定时任务包含账号与 Bot 签到（含手动执行）；按每条日志的北京时间筛选。</small>`;
@@ -53,13 +60,32 @@ if (typeof document !== 'undefined') {
     const user = config?.users.find(user => user.session === logScope);
     $('#log-page-title').textContent = logScope ? `${user?.name || logScope} · 运行日志` : '运行日志';
     $('#log-page-description').textContent = logScope ? '仅显示当前账号的定时任务、定时消息和监听转发记录。' : '查看全部账号的定时任务、定时消息和监听转发记录。';
-    $('#log-back').hidden = !logScope;
+    $('#log-back').hidden = !logScope || accountDialog.contains(historyContent);
     $('#log-error').hidden = true;
     // Drop the previous account's result immediately; revision alone is not a scope identity.
     runRecords = []; lastRevision = -1; lastQuery = null;
     renderHistory();
     if (typeof UIControls !== 'undefined') UIControls.refresh();
   };
+  window.openAccountLogs = account => {
+    if (typeof UIControls !== 'undefined') UIControls.close();
+    accountDialog.append(historyContent);
+    setRunLogScope(account);
+    if (typeof UIControls !== 'undefined') UIControls.refresh();
+    accountDialog.showModal();
+    refreshRunLogs();
+  };
+  const closeAccountLogs = () => {
+    if (typeof UIControls !== 'undefined') UIControls.close();
+    accountDialog.close();
+  };
+  $('#account-log-close').addEventListener('click', closeAccountLogs);
+  accountDialog.addEventListener('cancel', event => { event.preventDefault(); closeAccountLogs(); });
+  accountDialog.addEventListener('close', () => {
+    historyHome.append(historyContent);
+    setRunLogScope(null);
+    refreshRunLogs();
+  });
   $('#log-back').addEventListener('click', () => {
     const index = config?.users.findIndex(user => user.session === logScope);
     if (index >= 0) openAccount(index); else navigate('accounts');
@@ -115,9 +141,9 @@ if (typeof document !== 'undefined') {
     if (!dialog.open || dialog.classList.contains('ui-dialog-closing')) dialog.showModal();
     renderModal(); refreshRunLogs();
   };
-  const currentQuery = () => currentView === 'activity' && logScope && !dialog.open ? `?account=${encodeURIComponent(logScope)}` : '';
+  const currentQuery = () => (accountDialog.open || currentView === 'activity') && logScope && !dialog.open ? `?account=${encodeURIComponent(logScope)}` : '';
   window.refreshRunLogs = async () => {
-    if (polling || (!dialog.open && currentView !== 'activity')) return;
+    if (polling || (!dialog.open && !accountDialog.open && currentView !== 'activity')) return;
     polling = true;
     const query = currentQuery();
     try {

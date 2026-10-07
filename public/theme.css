@@ -284,7 +284,7 @@ input[type=checkbox] { accent-color: #159f48; }
 .log-console .log-line { display: grid; }
 .log-console .log-line.system { color: var(--green-soft); }
 .log-empty { color: #afbfce; }
-dialog#login-dialog, dialog#run-log-dialog, .ui-confirm-dialog { background: #fff; color: var(--ink); border: 3px solid var(--ink); border-radius: 23px; box-shadow: 7px 9px 0 var(--ink); padding: 28px; }
+dialog#login-dialog, dialog#run-log-dialog, dialog#account-log-dialog, .ui-confirm-dialog { background: #fff; color: var(--ink); border: 3px solid var(--ink); border-radius: 23px; box-shadow: 7px 9px 0 var(--ink); padding: 28px; }
 dialog::backdrop, #login-dialog::backdrop, #run-log-dialog::backdrop { background: #2e374866; backdrop-filter: blur(3px); }
 #login-dialog h2, .ui-confirm-dialog h2, .run-modal-head h2 { color: var(--ink); font-size: 23px; font-weight: 900; }
 #login-dialog p, .ui-confirm-dialog p, .run-modal-foot small { color: var(--muted); font-size: 13px; line-height: 1.8; }
@@ -435,7 +435,7 @@ dialog::backdrop, #login-dialog::backdrop, #run-log-dialog::backdrop { backgroun
   .log-filters label { flex: none; }
   .log-console { margin: 12px; font-size: 11px; }
   .settings-panel .field-grid { padding: 8px 17px 0; }
-  dialog#login-dialog, dialog#run-log-dialog, .ui-confirm-dialog { padding: 22px 18px; box-shadow: 4px 5px 0 var(--ink); }
+  dialog#login-dialog, dialog#run-log-dialog, dialog#account-log-dialog, .ui-confirm-dialog { padding: 22px 18px; box-shadow: 4px 5px 0 var(--ink); }
   .auth-layout { padding: 22px; }
   .auth-card { padding: 29px 23px; }
   .auth-card h1 { font-size: 28px; }

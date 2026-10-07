@@ -54,8 +54,10 @@
         <section class="view" id="view-ai"><div class="page-heading"><div><span class="kicker">AI SETTINGS</span><h1>AI 配置</h1><p>诗词验证码会依次尝试下方 AI 服务。普通图片验证码由本地 OCR 处理。</p></div><button class="primary-btn" id="add-provider">＋ 添加服务</button></div><div class="panel settings-panel"><div class="panel-head"><div><h3>通用设置</h3><p>用于所有账号的签到任务。</p></div></div><div class="field-grid"><label class="field"><span>AI 模型名称</span><input id="model-input" placeholder="例如 gpt-4o-mini"></label></div></div><div class="section-heading compact"><div><h2>服务列表</h2><p>按列表顺序尝试，前一个不可用时自动切换。</p></div></div><div id="provider-list" class="provider-list"></div><div class="bottom-save"><button class="primary-btn save-btn">保存配置</button></div></section>
         <section class="view" id="view-activity">
           <button class="account-back" id="log-back" type="button" hidden>← 返回账号配置</button>
+          <div id="log-history-content">
           <div class="page-heading"><div><span class="kicker">RUN ACTIVITY</span><h1 id="log-page-title">运行日志</h1><p id="log-page-description">查看全部账号的定时任务、定时消息和监听转发记录。</p></div></div>
           <div class="panel log-panel"><div class="panel-head"><div><h3>运行记录</h3><p>按账号和分类筛选，时间统一为北京时间。</p></div><span class="count-pill" id="log-count">0 行</span></div><div id="log-error" role="alert" hidden></div><div class="log-console" id="log-console"><div class="log-empty">运行日志会显示在这里。</div></div></div>
+          </div>
         </section>
       </div>
     </main>

@@ -87,8 +87,8 @@ function navigate(view, keepAccount = false, logAccount = null) {
 function openAccount(index, section = 'settings') {
   if (!config?.users[index]) return;
   readEditors();
+  if (section === 'logs') { openAccountLogs(config.users[index].session); return; }
   selectedAccountIndex = index;
-  if (section === 'logs') { navigate('activity', true, config.users[index].session); return; }
   accountSection = section;
   navigate('accounts', true);
   window.scrollTo({ top: 0, behavior: 'smooth' });
