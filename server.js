@@ -62,9 +62,13 @@ function viewConfig(config) {
   const ai = config.ai || {};
   const parseBots = (scope, notes) => {
     const bots = [];
+    const seen = new Set();
     const add = (name, mode, command = '/sign') => {
       name = String(name || '').trim();
-      if (name && !bots.some(item => item.name.toLowerCase() === name.toLowerCase())) bots.push({ name, mode, command, note: String(notes[name] || '') });
+      const key = name.toLowerCase();
+      if (!name || seen.has(key)) return;
+      seen.add(key);
+      bots.push({ name, mode, command, note: String(notes[name] || '') });
     };
     (scope.bots || []).forEach(name => add(name, 'button'));
     ((scope.bot_groups || {}).button || []).forEach(name => add(name, 'button'));
@@ -409,7 +413,7 @@ http.createServer(async (req, res) => {
         const input = await bodyJson(req);
         const user = viewConfig(readConfig()).users.find(user => user.session === input.account);
         if (!user) throw new Error('账号不存在');
-        const records = readDiscovery(user.session);
+        const records = structuredClone(readDiscovery(user.session));
         const bot = nonempty(input.bot, 'Bot', 100).toLowerCase();
         delete records[bot];
         if (database) await database.write(`discovery:${discoveryKey(user.session)}`, records);
@@ -447,7 +451,12 @@ http.createServer(async (req, res) => {
         if (url.pathname === '/api/login/cancel') return send(res, 200, { login: login.cancel(input.id) });
       }
       if (req.method === 'GET' && url.pathname === '/api/runs') return send(res, 200, history.snapshot());
-      if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, { config: viewConfig(readConfig()), run: { ...run, lines: run.lines.slice(-150) }, automation: automation.getState(), checkinScheduler: scheduler.getState(), python: pythonCommand()?.version || null });
+      if (req.method === 'GET' && url.pathname === '/api/state') {
+        const state = { run: { ...run, lines: run.lines.slice(-150) }, automation: automation.getState(), checkinScheduler: scheduler.getState(), python: pythonCommand()?.version || null };
+        // Routine polling needs status only; initial load and explicit refresh keep the full response.
+        if (url.searchParams.get('config') !== '0') state.config = viewConfig(readConfig());
+        return send(res, 200, state);
+      }
       if (req.method === 'POST' && url.pathname === '/api/config') {
         const input = await bodyJson(req);
         if (child || runStarting || login.active() || shuttingDown) throw new Error('运行或登录期间不能修改配置');

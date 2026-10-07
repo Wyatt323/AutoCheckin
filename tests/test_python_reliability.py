@@ -16,6 +16,14 @@ import automation_worker as worker
 
 
 class ConfigTests(unittest.TestCase):
+    def test_ocr_is_loaded_only_when_needed_and_reused(self):
+        self.assertIsNone(signer.ocr, 'importing the signer must not initialize OCR')
+        model = types.SimpleNamespace(classification=lambda value: 'ABCD')
+        with patch.object(signer, 'ocr', None), patch('ddddocr.DdddOcr', return_value=model) as factory:
+            self.assertIs(signer.get_ocr(), model)
+            self.assertIs(signer.get_ocr(), model)
+            factory.assert_called_once()
+
     def test_json_strings_are_not_rewritten(self):
         data = {'message': 'keep ,} and , ] and \\" and # and \\ paths', 'values': [',}', ', ]']}
         for parser in (signer.parse_config_text, worker.parse_config_text):

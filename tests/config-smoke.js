@@ -37,6 +37,10 @@ async function main() {
     }
     assert.ok(response?.ok, 'server started');
     const state = await response.json();
+    const statusOnly = await (await fetch(`${base}/api/state?config=0`)).json();
+    assert.equal(Object.hasOwn(statusOnly, 'config'), false, 'routine polling omits configuration');
+    for (const key of ['run', 'automation', 'checkinScheduler', 'python']) assert.ok(Object.hasOwn(statusOnly, key), key);
+    assert.equal(statusOnly.run.state, state.run.state);
     assert.equal(state.config.users[0].bots[0].note, '');
     assert.equal(state.config.users[1].bots[0].name, '@example_bot');
     const accountOnly = structuredClone(state.config);

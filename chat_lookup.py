@@ -12,8 +12,7 @@ import sys
 from contextlib import closing
 from pathlib import Path
 
-from storage import read_document
-from automation_worker import parse_config_text
+from storage import read_document, parse_config_text
 from telegram_credentials import resolve_credentials
 
 

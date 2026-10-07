@@ -6,10 +6,11 @@ async function createDatabase({ dataDir, parseConfig, pool: suppliedPool } = {})
   const pool = suppliedPool || new (require('pg').Pool)({ ...(process.env.DATABASE_URL ? { connectionString:process.env.DATABASE_URL } : {}), max:4, connectionTimeoutMillis:10000, query_timeout:15000, statement_timeout:15000, application_name:'AutoCheckin web' });
   pool.on?.('error', () => console.error('数据库空闲连接已断开，将在下次请求时重新连接'));
   const documents = new Map();
-  const client = await pool.connect();
+  let client;
   let failed = false;
   let importedCount = null;
   try {
+    client = await pool.connect();
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(42837123)');
     await client.query('CREATE TABLE IF NOT EXISTS autocheckin_documents (key text PRIMARY KEY, value jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())');
@@ -37,23 +38,29 @@ async function createDatabase({ dataDir, parseConfig, pool: suppliedPool } = {})
     if (!documents.has('config')) throw new Error('数据库中缺少配置，请检查首次迁移的数据目录');
   } catch (error) {
     failed = true;
-    await client.query('ROLLBACK').catch(() => {});
+    if (client) await client.query('ROLLBACK').catch(() => {});
     throw error;
-  } finally { client.release(); if (failed) await pool.end(); }
+  } finally { client?.release(); if (failed) await pool.end(); }
   let queue = Promise.resolve();
+  function enqueue(operation) {
+    const result = queue.then(operation);
+    queue = result.catch(() => {});
+    return result;
+  }
   function write(key, value) {
     const serialized = JSON.stringify(value);
-    const operation = queue.then(async () => {
+    return enqueue(async () => {
       await pool.query('INSERT INTO autocheckin_documents(key, value) VALUES($1, $2::jsonb) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()', [key, serialized]);
       documents.set(key, JSON.parse(serialized));
     });
-    queue = operation.catch(() => {});
-    return operation;
   }
-  async function refresh(key) {
-    const result = await pool.query('SELECT value FROM autocheckin_documents WHERE key = $1', [key]);
-    if (result.rows.length) documents.set(key, result.rows[0].value); else documents.delete(key);
-    return documents.get(key);
+  function refresh(key) {
+    // A slow SELECT must not overwrite a newer write in the shared cache.
+    return enqueue(async () => {
+      const result = await pool.query('SELECT value FROM autocheckin_documents WHERE key = $1', [key]);
+      if (result.rows.length) documents.set(key, result.rows[0].value); else documents.delete(key);
+      return documents.get(key);
+    });
   }
   return { read:key => documents.get(key), write, refresh, keys:() => [...documents.keys()], async close() { await queue; await pool.end(); } };
 }

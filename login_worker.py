@@ -10,9 +10,8 @@ import re
 import signal
 import sys
 from pathlib import Path
-from automation_worker import parse_config_text
 from account_profile import save_profile
-from storage import read_document
+from storage import read_document, parse_config_text
 
 
 def emit(kind, **fields):

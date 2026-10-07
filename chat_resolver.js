@@ -3,9 +3,10 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { resolveCredentials } = require('./telegram_credentials');
 
-function createChatResolver({root, dataDir, readConfig, pythonCommand, spawnWorker=spawn, timeoutMs=45000}) {
-  const cache = new Map(), pending = new Map(), jobs = new Set();
+function createChatResolver({root, dataDir, readConfig, pythonCommand, spawnWorker=spawn, timeoutMs=45000, stopGraceMs=2000}) {
+  const cache = new Map(), pending = new Map(), jobs = new Map();
   let closed = false;
+  let stopping;
   async function resolve(account, peers) {
     if (closed) throw new Error('服务正在停止');
     if (typeof account !== 'string' || !/^[\w.-]+$/.test(account) || ['.','..'].includes(account)) throw new Error('账号无效');
@@ -17,7 +18,9 @@ function createChatResolver({root, dataDir, readConfig, pythonCommand, spawnWork
     const stamp = fs.statSync(path.join(dataDir, `${account}.session`)).mtimeMs;
     const key = value => JSON.stringify([account, stamp, value.trim().toLowerCase()]);
     const valid = value => /^(?:-?\d{1,20}|@?[A-Za-z][A-Za-z0-9_]{4,31}|https:\/\/t\.me\/[A-Za-z0-9_]{5,32}\/?)$/i.test(value.trim());
-    const wanted = [...new Set(peers)].filter(value => valid(value) && (cache.get(key(value))?.expires || 0) < Date.now());
+    // Retain this request's results even if another batch evicts its cache entries.
+    const results = new Map(peers.map(value => [value, cache.get(key(value))]));
+    const wanted = [...new Set(peers)].filter(value => valid(value) && (results.get(value)?.expires || 0) <= Date.now());
     if (wanted.length) {
       const batchKey = JSON.stringify([account, stamp, wanted.slice().sort()]);
       let operation = pending.get(batchKey);
@@ -25,21 +28,25 @@ function createChatResolver({root, dataDir, readConfig, pythonCommand, spawnWork
         if (jobs.size>=2) throw new Error('名称查询繁忙，请稍后重试');
         const python = pythonCommand();
         if (!python) throw new Error('未找到 Python，暂时无法查询名称');
-        operation = runWorker(python, account, wanted).then(results => {
+        operation = runWorker(python, account, wanted).then(workerResults => {
+          const resolved = new Map();
           for (const value of wanted) {
-            const result = results.find(result => result?.value === value);
+            const result = workerResults.find(result => result?.value === value);
             const safe = result?.status === 'ok' && typeof result.title === 'string' && typeof result.id === 'string' && /^-?\d+$/.test(result.id) && ['channel','group'].includes(result.type)
               ? {status:'ok', title:result.title.slice(0,200), id:result.id, type:result.type}
               : {status:'error', message:result?.message === '此会话不是群组或频道' ? result.message : result?.message === '查询触发限流，请稍后重试' ? result.message : '无法获取，请检查 ID、用户名及账号权限'};
-            cache.set(key(value), {result:safe, expires:Date.now()+(safe.status==='ok'?600000:30000)});
+            const entry = {result:safe, expires:Date.now()+(safe.status==='ok'?600000:30000)};
+            cache.set(key(value), entry);
+            resolved.set(value, entry);
           }
           while (cache.size>300) cache.delete(cache.keys().next().value);
+          return resolved;
         }).finally(() => pending.delete(batchKey));
         pending.set(batchKey, operation);
       }
-      await operation;
+      for (const [value, entry] of await operation) results.set(value, entry);
     }
-    return peers.map(value => ({value, ...(valid(value) ? cache.get(key(value)).result : {status:'error',message:'请填写有效的 ID、用户名或公开 t.me 链接'})}));
+    return peers.map(value => ({value, ...(valid(value) ? results.get(value).result : {status:'error',message:'请填写有效的 ID、用户名或公开 t.me 链接'})}));
   }
   function runWorker(python, account, peers) {
     return new Promise((resolve, reject) => {
@@ -49,26 +56,37 @@ function createChatResolver({root, dataDir, readConfig, pythonCommand, spawnWork
           cwd:root, env:{...process.env,AUTOCHECKIN_DATA_DIR:dataDir,PYTHONIOENCODING:'utf-8'},stdio:['ignore','pipe','pipe'],windowsHide:true
         });
       } catch { reject(new Error('无法启动名称查询')); return; }
-      jobs.add(worker);
-      let output='', invalid=false, timedOut=false, killTimer;
-      const timer=setTimeout(() => {timedOut=true;worker.kill();killTimer=setTimeout(()=>worker.kill('SIGKILL'),2000);killTimer.unref?.();},timeoutMs);
+      let output='', invalid=false, timedOut=false, killTimer, stoppingWorker=false, finish;
+      const completion = new Promise(resolve => { finish=resolve; });
+      function stop() {
+        if (!stoppingWorker) {
+          stoppingWorker=true;
+          killTimer=setTimeout(()=>worker.kill('SIGKILL'),stopGraceMs);
+          killTimer.unref?.();
+          worker.kill();
+        }
+        return completion;
+      }
+      jobs.set(worker, stop);
+      const timer=setTimeout(() => {timedOut=true;stop();},timeoutMs);
       timer.unref?.();
       worker.stdout.setEncoding('utf8');
-      worker.stdout.on('data',chunk => {output+=chunk;if(output.length>100000){invalid=true;output='';worker.kill();}});
+      worker.stdout.on('data',chunk => {if(invalid)return;output+=chunk;if(output.length>100000){invalid=true;output='';stop();}});
       worker.stderr.resume();
       worker.on('error',()=>{invalid=true;});
       worker.on('close',code => {
-        clearTimeout(timer);clearTimeout(killTimer);jobs.delete(worker);
+        clearTimeout(timer);clearTimeout(killTimer);jobs.delete(worker);finish();
+        if (closed) return reject(new Error('服务正在停止'));
         if (timedOut) return reject(new Error('名称查询超时，请稍后重试'));
         try {const data=JSON.parse(output);if(code || invalid || !Array.isArray(data.results))throw new Error();resolve(data.results);}
         catch {reject(new Error('无法查询名称，请检查登录状态和网络后重试'));}
       });
     });
   }
-  async function shutdown() {
+  function shutdown() {
     closed=true;
-    const workers=[...jobs];
-    await Promise.all(workers.map(worker=>new Promise(resolve=>{worker.once('close',resolve);worker.kill();})));
+    stopping ||= Promise.all([...jobs.values()].map(stop => stop())).then(() => {});
+    return stopping;
   }
   return {resolve,shutdown};
 }

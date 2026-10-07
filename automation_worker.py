@@ -2,7 +2,7 @@
 """Long-running Telegram scheduler and new-message forwarder."""
 
 from telegram_credentials import resolve_credentials
-from storage import read_document, write_document, database_enabled
+from storage import read_document, write_document, database_enabled, parse_config_text
 import asyncio
 import datetime as dt
 import json
@@ -23,51 +23,6 @@ CHINA_TIME = dt.timezone(dt.timedelta(hours=8))
 
 def emit(message, level="info", kind="log"):
     print(json.dumps({"type": kind, "level": level, "message": str(message)}, ensure_ascii=False), flush=True)
-
-
-def parse_config_text(text):
-    """Accept full-line # comments and trailing commas, never edit strings."""
-    output = []
-    in_string = escaped = False
-    line_start = True
-    index = 0
-    while index < len(text):
-        char = text[index]
-        if in_string:
-            output.append(char)
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-        elif char == '"':
-            in_string = True
-            output.append(char)
-        elif char == '#' and line_start:
-            while index < len(text) and text[index] != '\n':
-                index += 1
-            continue
-        elif char == ',':
-            following = index + 1
-            while following < len(text):
-                if text[following].isspace():
-                    following += 1
-                elif text[following] == '#' and text[text.rfind('\n', 0, following) + 1:following].strip() == '':
-                    end = text.find('\n', following)
-                    following = len(text) if end == -1 else end + 1
-                else:
-                    break
-            if following >= len(text) or text[following] not in '}]':
-                output.append(char)
-        else:
-            output.append(char)
-        if char == '\n':
-            line_start = True
-        elif not char.isspace():
-            line_start = False
-        index += 1
-    return json.loads(''.join(output))
 
 
 def load_config():

@@ -24,6 +24,33 @@ const {createChatResolver}=require('../chat_resolver');
     assert.equal(calls,4,'simultaneous identical requests share one worker');
     assert.ok(lastArgs.includes(path.join(root,'chat_lookup.py')));
     await resolver.shutdown();await assert.rejects(resolver.resolve('one',['@test_channel']));
+    const workers=[];
+    const slowOptions={...opts, stopGraceMs:5, spawnWorker:()=>{
+      const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();child.signals=[];
+      child.kill=(signal='SIGTERM')=>{child.signals.push(signal);if(signal==='SIGKILL')queueMicrotask(()=>child.emit('close',null));};
+      workers.push(child);return child;
+    }};
+    // A referenced watchdog also ensures unref'd process timers cannot silently end the test.
+    async function within(promise) {
+      let timer;
+      try { return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('worker cleanup hung')),2000);})]); }
+      finally {clearTimeout(timer);}
+    }
+    const slow=createChatResolver(slowOptions);
+    const cancelled=assert.rejects(slow.resolve('one',['@slow_channel']),/服务正在停止/);
+    const stopped=slow.shutdown();assert.equal(slow.shutdown(),stopped,'shutdown shares completion');
+    await within(Promise.all([cancelled,stopped]));
+    assert.deepEqual(workers[0].signals,['SIGTERM','SIGKILL'],'shutdown escalates without waiting for query timeout');
+    const timed=createChatResolver({...slowOptions,timeoutMs:10});
+    await within(assert.rejects(timed.resolve('one',['@slow_channel']),/超时/));
+    await timed.shutdown();
+    assert.deepEqual(workers[1].signals,['SIGTERM','SIGKILL']);
+    const oversized=createChatResolver(slowOptions);
+    const overflow=assert.rejects(oversized.resolve('one',['@slow_channel']),/无法查询名称/);
+    workers[2].stdout.write('x'.repeat(100001));
+    workers[2].stdout.write('x'.repeat(100001));
+    await within(overflow);await oversized.shutdown();
+    assert.deepEqual(workers[2].signals,['SIGTERM','SIGKILL'],'excess output stops once and discards further chunks');
     console.log('Chat resolver PASS: account isolation, Session cache invalidation, credential redaction, validation and shutdown');
   }finally{fs.rmSync(root,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
 })().catch(error=>{console.error(error);process.exitCode=1;});

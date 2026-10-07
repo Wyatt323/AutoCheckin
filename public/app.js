@@ -9,7 +9,6 @@ document.querySelector('#admin-logout')?.addEventListener('click', async () => {
 let currentRun = null;
 let pythonVersion = null;
 let currentView = 'overview';
-let lastLogId = 0;
 let openModeIndex = null;
 let automationState = null;
 let checkinSchedulerState = null;
@@ -79,6 +78,7 @@ function navigate(view, keepAccount = false) {
   $$('.view').forEach(item => item.classList.toggle('active', item.id === `view-${view}`));
   $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', ai:'AI 配置', activity:'运行日志' })[view];
   window.location.hash = view;
+  schedulePeerLookup();
   if (view === 'activity') renderRun();
 }
 
@@ -96,6 +96,7 @@ function showAccountSection(section) {
   $('#account-editor').hidden = !['settings','bots','checkins'].includes(section);
   $$('#account-tabs [data-account-section]').forEach(button => button.classList.toggle('active', button.dataset.accountSection === section));
   $$('#account-editor .account-pane,[data-account-pane="messages"],[data-account-pane="forwards"]').forEach(pane => { pane.hidden = pane.dataset.accountPane !== section; });
+  schedulePeerLookup();
 }
 
 function renderAccountBots(user, accountIndex) {
@@ -242,6 +243,7 @@ function peerField(field, label, value) {
 let peerLookupTimer = null, peerLookupRunning = false;
 const peerNames = new Map();
 const peerKey = (account, value) => JSON.stringify([account, value.trim().toLowerCase()]);
+const peerLookupVisible = () => !document.hidden && currentView === 'accounts' && selectedAccountIndex !== null && accountSection === 'forwards';
 function peerFields() { return [...document.querySelectorAll('#forward-list .peer-input-row input')]; }
 function paintPeerNames() {
   const account = config?.users[selectedAccountIndex]?.session;
@@ -256,11 +258,12 @@ function paintPeerNames() {
 }
 function schedulePeerLookup() {
   clearTimeout(peerLookupTimer);
+  if (!peerLookupVisible()) return;
   paintPeerNames();
   peerLookupTimer = setTimeout(resolvePeerNames, 650);
 }
 async function resolvePeerNames() {
-  if (peerLookupRunning) return;
+  if (peerLookupRunning || !peerLookupVisible()) return;
   const account = config?.users[selectedAccountIndex]?.session;
   if (!account) return;
   const peers = [...new Set(peerFields().map(input => input.value.trim()).filter(Boolean))].filter(value => {
@@ -500,7 +503,7 @@ async function poll() {
   if (pollPending) return;
   pollPending = true;
   try {
-    const data = await api('/api/state');
+    const data = await api('/api/state?config=0');
     currentRun = data.run;
     automationState = data.automation;
     checkinSchedulerState = data.checkinScheduler;
@@ -705,7 +708,11 @@ $('#today').textContent = new Date().toLocaleDateString('zh-CN', { year:'numeric
     const hash = location.hash.slice(1);
     if (['overview','bots','accounts','ai','automation','activity'].includes(hash)) navigate(hash);
     if (!pythonVersion) toast('未检测到 Python，配置可编辑，运行需安装 Python 环境', true);
-    const statePollTimer = setInterval(poll, 2000);
+    const statePollTimer = setInterval(() => { if (!document.hidden) poll(); }, 2000);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) poll();
+      schedulePeerLookup();
+    });
     window.addEventListener('pagehide', () => clearInterval(statePollTimer), { once: true });
   } catch (error) { toast(`加载失败：${error.message}`, true); }
 })();
