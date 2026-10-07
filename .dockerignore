@@ -2,6 +2,9 @@
 .github
 data
 config.json
+.account-profiles
+.bot-discovery
+node_modules
 **/*.session
 **/*.session-*
 **/__pycache__

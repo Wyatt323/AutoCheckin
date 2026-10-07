@@ -6,12 +6,12 @@ function beijingParts(date) {
   return new Date(date.getTime() + 8 * 3600000).toISOString().slice(0, 16);
 }
 
-function createScheduler({ root, readConfig, runAccount, isBusy, now = () => new Date(), rng = Math.random, intervalMs = 1000 }) {
+function createScheduler({ root, readConfig, runAccount, isBusy, store = null, now = () => new Date(), rng = Math.random, intervalMs = 1000 }) {
   const file = path.join(root, '.checkin-schedule-state.json');
   let state = { claimed: {}, pending: [], events: [], planned: {} };
   let saved;
   try {
-    const loaded = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const loaded = store ? structuredClone(store.read('checkin-state')) : JSON.parse(fs.readFileSync(file, 'utf8'));
     if (loaded && typeof loaded === 'object') {
       if (loaded.claimed && typeof loaded.claimed === 'object' && !Array.isArray(loaded.claimed)) state.claimed = loaded.claimed;
       if (Array.isArray(loaded.pending)) state.pending = loaded.pending.filter(item => item && typeof item.key === 'string' && typeof item.account === 'string');
@@ -21,17 +21,20 @@ function createScheduler({ root, readConfig, runAccount, isBusy, now = () => new
   } catch (error) { if (error.code !== 'ENOENT') console.error('读取签到计划状态失败:', error); }
   // Keep a committed snapshot: a failed write must not consume an occurrence in memory.
   saved = JSON.stringify(state);
-  let hasFile = fs.existsSync(file);
+  let hasFile = store ? Boolean(store.read('checkin-state')) : fs.existsSync(file);
   let timer = null;
   let ticking = false;
 
-  function persist() {
+  async function persist() {
     const serialized = JSON.stringify(state);
     if (hasFile && serialized === saved) return;
     const temp = `${file}.tmp`;
     try {
-      fs.writeFileSync(temp, JSON.stringify(state, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-      fs.renameSync(temp, file);
+      if (store) await store.write('checkin-state', state);
+      else {
+        fs.writeFileSync(temp, JSON.stringify(state, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+        fs.renameSync(temp, file);
+      }
       saved = serialized;
       hasFile = true;
     } catch (error) {
@@ -56,7 +59,9 @@ function createScheduler({ root, readConfig, runAccount, isBusy, now = () => new
       for (const user of users) {
         const account = user.session || user.name;
         if (!account) continue;
-        for (const rule of user.checkin_schedules || []) {
+        const rules = [...(user.checkin_schedules || []).map(rule => ({...rule, bot:null})),
+          ...(!user.dialog_folder ? Object.entries(user.bot_schedules || {}).map(([bot, rule]) => ({ ...rule, id:`bot:${bot.toLowerCase()}`, bot, repeat:'daily', timeMode:'fixed' })) : [])];
+        for (const rule of rules) {
           const occurrence = rule.repeat === 'daily' ? minute.slice(0, 10) : rule.time;
           // Tuple encoding avoids both cross-account collisions and delimiter ambiguity.
           const key = JSON.stringify([account, rule.id, occurrence]);
@@ -81,8 +86,8 @@ function createScheduler({ root, readConfig, runAccount, isBusy, now = () => new
           } else delete state.planned[key];
           if (!Object.hasOwn(state.claimed, key) && timing.due(rule, current, state.planned[key])) {
             state.claimed[key] = current.toISOString();
-            state.pending.push({ key, ruleId: rule.id, account, name: user.name || user.session });
-            event('签到计划已触发', 'info', account);
+            state.pending.push({ key, ruleId: rule.id, account, bot:rule.bot, name: user.name || user.session });
+            event(rule.bot ? `${rule.bot} 独立定时已触发` : '签到计划已触发', 'info', account);
           }
         }
       }
@@ -95,15 +100,15 @@ function createScheduler({ root, readConfig, runAccount, isBusy, now = () => new
       const queuedKeys = new Set(state.pending.map(item => item.key));
       for (const key of Object.keys(state.claimed)) if (!valid.has(key) && !queuedKeys.has(key)) delete state.claimed[key];
       for (const key of Object.keys(state.planned)) if (!valid.has(key)) delete state.planned[key];
-      persist();
+      await persist();
       if (!isBusy() && state.pending.length) {
         const item = state.pending.shift();
-        persist();
+        await persist();
         try {
-          await runAccount(item.account);
-          event('定时签到已启动', 'info', item.account);
+          await runAccount(item.account, item.bot || null);
+          event(item.bot ? `${item.bot} 独立签到已启动` : '定时签到已启动', 'info', item.account);
         } catch (error) { event(`定时签到启动失败：${error.message}`, 'error', item.account); }
-        persist();
+        await persist();
       }
     } catch (error) { console.error('签到计划检查失败:', error); }
     finally { ticking = false; }

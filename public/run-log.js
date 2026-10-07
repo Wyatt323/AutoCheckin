@@ -36,17 +36,19 @@ if (typeof document !== 'undefined') {
   filters.addEventListener('submit', event => event.preventDefault());
   filters.addEventListener('input', renderHistory);
   filters.addEventListener('change', renderHistory);
-  filters.addEventListener('reset', () => { queueMicrotask(renderHistory); });
+  filters.addEventListener('reset', () => { setTimeout(renderHistory, 0); });
   function labelFor(run) {
     if (!run.account) return '全部账号（批量执行）';
     const user = config?.users.find(user => user.session === run.account);
-    return user ? `${user.name} (${run.account})` : run.account;
+    return (user ? `${user.name} (${run.account})` : run.account) + (run.bot ? ` · ${run.bot}` : '');
   }
   function lineHtml(line, detailed = false) {
     const parts = beijingParts(line.time);
     return `<div class="log-line ${escapeHtml(line.stream)}"><time>${parts ? (detailed ? `${parts.date} ` : '') + parts.time : '—'}</time><span>${detailed ? `<b class="log-scope">${escapeHtml(labelFor(line))} · ${escapeHtml(statusText[line.state] || line.state)} · ${line.trigger === 'scheduled' ? '定时' : '手动'}</b>` : ''}${escapeHtml(line.text)}</span></div>`;
   }
   function setOutput(element, html) {
+    if (element.dataset.output === html) return;
+    element.dataset.output = html;
     if (element.innerHTML === html) return;
     const bottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
     element.innerHTML = html;
@@ -83,11 +85,11 @@ if (typeof document !== 'undefined') {
     const index = runRecords.findIndex(record => record.id === run.id);
     if (index < 0) runRecords.push(run); else runRecords[index] = run;
     $('#run-log-error').textContent = '';
-    if (!dialog.open) dialog.showModal();
+    if (!dialog.open || dialog.classList.contains('ui-dialog-closing')) dialog.showModal();
     renderModal(); refreshRunLogs();
   };
   window.refreshRunLogs = async () => {
-    if (polling) return;
+    if (polling || (!dialog.open && currentView !== 'activity')) return;
     polling = true;
     try {
       const data = await api('/api/runs');
@@ -99,9 +101,11 @@ if (typeof document !== 'undefined') {
   $('#run-log-close').addEventListener('click', () => dialog.close());
   dialog.addEventListener('cancel', event => { event.preventDefault(); dialog.close(); });
   $('#run-log-stop').addEventListener('click', async () => {
-    if (!confirm('确定停止本次签到任务？关闭日志窗口不会停止任务。')) return;
+    const runId = modalRunId;
+    const accepted = typeof UIControls !== 'undefined' ? await UIControls.confirm({ title:'停止本次签到', message:'确定停止本次签到任务？关闭日志窗口不会停止任务。', confirmText:'停止任务' }) : confirm('确定停止本次签到任务？关闭日志窗口不会停止任务。');
+    if (!accepted) return;
     try {
-      await api('/api/stop', { method: 'POST', body: JSON.stringify({ id: modalRunId }) });
+      await api('/api/stop', { method: 'POST', body: JSON.stringify({ id: runId }) });
       $('#run-log-stop').disabled = true; await poll();
     } catch (error) { $('#run-log-error').textContent = error.message; }
   });

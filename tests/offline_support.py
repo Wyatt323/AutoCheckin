@@ -3,6 +3,7 @@ import os
 import socket
 import sys
 import types
+from network_guard import install_network_guard, deny_network
 from pathlib import Path
 
 TEMP_ROOT = Path(os.environ.get('AUTOCHECKIN_TEST_TMPDIR') or os.environ.get('TMPDIR') or __import__('tempfile').gettempdir()) / 'autocheckin-python-tests'
@@ -10,13 +11,7 @@ TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 os.environ['AUTOCHECKIN_DATA_DIR'] = str(TEMP_ROOT)
 
 
-def deny_network(*args, **kwargs):
-    raise AssertionError('Network access forbidden in offline tests')
-
-
-socket.socket.connect = deny_network
-socket.socket.connect_ex = deny_network
-socket.create_connection = deny_network
+install_network_guard()
 
 
 def install_stubs():

@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from telegram_credentials import resolve_credentials
+from storage import read_document
 import asyncio
 import json
 import random
@@ -37,8 +38,8 @@ MAX_FAILED_ROUNDS = 0
 # 图片验证码的预期字符数，用于截取和校验 OCR 识别结果。
 CAPTCHA_LENGTH = 4
 # 相邻 Bot 之间随机等待时间的下限和上限，单位：秒。
-BOT_INTERVAL_MIN = 1
-BOT_INTERVAL_MAX = 10
+BOT_INTERVAL_MIN = 5
+BOT_INTERVAL_MAX = 15
 # 等待签到按钮出现的最长时间，以及检查按钮的间隔，单位：秒。
 SIGN_BUTTON_WAIT_SECONDS = 20
 SIGN_BUTTON_POLL_SECONDS = 1
@@ -96,8 +97,7 @@ def parse_config_text(text):
 def load_config(file_path=None):
     if file_path is None:
         file_path = DATA_DIR / "config.json"
-    with open(file_path, "r", encoding="utf-8") as f:
-        config = parse_config_text(f.read())
+    config = read_document('config', file_path, parser=parse_config_text)
 
     telegram = config["telegram"]
     ai = config["ai"]
@@ -106,7 +106,7 @@ def load_config(file_path=None):
     legacy_bot_groups = config.get("bot_groups", {})
     legacy_dialog_folder = telegram.get("dialog_folder")
 
-    ai_model = ai["model"]
+    ai_model = ai.get("model", "")
     ai_providers = ai.get("providers") or ([{"name": "default", "api_key": ai["api_key"], "base_url": ai["base_url"]}] if ai.get("api_key") and ai.get("base_url") else [])
     def parse_bots(bots, bot_groups):
         bot_list = []
@@ -157,6 +157,7 @@ def load_config(file_path=None):
             "bots": user_bots,
             "bot_commands": user_commands,
             "dialog_folder": user.get("dialog_folder", legacy_dialog_folder),
+            "bot_schedules": user.get("bot_schedules", {}),
         })
 
     return ai_model, ai_providers, normalized_users
@@ -318,7 +319,7 @@ def parse_result(text):
     t = text.replace(" ", "").replace("\n", "")
     if "已经签到" in t or "今日已签" in t:
         return "already"
-    if "签到成功" in t or "签到完成" in t or "已完成签到" in t or "打卡成功" in t or "获得" in t or "success" in t:
+    if "签到成功" in t or "签到完成" in t or "已完成签到" in t or "打卡成功" in t or re.search(r'\b(?:check.?in|sign.?in)\s*(?:successful|success)', t, re.I):
         return "success"
     if "验证码错误" in t:
         return "captcha_error"
@@ -333,7 +334,7 @@ class BotSigner:
         self.client = client
         self.ai_clients = ai_clients
         self.ai_model = ai_model
-        self.bot = bot
+        self.bot = int(bot) if isinstance(bot, str) and bot.isdigit() else bot
         self.command = command
         self.retry = 0
         self.done = False
@@ -342,6 +343,8 @@ class BotSigner:
         self.verifying = False
         self.attempt_started_at = None
         self.result = None
+        self.clicked_sign_button = False
+        self.saw_response = False
 
     def is_success(self):
         return self.result in ("✅ 已签到", "🎉 签到成功")
@@ -358,15 +361,18 @@ class BotSigner:
     async def click_sign(self):
         deadline = asyncio.get_running_loop().time() + SIGN_BUTTON_WAIT_SECONDS
         while asyncio.get_running_loop().time() < deadline:
+            if self.done:
+                return self.is_success()
             async for msg in self.client.iter_messages(self.bot, limit=10):
                 if self.attempt_started_at and msg.date < self.attempt_started_at - datetime.timedelta(seconds=5):
                     continue
                 if msg.buttons:
                     for row in msg.buttons:
                         for b in row:
-                            if any(kw in (b.text or "") for kw in ("签到", "每日签到", "签一下", "签")):
+                            if re.search(r'签到|每日签到|签一下|打卡|check.?in|sign.?in', b.text or '', re.I):
                                 print(f"  👉 点击签到按钮: {b.text}")
                                 click_result = await b.click()
+                                self.clicked_sign_button = True
                                 popup_text = getattr(click_result, "message", None)
                                 if popup_text:
                                     print(f"  💬 弹窗: {popup_text}")
@@ -575,11 +581,11 @@ class BotSigner:
 
 
 # ========= 主程序 =========
-async def run_signer_once(signer, bot):
+async def run_signer_once(signer, bot, timeout=120):
     try:
         await signer.start()
 
-        for _ in range(120):
+        for _ in range(timeout):
             if signer.done:
                 break
             await asyncio.sleep(1)
@@ -599,40 +605,81 @@ async def run_signer_once(signer, bot):
         signer.active = False
 
 
-async def resolve_dialog_folder(client, folder_name):
-    """按文件夹名称解析 Telegram folder id。"""
+async def resolve_dialog_filter(client, folder_name):
+    """Custom chat folders are dialog filters, not GetDialogs archive folder IDs."""
     if folder_name is None or str(folder_name).strip() == "":
         return None
     folder_name = str(folder_name).strip()
-    if folder_name.isdigit():
-        return int(folder_name)
-
-    filters = await client(functions.messages.GetDialogFiltersRequest())
-    for dialog_filter in filters:
+    if folder_name in ('0', '1'):
+        return {'builtin':int(folder_name)}
+    response = await client(functions.messages.GetDialogFiltersRequest())
+    for dialog_filter in getattr(response, 'filters', response):
         title = getattr(dialog_filter, "title", None)
         title = getattr(title, "text", title)
-        if isinstance(title, str) and title.strip() == folder_name:
-            return getattr(dialog_filter, "id", None)
+        if (folder_name.isdigit() and getattr(dialog_filter, 'id', None) == int(folder_name)) or (isinstance(title, str) and title.strip() == folder_name):
+            return dialog_filter
     return None
 
 
+async def resolve_dialog_folder(client, folder_name):
+    if folder_name is not None and str(folder_name).strip().isdigit():
+        return int(str(folder_name).strip())
+    dialog_filter = await resolve_dialog_filter(client, folder_name)
+    return dialog_filter.get('builtin') if isinstance(dialog_filter, dict) else getattr(dialog_filter, 'id', None)
+
+
+def dialog_in_filter(dialog, dialog_filter):
+    if isinstance(dialog_filter, dict):
+        return True  # Built-in main/archive filtering is handled by iter_dialogs.
+    entity = dialog.entity
+    peer_id = getattr(entity, 'id', None)
+    def ids(peers):
+        return {getattr(peer, 'user_id', getattr(peer, 'chat_id', getattr(peer, 'channel_id', None))) for peer in peers or []}
+    if peer_id in ids(getattr(dialog_filter, 'exclude_peers', [])):
+        return False
+    included = ids(getattr(dialog_filter, 'include_peers', [])) | ids(getattr(dialog_filter, 'pinned_peers', []))
+    if peer_id in included:
+        return True
+    if not getattr(dialog_filter, 'bots', False):
+        return False
+    if getattr(dialog_filter, 'exclude_archived', False) and getattr(dialog, 'archived', False):
+        return False
+    if getattr(dialog_filter, 'exclude_read', False) and not getattr(dialog, 'unread_count', 0):
+        return False
+    if getattr(dialog_filter, 'exclude_muted', False):
+        settings = getattr(getattr(dialog, 'dialog', None), 'notify_settings', None)
+        until = getattr(settings, 'mute_until', None)
+        if until and until > datetime.datetime.now(datetime.timezone.utc):
+            return False
+    return True
+
+
 async def get_account_bots(client, bots, dialog_folder=None):
-    """只返回指定 Telegram 文件夹中当前账号已有对话的 Bot。"""
+    """A selected folder is authoritative; never fall back to configured bots."""
     requested = {bot.lower().lstrip("@"): bot for bot in bots}
     available = set()
-    folder_id = await resolve_dialog_folder(client, dialog_folder)
-    if dialog_folder and folder_id is None:
+    dialog_filter = await resolve_dialog_filter(client, dialog_folder) if dialog_folder else None
+    if dialog_folder and dialog_filter is None:
         raise ValueError(f"找不到 Telegram 分组: {dialog_folder}")
 
     try:
+        folder_id = dialog_filter.get('builtin') if isinstance(dialog_filter, dict) else None
         async for dialog in client.iter_dialogs(folder=folder_id):
             entity = dialog.entity
             username = (getattr(entity, "username", None) or "").lower()
-            if username in requested:
+            if dialog_folder:
+                if getattr(entity, 'bot', False) and dialog_in_filter(dialog, dialog_filter):
+                    available.add('@' + username if username else str(entity.id))
+            elif username in requested:
                 available.add(requested[username])
     except Exception as e:
+        if dialog_folder:
+            raise RuntimeError('读取指定分组失败，已停止分组签到') from e
         print(f"⚠️ 读取账号对话列表失败，将跳过 Bot 筛选: {e}")
         return list(bots)
+
+    if dialog_folder:
+        return sorted(available)
 
     for bot in bots:
         if bot not in available:
@@ -642,7 +689,7 @@ async def get_account_bots(client, bots, dialog_folder=None):
 
 async def get_bot_display_name(client, bot):
     try:
-        entity = await client.get_entity(bot)
+        entity = await client.get_entity(int(bot) if isinstance(bot, str) and bot.isdigit() else bot)
         name = " ".join(
             part for part in (
                 getattr(entity, "first_name", None),
@@ -658,7 +705,7 @@ async def mark_all_read(client, bots):
     print("\n📨 标记已读...")
     for bot in bots:
         try:
-            await client.send_read_acknowledge(bot)
+            await client.send_read_acknowledge(int(bot) if isinstance(bot, str) and bot.isdigit() else bot)
         except Exception as e:
             print(f"  ⚠️ {bot} 标记已读失败: {e}")
 
@@ -671,9 +718,10 @@ def install_handlers(client, signers):
         if not sender:
             return
         username = getattr(sender, "username", None)
-        if not username:
-            return
+        username = username or ''
         bot = next((key for key in signers if key.lstrip("@").lower() == username.lower()), None)
+        if bot is None:
+            bot = next((key for key in signers if key == str(getattr(sender, 'id', ''))), None)
         if bot is None:
             return
         signer = signers[bot]
@@ -684,6 +732,7 @@ def install_handlers(client, signers):
         if signer.attempt_started_at and message_date and message_date < signer.attempt_started_at - datetime.timedelta(seconds=5):
             return
         text = event.raw_text or ""
+        signer.saw_response = True
         print(f"{bot} 📩 {text[:120]}")
 
         if "░" in text:
@@ -743,7 +792,7 @@ async def login_by_qr(client):
             return
 
 
-async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder=None):
+async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder=None, only_bot=None):
     session_name = user["session"]
     user_name = user["name"]
     api_id = user["api_id"]
@@ -766,6 +815,12 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
                 print(f"❌ Telegram 暂时禁止登录，还需等待 {e.seconds} 秒（约 {e.seconds / 3600:.1f} 小时）")
                 return False
         account_bots = await get_account_bots(client, bots, dialog_folder)
+        if only_bot is not None:
+            account_bots = [bot for bot in account_bots if bot.lower() == only_bot.lower()]
+        elif not dialog_folder:
+            # Independent schedules own these bots, including during manual batch runs.
+            independent = {bot.lower() for bot, rule in user.get('bot_schedules', {}).items() if rule.get('enabled')}
+            account_bots = [bot for bot in account_bots if bot.lower() not in independent]
         signers.update({bot: BotSigner(client, ai_clients, ai_model, bot, bot_commands.get(bot)) for bot in account_bots})
         print(f"\n====== 👤 开始用户 {user_name} ({session_name}) ======")
         print(f"配置 {len(bots)} 个Bot，当前账号可签到 {len(account_bots)} 个Bot")
@@ -787,7 +842,11 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
                 if round_no > 1:
                     signer.reset_for_rerun()
 
-                success = await run_signer_once(signer, bot)
+                if dialog_folder:
+                    from bot_discovery import run_discovered_bot
+                    success = await run_discovered_bot(signer, bot, session_name, DATA_DIR, run_signer_once)
+                else:
+                    success = await run_signer_once(signer, bot)
                 if not success:
                     failed_bots.append(bot)
 
@@ -822,7 +881,7 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
         print(f"🛑 用户 {user_name} 结束")
 
 
-async def main(account=None):
+async def main(account=None, bot=None):
     ai_model, ai_providers, users = load_config()
     if account is not None:
         users = [user for user in users if user['session'] == account]
@@ -830,24 +889,39 @@ async def main(account=None):
             raise ValueError(f'找不到 Session 为 {account} 的账号')
     ai_clients = build_ai_clients(ai_providers)
     if not ai_clients:
-        raise RuntimeError("未找到可用的 AI 配置")
+        print('未配置 AI；普通签到可执行，诗词验证码将无法自动作答')
 
     print("====== 🤖 开始批量签到 ======")
     print(f"共 {len(users)} 个用户, {sum(len(user['bots']) for user in users)} 个账号-Bot 配置")
 
+    previous_executed = False
+    failed_any = False
     for user in users:
         bots = user["bots"]
-        if not bots:
+        if not bots and not user['dialog_folder']:
             print(f"⏭️ 用户 {user['name']} 没有配置 Bot，跳过")
             continue
-        completed = await run_user(user, ai_model, ai_clients, bots, user["bot_commands"], user["dialog_folder"])
+        if previous_executed:
+            delay = random.randint(BOT_INTERVAL_MIN, BOT_INTERVAL_MAX)
+            print(f'⏳ 等待 {delay}s 后处理下一个账号的 Bot...')
+            await asyncio.sleep(delay)
+        previous_executed = True
+        if bot is None:
+            completed = await run_user(user, ai_model, ai_clients, bots, user["bot_commands"], user["dialog_folder"])
+        else:
+            completed = await run_user(user, ai_model, ai_clients, bots, user["bot_commands"], user["dialog_folder"], only_bot=bot)
         if not completed:
+            failed_any = True
             print(f"⚠️ 用户 {user['name']} 有未完成的 Bot，继续处理下一个账号")
+    return not failed_any
 
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='AutoCheckin Telegram 签到')
     parser.add_argument('--account', help='仅运行指定 Session 的账号')
+    parser.add_argument('--bot', help='仅运行指定 Bot，必须同时指定 --account')
     args = parser.parse_args()
-    asyncio.run(main(args.account))
+    if args.bot and not args.account:
+        parser.error('--bot requires --account')
+    sys.exit(0 if asyncio.run(main(args.account, args.bot)) else 1)

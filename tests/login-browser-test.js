@@ -9,7 +9,7 @@ const {spawn}=require('node:child_process');
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'login-browser-'));
   let server,browser;
   try {
-    for(const file of ['server.js','admin_auth.js','automation.js','login.js','schedule_time.js', 'run_history.js', 'checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
+    for(const file of ['database.js', 'account_profiles.js','server.js','admin_auth.js','automation.js','login.js','schedule_time.js', 'run_history.js', 'checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
     fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
     fs.copyFileSync(path.join(__dirname,'fixtures/login_worker.py'),path.join(root,'login_worker.py'));
     fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({telegram:{api_id:123,api_hash:'global-offline-hash',users:['offline','cancel'].map(session=>({name:session,session,...(session==='cancel'?{api_id:123,api_hash:'offline-hash'}:{}),bots:[]}))},ai:{providers:[]},automations:{schedules:[],forwards:[]}}));

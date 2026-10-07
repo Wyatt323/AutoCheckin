@@ -1,12 +1,13 @@
 .bot-table {
-  min-width: 820px;
+  min-width: 1100px;
   table-layout: fixed;
 }
-.bot-table th:nth-child(1) { width: 22%; }
-.bot-table th:nth-child(2) { width: 19%; }
-.bot-table th:nth-child(3) { width: 18%; }
-.bot-table th:nth-child(4) { width: 31%; }
-.bot-table th:nth-child(5) { width: 10%; }
+.bot-table th:nth-child(1) { width: 20%; }
+.bot-table th:nth-child(2) { width: 18%; }
+.bot-table th:nth-child(3) { width: 14%; }
+.bot-table th:nth-child(4) { width: 23%; }
+.bot-table th:nth-child(5) { width: 18%; }
+.bot-table th:nth-child(6) { width: 7%; }
 .bot-table td { vertical-align: middle; }
 .bot-note { background: #fcfcff; }
 

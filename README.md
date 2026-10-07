@@ -7,19 +7,22 @@ Telegram 多账号签到与消息自动化工具，提供本地 Web 管理界面
 ## 功能
 
 - **多账号管理**：全局 Telegram API 凭据统一配置，账号可逐字段覆盖；Session、签到 Bot 与对话分组仍独立保存。
-- **Bot 签到**：支持按钮交互和自定义命令；结合 AI / OCR 处理脚本支持的验证码及交互场景。不同 Bot 的交互流程不保证全部兼容。
-- **签到计划**：按账号配置每日或一次性任务，手动与定时签到串行执行。
+- **Bot 签到**：支持按钮交互和自定义命令，每个 Bot 完成后随机等待 5–15 秒再处理下一个。AI / OCR 辅助处理验证码；没有 AI 配置也能执行普通签到。
+- **签到计划**：按账号配置每日或一次性任务；Bot 管理中可指定单个 Bot 的独立每日时间，不跟随整账号签到。所有计划与手动签到串行执行。
+- **分组轮询**：在 Bot 管理中选择 Telegram 对话分组，只签到分组里的 Bot；首次识别按钮、`/sign`、`/checkin` 并记录方式。已确认无签到方式的 Bot 后续跳过；无响应或网络失败保留为待确认，可手动重新识别。
+- **PostgreSQL**：Compose 一并部署数据库，持久化配置、签到日志、调度状态、账号资料和 Bot 识别记录；首次启动自动导入旧文件。
 - **定时消息**：按账号向指定会话发送纯文本消息。
 - **监听转发**：监听群组或频道的新消息，转发至目标会话；不会重放历史消息或重新转发编辑消息。
 - **配置与日志**：网页编辑配置、查看运行状态与最近日志；密钥不回显，留空保存时保留已有密钥。
 
 ## 快速开始：本机运行
 
-需要 Node.js **22 或更新版本**、Python **3.10 或更新版本**。Node 服务只使用内置模块，无需 `npm install`。Python 依赖包含 OCR / 推理组件，安装体积较大，具体平台支持以依赖包为准。
+需要 Node.js **22 或更新版本**、Python **3.10 或更新版本**。运行 `npm ci` 安装 PostgreSQL 驱动。未配置数据库连接时，本机仍支持 JSON 文件模式。Python 依赖包含 OCR / 推理组件，安装体积较大，具体平台支持以依赖包为准。
 
 ```bash
 git clone https://github.com/Wyatt323/AutoCheckin.git
 cd AutoCheckin
+npm ci
 python3 -m pip install -r requirements.txt
 ADMIN_PASSWORD="replace-with-a-long-random-password" node server.js
 ```
@@ -28,6 +31,7 @@ ADMIN_PASSWORD="replace-with-a-long-random-password" node server.js
 
 ```bash
 python3 -m venv .venv
+npm ci
 .venv/bin/python -m pip install -r requirements.txt
 ADMIN_PASSWORD="replace-with-a-long-random-password" node server.js
 ```
@@ -36,6 +40,7 @@ Windows PowerShell：
 
 ```powershell
 python -m venv .venv
+npm ci
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 $env:ADMIN_PASSWORD="replace-with-a-long-random-password"
 node server.js
@@ -57,40 +62,54 @@ Python 选择顺序：显式 `PYTHON_BIN` → 项目 `.venv` → 系统解释器
 
 「运行日志」可组合筛选日期、开始/结束时间（精确到秒）、账号和运行状态，也可一键重置。日期与时间统一按北京时间，时间边界包含该秒；筛选不清除原日志。状态为所属执行任务的状态。批量执行显示「全部账号（批量执行）」，不将混合输出误标为某个单账号。
 
-签到运行历史写入数据目录 `logs/run-history.json`（Compose 为 `/data/logs/run-history.json`），原子替换，日志更新最多每 250 毫秒合并落盘，结束立即保存。保留最近 30 次执行的元数据，最多总计 3000 行、每次最多 800 行，较旧执行可能仅剩元数据；每行最多 2000 字符。重启后未完成任务标为失败/中断；落盘失败会在服务日志报告，但不使签到服务崩溃。运行日志可能含 Telegram 消息内容，请限制数据目录访问并保护备份。该历史只覆盖签到，不改变消息/转发后台日志。
+签到运行历史在 PostgreSQL 模式下写入数据库，文件模式下写入数据目录 `logs/run-history.json`，日志更新最多每 250 毫秒合并保存，结束立即保存。保留最近 30 次执行的元数据，最多总计 3000 行、每次最多 800 行，较旧执行可能仅剩元数据；每行最多 2000 字符。重启后未完成任务标为失败/中断；落盘失败会在服务日志报告，但不使签到服务崩溃。运行日志可能含 Telegram 消息内容，请限制数据目录访问并保护备份。该历史只覆盖签到，不改变消息/转发后台日志。
 
 Session 名称需与网页完全一致，只能包含字母、数字、下划线、点和连字符，不允许路径。**修改 Session 名称不会自动迁移原文件**。存在 Session 文件也不代表凭据仍有效，失效后需要重新登录。
 
-## Docker Compose
+## Docker Compose + PostgreSQL
 
-仓库提供直接使用 Docker Hub 镜像 `wyatt323/autocheckin:latest` 的 Compose 配置（当前发布平台为 `linux/amd64`）：
+同一个 `docker-compose.yaml` 部署源码构建的应用与 PostgreSQL 17。数据库不发布宿主机端口，应用等待数据库健康后启动。
 
 ```bash
 mkdir -p data
-# 容器以 node 用户（UID 1000）运行；Linux 上需确保挂载目录可写。
+# Linux 上确保 UID 1000 可写。Windows 使用 Docker Desktop 无需 chown。
 sudo chown 1000:1000 data
 cp .env.example .env
-# 编辑 .env，替换 ADMIN_PASSWORD 示例值；切勿提交 .env。
-docker compose pull
-docker compose up -d
+# 编辑 .env，分别设置 ADMIN_PASSWORD 和 POSTGRES_PASSWORD；不要提交 .env。
+docker compose up -d --build
 docker compose logs -f autocheckin
 ```
 
-打开 **http://127.0.0.1:8765**。Compose 只向宿主机回环地址发布端口；启动前确保本机 Node 服务没有占用 8765。
+打开 **http://127.0.0.1:8765**，首次构建会安装 Node/Python 依赖。配置和记录保存在 PostgreSQL 命名卷 `postgres-data`；`./data:/data` 保留 Telegram Session 文件和首次迁移的旧文件。普通 `docker compose down` 会保留数据，`down -v` 会删除数据库卷，不应作为日常更新命令。
 
-配置保存后，直接在网页点击账号的「登录」完成扫码和两步验证，无需进入容器。登录期间自动化暂停，结束后恢复；为避免 Session 冲突，签到运行期间不能登录，登录期间不能签到、保存配置或重启自动化。不要同时从终端操作同一 Session。
-
-`./data` 挂载到 `/data`，保存配置、Session 与定时状态。重建镜像和 `docker compose down` 不会删除此目录。镜像构建通过 `.dockerignore` 排除真实配置、Session、缓存和数据目录。需要从源码构建时运行 `docker build -t autocheckin:local .`。
-
-更新：
+更新代码：
 
 ```bash
 git pull --ff-only
-docker compose pull
-docker compose up -d
+docker compose up -d --build
 ```
 
-迁移本机数据时，**先停止服务**，把 `config.json`、`*.session`、`.automation-state.json` 和 `.checkin-schedule-state.json` 放入 `data/`，再调整目录权限并启动。不要同时在多个实例中使用同一份 Session。
+### 从旧数据迁移
+
+1. 停止原服务并备份原数据目录，确保没有其他实例占用 Session。
+2. 将 `config.json`、`*.session`、`.automation-state.json`、`.checkin-schedule-state.json`、`logs/run-history.json`、`.account-profiles/` 以及已有 `.bot-discovery/` 放入 `data/`，保留原目录结构。旧版已有 `data/` 的可继续使用。
+3. 设置 `.env` 的两个密码并运行 `docker compose up -d --build`。首次启动在数据库事务内导入所有现有文件，源文件不删除；异常 JSON 会中止迁移，不做部分导入。日志会显示导入数量。
+4. 后续启动以数据库为准，不会用旧文件覆盖数据库。修改旧 `config.json` 不再影响数据库模式；请使用网页配置。旧 Bot 备注、账号计划和分组字段保持兼容，分组入口改在 Bot 管理。
+
+数据库使用 `autocheckin_documents` 表和 JSONB 文档保存兼容配置结构。首次导入标记为 `migration:files-v1`；迁移失败修复源文件后重启即可。已有数据库配置不会被自动导入覆盖。
+
+### 备份与恢复
+
+备份前停止应用，数据库保持运行：
+
+```bash
+docker compose stop autocheckin
+docker compose exec -T postgres pg_dump -U autocheckin -d autocheckin > autocheckin-backup.sql
+# 同时备份整个 data/，包含 Telegram Session 文件。
+docker compose start autocheckin
+```
+
+恢复数据库到空的新数据库时使用 `psql -U autocheckin -d autocheckin < autocheckin-backup.sql`，同时恢复 `data/` 后启动应用。SQL 备份含账号凭据和日志，应与 Session 一起妥善保存；不要上传 GitHub。
 
 ## 定时任务与转发规则
 
@@ -103,12 +122,13 @@ docker compose up -d
 - **转发会话**：支持公开 `@用户名`、公开 `https://t.me/用户名` 或数字会话 ID（频道常见 `-100…`），不支持私有邀请链接。账号必须有读取来源、发送至目标的权限。
 - **规则校验**：拒绝同源同目标与可检测的同账号转发循环。不同账号之间、或同一会话使用不同标识时的循环仍需自行避免。
 
-成功发送记录写入 `.automation-state.json`，签到触发记录写入 `.checkin-schedule-state.json`。**这不是严格的 exactly-once 保证**：在 Telegram 操作与本地写盘之间发生崩溃时，仍可能遗漏或重复执行。
+PostgreSQL 模式保存调度触发和发送记录；文件模式分别保存到 `.automation-state.json` 与 `.checkin-schedule-state.json`。**这不是严格的 exactly-once 保证**：在 Telegram 操作与本地写盘之间发生崩溃时，仍可能遗漏或重复执行。
 
 服务停止后所有自动任务及进行中的登录停止；任务必须已有可用 Session，可先在网页完成 Telegram 登录。
 
 ## 环境变量
 
+- `PGHOST` / `PGPORT` / `PGDATABASE` / `PGUSER` / `PGPASSWORD`：PostgreSQL 连接参数。设置 `PGHOST` 后启用数据库模式，也支持 `DATABASE_URL`。Compose 已自动配置，密码来自 `.env` 的 `POSTGRES_PASSWORD`。
 - `PORT`：监听端口，默认 `8765`。
 - `ADMIN_PASSWORD`：必填，只从环境读取，不通过配置 API 返回或保存。修改后重启服务，现有会话失效。
 - `TRUST_PROXY`：默认 `false`；仅明确设为 `true` 且请求来源是回环地址时信任单一 `X-Forwarded-Proto: https`。不信任转发 IP，代理下登录限流按代理统一计算。
@@ -135,11 +155,11 @@ HTTPS 反代必须保留浏览器的 Origin，把上游 Host 设置为 `${PUBLIC
 
 ## 数据、安全与备份
 
-- 账号密钥、AI Key 明文保存于数据目录，Session 相当于账号登录凭据。限制目录访问权限，不要分享这些文件。
+- 账号密钥、AI Key 保存于 PostgreSQL（文件模式保存于数据目录），Session 相当于账号登录凭据。限制数据库和目录访问权限，保护 SQL 备份和 Session 文件。
 - 全局 API Hash、账号已有 API Hash / AI Key 不回显，输入框留空保存保留已有密钥。账号资料中的「使用全局凭据」会在保存时清空该账号 ID / Hash 覆盖；只清空 Hash 可用「清空账号 Hash 覆盖」按钮。取消开关可继续设置独立覆盖。
 - 配置文件全局字段为 `telegram.api_id` / `telegram.api_hash`；账号 `api_id` / `api_hash` 缺失、空字符串或 null 时逐字段继承全局。已有账号默认保持独立覆盖，不会自动选择其凭据作为全局值。所有 Python 执行路径在运行时解析凭据，不把全局 Hash 复制进账号配置。
 - 运行中的签到使用启动时读取的配置；启动及运行期间拒绝配置保存和自动化重启，避免争用 Session。
-- 日志仅保存在 Node 进程内存，重启后清空。签到保留最近 800 行；自动化日志也有数量上限。
+- 签到日志持久化，保留最近 30 次运行及总计 3000 行；自动化界面日志仍为有限内存缓冲。
 - 旧版顶层 `bots` / `bot_groups` / `bot_notes` 会作为账号初始配置读取，首次网页保存后迁移到账号独立配置。
 - 备份前停止服务，再备份整个数据目录；恢复时保持 Session 名称、文件名和目录权限一致。
 - `.gitignore` 排除真实配置、Session、虚拟环境与缓存，但不能撤销 Git 历史中的泄露；若曾提交真实凭据，应立即轮换密钥并撤销泄露的登录会话。
@@ -167,11 +187,25 @@ node tests/run-tests.js
 
 测试使用隔离配置、模拟客户端与本地服务，不需要真实 Telegram / AI 凭据，不会执行真实签到或发送消息。GitHub Actions 会运行同一测试入口。
 
+PostgreSQL 集成测试通过 `AUTOCHECKIN_TEST_DATABASE_URL` 显式指定测试服务器，会创建并删除独立测试数据库；不要指向生产服务器。GitHub Actions 的临时 PostgreSQL 17 服务会运行该测试。测试覆盖原子迁移、失败回滚、重启不覆盖旧数据、Node/Python 共享存储及网页配置保存。
+
+测试入口优先使用项目 `.venv`，也可通过 `PYTHON_BIN` 指定解释器；Windows 控制台统一使用 UTF-8。可选 Chromium 页面测试需要设置 `PLAYWRIGHT_MODULE` 为已安装 Playwright 模块的路径，未设置时会明确跳过。页面控件支持键盘操作：下拉菜单使用方向键、Enter 和 Escape；日期时间输入可直接键入，也可点击右侧图标使用主题日历与秒级时间选择器。
+
+## Bot 定时与分组使用
+
+在账号的「Bot 管理」选择手动列表或 Telegram 对话分组。手动列表的每行可勾选「独立每日签到」并设置北京时间；保存后生效，该 Bot 不再参与账号整体计划或批量手动签到。开启分组模式后，手动列表及其独立计划暂停，只有分组中的 Bot 被轮询。识别记录按账号分别保存，按钮和命令确认后复用；无有效响应保留为待确认。「重新识别」只清除对应 Bot 的识别记录，下次运行重新探测。
+
+弹窗、确认框、下拉菜单和日期时间面板均支持平滑开合，并尊重系统的减少动态效果设置。
+
 ## 项目结构
+
+账号卡片会显示 Telegram 头像、用户 ID 和当前 Session 的数据中心（DC）。登录成功后自动同步；已有 Session 的账号在打开账号管理时补充获取一次，也可点击「同步资料」更新。无头像时显示名称首字；网络失败保留上次资料。同步与签到/登录互斥，自动化会在同步结束后恢复。资料保存在 PostgreSQL，文件模式使用数据目录的 `.account-profiles/`；这些缓存目录已从 Git 和 Docker 构建上下文排除。头像接口需要后台登录，缓存不保存手机号、API Hash 或 Session 密钥。
 
 ```text
 server.js               Web 服务、配置校验、签到进程管理
-checkin_scheduler.js    按账号签到调度与持久化队列
+database.js / storage.py PostgreSQL 存储及旧文件迁移 / Python 数据接入
+checkin_scheduler.js    账号与 Bot 独立签到调度、持久化队列
+bot_discovery.py        分组 Bot 的签到方式探测与复用
 automation.js           自动化子进程管理
 automation_worker.py    定时消息与新消息转发
 allinone.py             Telegram 登录及 Bot 签到
@@ -194,7 +228,7 @@ tests/                  离线回归测试
 签到任务置于账号 `checkin_schedules`；消息任务还需 `account`、`target`、`message`，置于 `automations.schedules`。固定任务使用 `timeMode: "fixed"` 和 `time: "09:30:15"`。区间接受 `HH:mm` 或 `HH:mm:ss`，包含两端，开始等于结束合法；**不支持跨午夜**，开始晚于结束会明确拒绝。
 
 - 全部按北京时间（UTC+08:00）计算，每个账号/规则每天独立抽取整数秒。抽中时间在 UI 显示为 **HH:mm:ss**，只刷新结果，不覆盖正在输入的表单。
-- 当天抽取结果保存到数据目录 `.checkin-schedule-state.json` / `.automation-state.json`，重启不重抽；第二天重新抽取。修改尚未触发的区间会重新抽取；已触发/领取的当天任务不会因修改区间重复执行。禁用或删除会清理抽取计划。
+- 当天抽取结果在 PostgreSQL 模式下写入数据库，文件模式保存到 `.checkin-schedule-state.json` / `.automation-state.json`，重启不重抽；第二天重新抽取。修改尚未触发的区间会重新抽取；已触发/领取的当天任务不会因修改区间重复执行。禁用或删除会清理抽取计划。
 - 计划和执行领取记录必须成功原子写入后才允许执行。消息采用领取后至多一次尝试策略：发送失败、领取后进程退出或取消均不自动重发，避免未知发送结果造成重复；可手动新建一次性任务处理。
 - 服务每约 1 秒检查。旧每日 `HH:mm` 保留当分钟 60 秒窗口；每日固定秒和随机任务只在抽中时刻起 **10 秒内**领取（区间结束限制的是抽取时间，不是执行截止，终点抽取仍有 10 秒领取窗口）；一次性任务维持 5 分钟窗口。超过窗口的停机/暂停任务**不补跑**。新启动抽取到过去且超窗的时间也不补跑。
 - 签到在窗口内领取后可排队等待忙碌任务完成，实际开始可能晚于抽取时间。Telegram 连接、网络、限流和事件循环负载也会造成延迟，秒精度是计划精度，不承诺实时准点。

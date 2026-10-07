@@ -1,0 +1,9 @@
+{
+  "name": "autocheckin",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Telegram check-in and automation dashboard",
+  "scripts": { "start": "node server.js", "test": "node tests/run-tests.js" },
+  "dependencies": { "pg": "^8.16.3" },
+  "engines": { "node": ">=20" }
+}

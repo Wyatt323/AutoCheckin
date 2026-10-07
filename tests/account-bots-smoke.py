@@ -54,6 +54,8 @@ with tempfile.TemporaryDirectory(dir=TEMP_ROOT, prefix="autocheckin-accounts-") 
     allinone.load_config = lambda: loaded
     allinone.build_ai_clients = lambda providers: [("mock", object())]
     allinone.run_user = fake_run_user
+    async def no_wait(*args): pass
+    allinone.asyncio.sleep = no_wait
     asyncio.run(allinone.main())
     assert calls == [("first", ["@first_bot"], "first-folder"), ("second", ["@second_bot"], "legacy-folder")]
     calls.clear()

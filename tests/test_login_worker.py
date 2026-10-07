@@ -18,10 +18,8 @@ sys.modules['telethon'] = types.SimpleNamespace(TelegramClient=None)
 sys.modules['telethon.errors'] = types.SimpleNamespace(SessionPasswordNeededError=PasswordNeeded, PasswordHashInvalidError=InvalidPassword)
 import login_worker
 
-def blocked(*args, **kwargs): raise AssertionError('Network forbidden')
-socket.socket.connect = blocked
-socket.socket.connect_ex = blocked
-socket.create_connection = blocked
+from network_guard import install_network_guard
+install_network_guard()
 
 class Client:
     def __init__(self, *, authorized=False, password=False, timeout=False, connecting=False):
@@ -66,6 +64,28 @@ class Tests(unittest.IsolatedAsyncioTestCase):
     async def test_existing_authorization(self):
         client=Client(authorized=True); code,events=await self.run_login(client)
         self.assertEqual(client.qrs,0); self.assertEqual(events,[{'type':'success'}])
+    async def test_profile_only_never_starts_authorization(self):
+        client = Client()
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = await login_worker.login('offline', self.tmp.name, client_factory=lambda *a, **k: client, profile_only=True)
+        self.assertEqual(code, 2)
+        self.assertEqual(client.qrs, 0)
+        self.assertTrue(client.disconnected)
+    async def test_profile_only_success_creates_cache(self):
+        client = Client(authorized=True)
+        client.session = types.SimpleNamespace(dc_id=4)
+        async def me(): return types.SimpleNamespace(id=987654321, username=None, first_name='Offline', last_name=None)
+        async def photo(*args, **kwargs): return None
+        client.get_me = me
+        client.download_profile_photo = photo
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = await login_worker.login('offline', self.tmp.name, client_factory=lambda *a, **k: client, profile_only=True)
+        self.assertEqual(code, 0)
+        self.assertEqual(client.qrs, 0)
+        self.assertTrue(client.disconnected)
+        profile = json.loads(next(Path(self.tmp.name, '.account-profiles').glob('*.json')).read_text())
+        self.assertEqual(profile['userId'], '987654321')
+        self.assertEqual(profile['dcId'], 4)
     async def test_password_retry(self):
         client=Client(password=True); code,events=await self.run_login(client,['wrong','correct'])
         self.assertEqual(code,0); self.assertEqual(client.attempts,2)

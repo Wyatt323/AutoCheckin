@@ -18,7 +18,7 @@ async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'autocheckin-clean-'));
   let child;
   try {
-    for (const name of ['server.js', 'admin_auth.js', 'automation.js', 'login.js', 'schedule_time.js', 'run_history.js', 'checkin_scheduler.js', 'telegram_credentials.js', 'config.example.json']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(root, name));
+    for (const name of ['database.js', 'account_profiles.js', 'server.js', 'admin_auth.js', 'automation.js', 'login.js', 'schedule_time.js', 'run_history.js', 'checkin_scheduler.js', 'telegram_credentials.js', 'config.example.json']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(root, name));
     const port = await freePort();
     child = spawn(process.execPath, [path.join(root, 'server.js')], { env: { ...process.env, PORT: String(port), AUTOCHECKIN_DATA_DIR: root }, stdio: 'ignore' });
     let state;

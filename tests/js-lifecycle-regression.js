@@ -127,7 +127,7 @@ async function main() {
         realWorkers[0].stdout.once('data', () => { clearTimeout(timeout); resolve(); });
       });
       await realAutomation.stop();
-      assert.equal(realWorkers[0].signalCode, 'SIGKILL', 'SIGTERM-resistant real worker must be killed');
+      assert.equal(realWorkers[0].signalCode, process.platform === 'win32' ? 'SIGTERM' : 'SIGKILL', 'real worker must terminate using the platform signal behavior');
       assert.equal(realAutomation.getState().status, 'paused');
     } finally { for (const worker of realWorkers) if (worker.exitCode === null && worker.signalCode === null) worker.kill('SIGKILL'); }
     console.log('JS scheduler/lifecycle regressions passed (fake sessions; mocked and real workers)');

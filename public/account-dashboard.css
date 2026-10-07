@@ -19,7 +19,7 @@
 .account-tile-activity { display: block; min-height: 59px; padding: 8px 0 12px; }
 .account-tile-activity strong { display: block; color: #6f7a8e; font-size: 10px; margin-top: 5px; font-weight: 600; }
 .account-tile-activity small { display: block; color: #a9b3c0; font-size: 9px; margin-top: 4px; }
-.account-tile-actions { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; border-top: 1px solid #edf0f4; margin: 0 18px; padding: 10px 0 12px; }
+.account-tile-actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; border-top: 1px solid #edf0f4; margin: 0 18px; padding: 10px 0 12px; }
 .account-tile-actions button { display: flex; flex-direction: column; align-items: center; gap: 3px; border: 0; border-radius: 8px; padding: 5px 2px; background: transparent; color: #768398; font-size: 17px; cursor: pointer; }
 .account-tile-actions button:hover { color: #7161d6; background: #f2efff; }
 .account-tile-actions span { font-size: 9px; font-weight: 700; }
@@ -27,6 +27,23 @@
 .account-back { border: 0; background: transparent; color: #7a6ad7; padding: 0; margin: 5px 0 19px; font-size: 11px; font-weight: 800; cursor: pointer; }
 .account-detail-header { display: flex; align-items: center; gap: 16px; margin-bottom: 22px; }
 .account-detail-avatar { display: grid; place-items: center; flex: none; width: 52px; height: 52px; border-radius: 15px; background: #eeeaff; color: #7868d9; font-size: 26px; }
+.account-tile-avatar,.account-detail-avatar { position:relative; overflow:hidden; }
+.account-tile-avatar img,.account-detail-avatar img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+.account-tile-info strong { overflow-wrap:anywhere; line-height:1.6; }
+.account-tile-actions button:disabled { opacity:.45; cursor:not-allowed; }
+.bot-source-settings { padding:20px; border:1px solid #e8e3f6; border-radius:14px; background:#fcfaff; margin-bottom:20px; }
+.bot-source-settings h3 { margin:0 0 8px; font-size:13px; color:#534773; }
+.bot-source-settings p,.discovery-empty { font-size:11px; color:#98a1b4; line-height:1.8; }
+.bot-source-fields { display:grid; grid-template-columns:minmax(180px,1fr) minmax(220px,2fr); gap:18px; margin-top:16px; }
+.bot-source-fields [hidden] { display:none; }
+.bot-own-schedule { display:grid; gap:8px; }
+.bot-own-schedule label { display:flex; gap:7px; align-items:center; color:#8c83a2; font-size:10px; }
+.bot-own-schedule input[type=checkbox] { accent-color:#806de5; }
+.discovered-bots { margin:20px 0; }
+.discovered-bots table { min-width:500px; }
+.discovery-method { padding:5px 8px; border-radius:7px; background:#f0ebff; color:#8066d6; font-size:11px; }
+.discovery-method.muted { background:#f2f4f7; color:#a0a6b1; }
+@media(max-width:720px) { .bot-source-fields { grid-template-columns:1fr; } }
 .account-detail-header > div:nth-child(2) { flex: 1; }
 .account-detail-header h1 { margin: 4px 0; color: #2c3650; font-size: 25px; }
 .account-detail-header p { margin: 0; color: #9da8b8; font-size: 11px; }

@@ -27,7 +27,7 @@ try {
   assert.equal(saved.length, MAX_RUNS);
   assert.ok(saved.reduce((n, item) => n + item.lines.length, 0) <= MAX_LINES);
   assert.ok(saved.every(item => item.lines.length <= 800));
-  assert.equal(fs.statSync(path.join(root, 'logs/run-history.json')).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(root, 'logs/run-history.json')).mode & 0o777, 0o600);
   assert.equal(createRunHistory(root).latest().state, 'completed');
   fs.writeFileSync(path.join(root, 'logs/run-history.json'), 'broken');
   assert.equal(createRunHistory(root).snapshot().records.length, 0);

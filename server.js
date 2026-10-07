@@ -9,6 +9,7 @@ const automation = require('./automation');
 const { createScheduler } = require('./checkin_scheduler');
 const { createLoginController } = require('./login');
 const { resolveCredentials, credentialText } = require('./telegram_credentials');
+const { createHash } = require('node:crypto');
 
 const ROOT = __dirname;
 const DATA_ROOT = path.resolve(process.env.AUTOCHECKIN_DATA_DIR || ROOT);
@@ -23,13 +24,18 @@ const PUBLIC_HOST = process.env.PUBLIC_HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 8765);
 const MAX_BODY = 256 * 1024;
 const MAX_LINES = 800;
-const history = require('./run_history').createRunHistory(DATA_ROOT);
+let history, profiles, login, scheduler, database = null;
 let child = null;
 let runStarting = false;
-let run = history.latest() || { state: 'idle', startedAt: null, finishedAt: null, exitCode: null, lines: [] };
+let nextRunAt = 0;
+let run;
 
 function readConfig() {
+  if (database) return structuredClone(database.read('config'));
   const raw = fs.readFileSync(CONFIG, 'utf8');
+  return parseConfig(raw);
+}
+function parseConfig(raw) {
   try { return JSON.parse(raw); } catch {}
   // Legacy configs allow full-line comments and trailing commas, not inside strings.
   const text = raw.split(/\r?\n/).filter(line => !line.trimStart().startsWith('#')).join('\n');
@@ -43,6 +49,12 @@ function readConfig() {
     else if (char === '"') quoted = !quoted;
   }
   return JSON.parse(output);
+}
+
+function discoveryKey(account) { return createHash('sha256').update(account).digest('hex'); }
+function readDiscovery(account) {
+  try { return database ? database.read(`discovery:${discoveryKey(account)}`) || {} : JSON.parse(fs.readFileSync(path.join(DATA_ROOT, '.bot-discovery', discoveryKey(account) + '.json'), 'utf8')); }
+  catch { return {}; }
 }
 
 function viewConfig(config) {
@@ -74,8 +86,10 @@ function viewConfig(config) {
       apiIdSource: credentialText(user.api_id) ? 'account' : 'global',
       apiHashSource: credentialText(user.api_hash) ? 'account' : 'global',
       sessionReady: fs.existsSync(path.join(DATA_ROOT, `${user.session || user.name}.session`)),
+      profile: fs.existsSync(path.join(DATA_ROOT, `${user.session || user.name}.session`)) ? profiles.view(user.session || user.name) : null,
       dialogFolder: user.dialog_folder ?? telegram.dialog_folder ?? '',
-      bots: parseBots(('bots' in user || 'bot_groups' in user) ? user : config, user.bot_notes || config.bot_notes || {}),
+      bots: parseBots(('bots' in user || 'bot_groups' in user) ? user : config, user.bot_notes || config.bot_notes || {}).map(bot => ({ ...bot, schedule:user.bot_schedules?.[bot.name] || { enabled:false, time:'09:00' } })),
+      discoveredBots: Object.values(readDiscovery(user.session || user.name)).sort((a,b) => String(a.bot).localeCompare(String(b.bot))),
       checkinSchedules: Array.isArray(user.checkin_schedules) ? user.checkin_schedules : []
     })),
     automations: {
@@ -166,7 +180,7 @@ function validateCheckinSchedules(input, name, botCount) {
   });
 }
 
-function saveConfig(input) {
+async function saveConfig(input) {
   if (!Array.isArray(input.users) || !Array.isArray(input.providers)) throw new Error('配置格式不正确');
   if (input.users.length > 30 || input.providers.length > 20) throw new Error('配置条目过多');
   const original = readConfig();
@@ -200,6 +214,7 @@ function saveConfig(input) {
     const button = [];
     const command = [];
     const botNotes = {};
+    const botSchedules = {};
     botItems.forEach((bot, botIndex) => {
       const botName = nonempty(bot.name, `账号 ${name} 的 Bot ${botIndex + 1} 用户名`, 100);
       if (!/^@[A-Za-z0-9_]{5,}$/.test(botName)) throw new Error(`Bot ${botName} 的用户名应以 @ 开头`);
@@ -209,11 +224,18 @@ function saveConfig(input) {
       const note = String(bot.note || '').trim();
       if (note.length > 200) throw new Error(`${botName} 的备注不能超过 200 字`);
       if (note) botNotes[botName] = note;
+      if (bot.schedule?.enabled === true) {
+        const timing = validateTime({repeat:'daily', timeMode:'fixed', time:bot.schedule.time}, `${botName} 独立定时`);
+        botSchedules[botName] = { enabled:true, time:timing.time };
+      }
       if (bot.mode === 'command') command.push({ bot: botName, command: nonempty(bot.command || '/sign', `${botName} 命令`, 100) });
       else if (bot.mode === 'button') button.push(botName);
       else throw new Error(`${botName} 的签到方式无效`);
     });
-    return { ...old, name, session, api_id: apiId, api_hash: apiHash, dialog_folder: String(item.dialogFolder || '').trim(), bots: [], bot_groups: { button, command }, bot_notes: botNotes, checkin_schedules: validateCheckinSchedules(item.checkinSchedules || [], name, botItems.length) };
+    const folder = item.botSource === 'configured' ? '' : String(item.dialogFolder || '').trim();
+    if (item.botSource === 'folder' && !folder) throw new Error('请填写 Telegram 对话分组名称或 ID');
+    if (folder.length > 100) throw new Error('Telegram 分组名称过长');
+    return { ...old, name, session, api_id: apiId, api_hash: apiHash, dialog_folder: folder, bots: [], bot_groups: { button, command }, bot_notes: botNotes, bot_schedules:botSchedules, checkin_schedules: validateCheckinSchedules(item.checkinSchedules || [], name, folder ? 1 : botItems.length) };
   });
   const providers = input.providers.map((item, index) => {
     const old = oldProviders[item.sourceIndex] || {};
@@ -235,8 +257,11 @@ function saveConfig(input) {
   delete original.bot_notes;
   original.automations = validateAutomations(input.automations, users);
   const temp = `${CONFIG}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(original, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-  fs.renameSync(temp, CONFIG);
+  if (database) await database.write('config', original);
+  else {
+    fs.writeFileSync(temp, JSON.stringify(original, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(temp, CONFIG);
+  }
   return viewConfig(original);
 }
 
@@ -264,19 +289,24 @@ function addLine(text, stream = 'stdout') {
   history.changed();
 }
 
-function startRun(account = null, trigger = 'manual') {
+async function startRun(account = null, trigger = 'manual', bot = null) {
   if (child) throw new Error('签到任务正在运行');
   const python = pythonCommand();
   if (!python) throw new Error('未找到 Python。安装 Python 及脚本依赖后，重新启动服务。');
   const config = viewConfig(readConfig());
   const selected = account ? config.users.filter(user => user.session === account) : config.users;
   if (!selected.length) throw new Error(`找不到账号 ${account}`);
-  if (!selected.some(user => user.bots.length)) throw new Error('该账号没有配置签到 Bot，请先在账号管理中添加 Bot。');
-  if (selected.some(user => user.bots.length && !user.sessionReady)) throw new Error('有配置了 Bot 的账号缺少 Session 文件。请先在账号管理中点击登录完成 Telegram 登录。');
+  if (!selected.some(user => user.bots.length || user.dialogFolder)) throw new Error('请先在 Bot 管理中添加 Bot 或设置 Telegram 对话分组。');
+  if (selected.some(user => (user.bots.length || user.dialogFolder) && !user.sessionReady)) throw new Error('有配置签到的账号缺少 Session 文件，请先登录 Telegram。');
+  if (bot && (!account || !selected[0].bots.some(item => item.name.toLowerCase() === bot.toLowerCase()))) throw new Error('独立签到 Bot 不在此账号配置中');
+  if (bot && selected[0].dialogFolder) throw new Error('当前使用分组轮询，配置列表的独立定时暂不生效');
   run = history.create(account, trigger);
+  run.bot = bot;
+  try { await history.flush(); }
+  catch { run.state='failed'; run.finishedAt=new Date().toISOString(); throw new Error('执行记录无法保存，本次任务未启动'); }
   addLine(`使用 ${python.version} 启动${account ? `账号 ${account} 的` : '批量'}签到`, 'system');
-  child = spawn(python.name, [...python.prefix, '-u', 'allinone.py', ...(account ? ['--account', account] : [])], {
-    cwd: ROOT, env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
+  child = spawn(python.name, [...python.prefix, '-u', 'allinone.py', ...(account ? ['--account', account] : []), ...(bot ? ['--bot', bot] : [])], {
+    cwd: ROOT, env: { ...process.env, AUTOCHECKIN_DATA_DIR:DATA_ROOT, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
   });
   for (const [stream, pipe] of [['stdout', child.stdout], ['stderr', child.stderr]]) {
     let buffer = '';
@@ -290,7 +320,7 @@ function startRun(account = null, trigger = 'manual') {
     pipe.on('end', () => { if (buffer) addLine(buffer, stream); });
   }
   child.on('error', error => { addLine(error.message, 'stderr'); run.state = 'failed'; run.finishedAt = new Date().toISOString(); child = null; history.changed(true); });
-  child.on('close', code => {
+  child.on('close', async code => {
     run.exitCode = code;
     run.finishedAt = new Date().toISOString();
     if (run.state === 'stopping') run.state = 'stopped';
@@ -298,17 +328,22 @@ function startRun(account = null, trigger = 'manual') {
     addLine(`任务结束，退出码 ${code}`, 'system');
     history.changed(true);
     child = null;
+    nextRunAt = Date.now() + (5 + Math.floor(Math.random() * 11)) * 1000;
+    if (database) for (const user of config.users) await database.refresh(`discovery:${discoveryKey(user.session)}`).catch(() => {});
     if (scheduler.getState().queued) scheduler.tick().finally(() => { if (!child && !shuttingDown) automation.start(); });
     else automation.start();
   });
 }
 
-async function launchRun(account = null, trigger = 'manual') {
+async function launchRun(account = null, trigger = 'manual', bot = null) {
   if (child || runStarting || login.active()) throw new Error('签到或登录任务正在运行');
   runStarting = true;
   try {
+    const delay = Math.max(0, nextRunAt - Date.now());
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+    if (shuttingDown) throw new Error('服务正在停止');
     await automation.stop();
-    try { startRun(account, trigger); }
+    try { await startRun(account, trigger, bot); }
     catch (error) { automation.start(); throw error; }
   } finally {
     runStarting = false;
@@ -331,10 +366,16 @@ function bodyJson(req) {
   });
 }
 
+async function boot() {
+database = await require('./database').createDatabase({dataDir:DATA_ROOT, parseConfig});
+history = require('./run_history').createRunHistory(DATA_ROOT, database);
+profiles = require('./account_profiles').createProfileStore(DATA_ROOT, database);
+run = history.latest() || { state:'idle', lines:[] };
+nextRunAt = run.finishedAt ? Date.parse(run.finishedAt) + 5000 : 0;
 const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
-const login = createLoginController({ root: ROOT, dataDir: DATA_ROOT, readConfig, pythonCommand, isBusy: () => !!child || runStarting || shuttingDown, stopAutomation: () => automation.stop(), resumeAutomation: () => { if (!shuttingDown) automation.start(); } });
-automation.configure({ root: ROOT, dataDir: DATA_ROOT, readConfig, pythonCommand, canRun: () => !child && !runStarting && !login.active() && !shuttingDown });
-const scheduler = createScheduler({ root: DATA_ROOT, readConfig, runAccount: account => launchRun(account, 'scheduled'), isBusy: () => !!child || runStarting || login.active() || shuttingDown });
+login = createLoginController({ root: ROOT, dataDir: DATA_ROOT, readConfig, pythonCommand, isBusy: () => !!child || runStarting || shuttingDown, stopAutomation: () => automation.stop(), resumeAutomation: () => { if (!shuttingDown) automation.start(); }, onComplete:async account => { if (database) await database.refresh(`profile:${discoveryKey(account)}`); } });
+automation.configure({ root: ROOT, dataDir: DATA_ROOT, store:database, readConfig, pythonCommand, canRun: () => !child && !runStarting && !login.active() && !shuttingDown });
+scheduler = createScheduler({ root: DATA_ROOT, store:database, readConfig, runAccount: (account, bot) => launchRun(account, 'scheduled', bot), isBusy: () => !!child || runStarting || login.active() || shuttingDown || Date.now() < nextRunAt });
 http.createServer(async (req, res) => {
   try {
     const security = requestSecurity(req, { publicHost: PUBLIC_HOST, port: Number(process.env.PUBLIC_PORT || PORT), trustProxy: process.env.TRUST_PROXY === 'true' });
@@ -351,7 +392,7 @@ http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
     const authenticated = adminAuth.authenticated(req);
-    const publicFiles = new Set(['/login', '/auth.css', '/auth.js', '/styles.css']);
+    const publicFiles = new Set(['/login', '/auth.css', '/auth.js', '/styles.css', '/theme.css', '/favicon.svg']);
     if (!authenticated && !publicFiles.has(url.pathname)) {
       if (url.pathname.startsWith('/api/')) return send(res, 401, { error: '请先登录管理后台' });
       res.writeHead(302, { Location: '/login', 'Cache-Control': 'no-store' });
@@ -362,6 +403,34 @@ http.createServer(async (req, res) => {
       return res.end();
     }
     if (url.pathname.startsWith('/api/')) {
+      if (req.method === 'POST' && url.pathname === '/api/accounts/bots/discovery/reset') {
+        if (child || runStarting || login.active() || shuttingDown) throw new Error('请在任务结束后重新识别');
+        const input = await bodyJson(req);
+        const user = viewConfig(readConfig()).users.find(user => user.session === input.account);
+        if (!user) throw new Error('账号不存在');
+        const records = readDiscovery(user.session);
+        const bot = nonempty(input.bot, 'Bot', 100).toLowerCase();
+        delete records[bot];
+        if (database) await database.write(`discovery:${discoveryKey(user.session)}`, records);
+        else {
+          const directory = path.join(DATA_ROOT, '.bot-discovery'); fs.mkdirSync(directory, {recursive:true});
+          const file = path.join(directory, discoveryKey(user.session) + '.json');
+          fs.writeFileSync(file + '.tmp', JSON.stringify(records), {mode:0o600}); fs.renameSync(file + '.tmp', file);
+        }
+        return send(res, 200, {ok:true, records:Object.values(records)});
+      }
+      if (req.method === 'GET' && url.pathname === '/api/accounts/avatar') {
+        const account = url.searchParams.get('account');
+        const user = viewConfig(readConfig()).users.find(user => user.session === account && user.sessionReady);
+        const avatar = user && profiles.read(account)?.avatar;
+        if (!avatar) return send(res, 404, { error: '暂无头像' });
+        res.writeHead(200, { 'Content-Type':'image/jpeg', 'Cache-Control':'private, no-store', 'X-Content-Type-Options':'nosniff' });
+        return res.end(avatar);
+      }
+      if (req.method === 'POST' && url.pathname === '/api/accounts/profile/refresh') {
+        if (shuttingDown) throw new Error('服务正在停止');
+        return send(res, 200, { login: await login.start((await bodyJson(req)).account, { profileOnly:true }) });
+      }
       if (req.method === 'GET' && url.pathname === '/api/login/status') return send(res, 200, { login: login.status() });
       if (req.method === 'POST' && url.pathname.startsWith('/api/login/')) {
         const input = await bodyJson(req);
@@ -375,14 +444,14 @@ http.createServer(async (req, res) => {
       if (req.method === 'POST' && url.pathname === '/api/config') {
         const input = await bodyJson(req);
         if (child || runStarting || login.active() || shuttingDown) throw new Error('运行或登录期间不能修改配置');
-        const config = saveConfig(input);
+        const config = await saveConfig(input);
         await automation.restart();
         return send(res, 200, { config, automation: automation.getState(), checkinScheduler: scheduler.getState() });
       }
       if (req.method === 'POST' && url.pathname === '/api/run') {
         const input = await bodyJson(req);
         const account = input.account == null ? null : nonempty(input.account, '签到账号', 100);
-        await launchRun(account);
+        await launchRun(account, 'manual', input.bot ? nonempty(input.bot, '签到 Bot', 100) : null);
         return send(res, 200, { ok: true, run: { ...run } });
       }
       if (req.method === 'POST' && url.pathname === '/api/automation/restart') { if (child || runStarting || login.active() || shuttingDown) throw new Error('运行或登录期间不能重启自动化'); await automation.restart(); return send(res, 200, { automation: automation.getState() }); }
@@ -399,7 +468,7 @@ http.createServer(async (req, res) => {
     }
     if (req.method !== 'GET') return send(res, 405, { error: '不支持的请求' });
     const file = url.pathname === '/' ? 'index.html' : url.pathname === '/login' ? 'auth.html' : url.pathname.slice(1);
-    if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css', 'run-log.js', 'run-log.css'].includes(file)) return send(res, 404, { error: '页面不存在' });
+    if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css', 'run-log.js', 'run-log.css', 'ui-controls.js', 'ui-controls.css', 'theme.css', 'favicon.svg'].includes(file)) return send(res, 404, { error: '页面不存在' });
     const target = path.join(PUBLIC, file);
     res.writeHead(200, { 'Content-Type': types[path.extname(file)], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     fs.createReadStream(target).pipe(res);
@@ -412,7 +481,6 @@ http.createServer(async (req, res) => {
   scheduler.start();
 });
 
-let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -422,8 +490,12 @@ async function shutdown() {
   scheduler.stop();
   await login.shutdown();
   await automation.stop();
-  history.flush();
+  await history.flush();
+  if (database) await database.close();
   process.exit(0);
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+}
+let shuttingDown = false;
+boot().catch(error => { console.error(`服务初始化失败（${error.code || error.name}），请检查数据库连接及迁移文件。`); process.exitCode = 1; });

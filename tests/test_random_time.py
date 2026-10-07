@@ -118,5 +118,6 @@ class WorkerDispatchTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(sent),2)
 
 if __name__ == '__main__':
-    with patch.object(socket.socket,'connect',side_effect=AssertionError('network forbidden')):
-        unittest.main()
+    from network_guard import install_network_guard
+    install_network_guard()
+    unittest.main()

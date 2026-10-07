@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
+const path = require('node:path');
 const { createLoginController } = require('../login');
 function fake() {
   const child = new EventEmitter();
@@ -12,7 +13,7 @@ function fake() {
 (async () => {
   let child, stopped = 0, resumed = 0, busy = false;
   const opts = { root:'/isolated', dataDir:'/isolated/data', readConfig:() => ({telegram:{users:[{session:'offline', api_id:123, api_hash:'never-log'}]}}), pythonCommand:() => ({name:'python',prefix:[]}), isBusy:() => busy, stopAutomation:async () => { stopped++; }, resumeAutomation:() => {resumed++;}, spawnWorker:(name,args,options) => {
-    assert.equal(options.env.AUTOCHECKIN_DATA_DIR, '/isolated/data'); assert.ok(args.includes('/isolated/login_worker.py')); assert.ok(!args.includes('never-log')); child = fake(); return child;
+    assert.equal(options.env.AUTOCHECKIN_DATA_DIR, '/isolated/data'); assert.ok(args.includes(path.join('/isolated', 'login_worker.py'))); assert.ok(!args.includes('never-log')); child = fake(); return child;
   } };
   const login = createLoginController(opts);
   busy = true; await assert.rejects(login.start('offline')); busy = false;

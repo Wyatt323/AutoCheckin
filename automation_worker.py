@@ -2,6 +2,7 @@
 """Long-running Telegram scheduler and new-message forwarder."""
 
 from telegram_credentials import resolve_credentials
+from storage import read_document, write_document, database_enabled
 import asyncio
 import datetime as dt
 import json
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("AUTOCHECKIN_DATA_DIR") or ROOT)
 CONFIG_PATH = DATA_DIR / "config.json"
 STATE_PATH = DATA_DIR / ".automation-state.json"
+_last_database_state = None
 CHINA_TIME = dt.timezone(dt.timedelta(hours=8))
 
 
@@ -69,12 +71,12 @@ def parse_config_text(text):
 
 
 def load_config():
-    return parse_config_text(CONFIG_PATH.read_text(encoding="utf-8"))
+    return read_document('config', CONFIG_PATH, parser=parse_config_text)
 
 
 def load_state():
     try:
-        data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        data = read_document('automation-state', STATE_PATH, default={})
         return {name: data[name] if isinstance(data, dict) and isinstance(data.get(name), dict) else {} for name in ("sent", "planned", "claimed")}
     except (FileNotFoundError, ValueError):
         return {"sent": {}, "planned": {}, "claimed": {}}
@@ -85,7 +87,15 @@ def load_sent():
 
 
 def save_sent(sent, planned=None, claimed=None):
+    global _last_database_state
     data = {"sent": sent, "planned": planned or {}, "claimed": claimed or {}}
+    if database_enabled():
+        serialized = json.dumps(data, ensure_ascii=False, sort_keys=True)
+        if serialized == _last_database_state:
+            return
+        write_document('automation-state', data)
+        _last_database_state = serialized
+        return
     serialized = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
     if STATE_PATH.exists() and STATE_PATH.read_text(encoding="utf-8") == serialized:
         return

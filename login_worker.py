@@ -11,6 +11,8 @@ import signal
 import sys
 from pathlib import Path
 from automation_worker import parse_config_text
+from account_profile import save_profile
+from storage import read_document
 
 
 def emit(kind, **fields):
@@ -36,13 +38,13 @@ async def read_password():
     return password
 
 
-async def login(account, data_dir, *, client_factory=None, password_reader=read_password):
+async def login(account, data_dir, *, client_factory=None, password_reader=read_password, profile_only=False):
     from telethon import TelegramClient
     from telethon.errors import SessionPasswordNeededError, PasswordHashInvalidError
     import qrcode
     if not re.fullmatch(r"[\w.-]+", account) or account in (".", ".."):
         raise ValueError("invalid session")
-    config = parse_config_text((Path(data_dir) / "config.json").read_text(encoding="utf-8"))
+    config = read_document('config', Path(data_dir) / 'config.json', parser=parse_config_text)
     users = config.get("telegram", {}).get("users", config.get("users", []))
     user = next(u for u in users if (u.get("session") or u.get("name")) == account)
     api_id, api_hash = resolve_credentials(config, user)
@@ -50,6 +52,9 @@ async def login(account, data_dir, *, client_factory=None, password_reader=read_
     try:
         await asyncio.wait_for(client.connect(), 30)
         if not await client.is_user_authorized():
+            if profile_only:
+                emit("error")
+                return 2
             for _ in range(6):
                 qr = await client.qr_login()
                 image = io.BytesIO()
@@ -76,6 +81,13 @@ async def login(account, data_dir, *, client_factory=None, password_reader=read_
             if not await client.is_user_authorized():
                 emit("error", message="登录超时，请重试")
                 return 2
+        try:
+            await save_profile(client, account, data_dir)
+        except Exception:
+            if profile_only:
+                emit("error")
+                return 2
+            # Authorization remains successful if fetching display data fails.
         emit("success")
         return 0
     finally:
@@ -86,9 +98,12 @@ async def main():
     task = asyncio.current_task()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, task.cancel)
+        try:
+            loop.add_signal_handler(sig, task.cancel)
+        except NotImplementedError:
+            signal.signal(sig, lambda *_: loop.call_soon_threadsafe(task.cancel))
     try:
-        return await asyncio.wait_for(login(sys.argv[1], os.environ.get("AUTOCHECKIN_DATA_DIR") or Path(__file__).resolve().parent), 480)
+        return await asyncio.wait_for(login(sys.argv[1], os.environ.get("AUTOCHECKIN_DATA_DIR") or Path(__file__).resolve().parent, profile_only='--profile-only' in sys.argv[2:]), 480)
     except asyncio.CancelledError:
         return 0
     except Exception:

@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const MAX_RUNS = 30, MAX_LINES = 3000, PER_RUN_LINES = 800;
-function createRunHistory(dataRoot) {
+function createRunHistory(dataRoot, store = null) {
   const file = path.join(dataRoot, 'logs', 'run-history.json');
   let records = [], revision = 0, timer = null;
   function trim() {
@@ -18,13 +18,14 @@ function createRunHistory(dataRoot) {
     clearTimeout(timer); timer = null;
     try {
       trim();
+      if (store) return store.write('run-history', {version:1, records}).catch(() => { console.error('运行历史保存到数据库失败'); throw new Error('日志存储失败'); });
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(`${file}.tmp`, JSON.stringify({ version: 1, records }), { mode: 0o600 });
       fs.renameSync(`${file}.tmp`, file);
     } catch (error) { console.error(`运行历史保存失败：${error.message}`); }
   }
   try {
-    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const saved = store ? structuredClone(store.read('run-history') || {}) : JSON.parse(fs.readFileSync(file, 'utf8'));
     records = Array.isArray(saved.records) ? saved.records.filter(r => r && typeof r.id === 'string' && Array.isArray(r.lines)) : [];
     for (const record of records) {
       if (['running', 'stopping'].includes(record.state)) {
@@ -33,12 +34,12 @@ function createRunHistory(dataRoot) {
       }
     }
     trim();
-    if (records.length) flush();
+    if (records.length) Promise.resolve(flush()).catch(() => {});
   } catch (error) { if (error.code !== 'ENOENT') console.error(`运行历史读取失败：${error.message}`); }
   function changed(immediate = false) {
     revision++; trim();
-    if (immediate) flush();
-    else if (!timer) { timer = setTimeout(flush, 250); timer.unref(); }
+    if (immediate) Promise.resolve(flush()).catch(() => {});
+    else if (!timer) { timer = setTimeout(() => Promise.resolve(flush()).catch(() => {}), 250); timer.unref(); }
   }
   return {
     create(account, trigger) {

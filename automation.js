@@ -12,8 +12,9 @@ function configure(options) { context = options; }
 function getState() {
   // Read the committed snapshot, including while paused/unavailable after restart.
   let plans = [];
+  if (context?.store && ['starting','running'].includes(state.status)) return {...state, planned:state.planned, lines:state.lines.slice(-120)};
   try {
-    const persisted = JSON.parse(require('node:fs').readFileSync(path.join(context.dataDir || context.root, '.automation-state.json'), 'utf8'));
+    const persisted = context.store ? context.store.read('automation-state') || {} : JSON.parse(require('node:fs').readFileSync(path.join(context.dataDir || context.root, '.automation-state.json'), 'utf8'));
     const today = new Date(Date.now() + 28800000).toISOString().slice(0, 10);
     const rules = enabledRules(context.readConfig());
     plans = Object.entries(persisted.planned || {}).filter(([key, plan]) => plan.date === today && rules.some(rule => rule.account === plan.account && rule.id === plan.ruleId && rule.timeMode === 'random' && (persisted.claimed?.[key] || JSON.stringify(plan.signature) === JSON.stringify([rule.rangeStart, rule.rangeEnd])))).map(([, {account, ruleId, date, time}]) => ({account, ruleId, date, time}));
@@ -37,6 +38,7 @@ function start() {
   const config = context.readConfig();
   const rules = enabledRules(config);
   try {
+    if (!context.store) {
     const fs = require('node:fs');
     const file = path.join(context.dataDir || context.root, '.automation-state.json');
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -47,6 +49,7 @@ function start() {
       data.planned = retained;
       fs.writeFileSync(file + '.tmp', JSON.stringify(data, null, 2) + '\n', {mode:0o600});
       fs.renameSync(file + '.tmp', file);
+    }
     }
   } catch (error) { if (error.code !== 'ENOENT') line(`清理定时计划失败：${error.message}`, 'error'); }
   state.planned = state.planned.filter(plan => rules.some(rule => rule.account === plan.account && rule.id === plan.ruleId && rule.timeMode === 'random'));
@@ -84,7 +87,7 @@ function start() {
   let worker;
   try {
     worker = spawn(python.name, [...(python.prefix || []), '-u', 'automation_worker.py'], {
-      cwd: context.root, env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
+      cwd: context.root, env: { ...process.env, AUTOCHECKIN_DATA_DIR:context.dataDir || context.root, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
     });
   } catch (error) {
     state.status = 'failed';
@@ -158,7 +161,10 @@ function stop() {
       if (error) { state.status = 'failed'; state.message = error.message; reject(error); }
       else resolve();
     }
-    function closed() { finish(); }
+    function closed() {
+      if (context.store) context.store.refresh('automation-state').then(() => finish(), () => finish(new Error('读取自动化状态失败')));
+      else finish();
+    }
     worker.once('close', closed);
     escalation = setTimeout(() => {
       line('自动化未及时退出，发送 SIGKILL', 'error');

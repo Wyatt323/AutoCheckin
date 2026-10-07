@@ -5,7 +5,7 @@ const {resolveCredentials}=require('../telegram_credentials');
 (async()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'global-api-')); let server,browser;
  try {
-  for(const file of ['server.js','admin_auth.js','automation.js','login.js','schedule_time.js', 'run_history.js', 'checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(dir,file));
+  for(const file of ['database.js', 'account_profiles.js','server.js','admin_auth.js','automation.js','login.js','schedule_time.js', 'run_history.js', 'checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(dir,file));
   fs.cpSync(path.join(__dirname,'../public'),path.join(dir,'public'),{recursive:true});
   const original={telegram:{users:[{name:'legacy',session:'legacy',api_id:123,api_hash:'old-hash',bot_groups:{button:['@example_bot'],command:[]}}]},ai:{providers:[]}};
   fs.writeFileSync(path.join(dir,'config.json'),JSON.stringify(original));
