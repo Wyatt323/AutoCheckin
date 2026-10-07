@@ -4,7 +4,7 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
 const { spawn, spawnSync } = require('node:child_process');
 const { randomUUID, createHash } = require('node:crypto');
 const net = require('node:net');
-const { createDatabase } = require('../database');
+const { createDatabase, scopedStore } = require('../database');
 const { createScheduler } = require('../checkin_scheduler');
 const { createRunHistory } = require('../run_history');
 
@@ -28,6 +28,11 @@ const { createRunHistory } = require('../run_history');
     const digest = createHash('sha256').update('offline').digest('hex');
     fs.mkdirSync(path.join(root,'.account-profiles')); fs.writeFileSync(path.join(root,'.account-profiles',digest+'.json'),JSON.stringify({userId:'123456',dcId:2,avatar:null,updatedAt:'2026-10-07T00:00:00Z'}));
     fs.mkdirSync(path.join(root,'.bot-discovery')); fs.writeFileSync(path.join(root,'.bot-discovery',digest+'.json'),JSON.stringify({'@old_bot':{bot:'@old_bot',mode:'command',command:'/checkin'}}));
+    const fileAuth = await require('../user_auth').createUserAuth({dataDir:root,password:'offline'});
+    const migratedUser = await fileAuth.add('migrated_user');
+    const migratedDirectory = path.join(root,'.user-workspaces',migratedUser.id);
+    fs.mkdirSync(migratedDirectory,{recursive:true});
+    fs.writeFileSync(path.join(migratedDirectory,'config.json'),JSON.stringify({telegram:{users:[]},ai:{providers:[]},automations:{schedules:[],forwards:[]},migrationSentinel:true}));
     const connectStore = () => createDatabase({dataDir:root,parseConfig:JSON.parse,pool:new Pool({connectionString:url.href})});
     fs.writeFileSync(path.join(root,'.automation-state.json'),'{invalid');
     await assert.rejects(connectStore(), 'invalid legacy JSON must abort the whole migration');
@@ -36,6 +41,8 @@ const { createRunHistory } = require('../run_history');
     assert.equal(store.read('migration:files-v1').imported,6);
     assert.equal(store.read('profile:'+digest).userId,'123456');
     assert.equal(store.read('automation-state').sent.old,'done');
+    assert.equal(store.read('web-users')[0].id,migratedUser.id);
+    assert.equal(store.read(`tenant:${migratedUser.id}:config`).migrationSentinel,true,'file users and their configuration migrate together');
     const changed = structuredClone(store.read('config')); changed.telegram.users[0].name='Database';
     await store.write('config',changed); await store.close(); store=null;
     fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({...config,backupMustStay:true}));
@@ -82,6 +89,49 @@ const { createRunHistory } = require('../run_history');
     const manual=structuredClone(state.config); manual.users[0].botSource='configured'; manual.users[0].dialogFolder='4';
     response=await postConfig(manual); assert.equal(response.status,200);
     assert.equal((await response.json()).config.users[0].dialogFolder,'','manual source disables a retained folder draft');
+    const api=async(path,cookie,input)=>fetch(base+path,{method:input===undefined?'GET':'POST',headers:{Cookie:cookie,'Content-Type':'application/json'},...(input===undefined?{}:{body:JSON.stringify(input)})});
+    const userLogin=async(username,password)=>{const response=await api('/api/auth/login','',{username,password});assert.equal(response.status,200);return response.headers.get('set-cookie').split(';')[0];};
+    const tenants=[];
+    for(const username of ['pg_alice','pg_bob']) {
+      response=await api('/api/users',Cookie,{username}); assert.equal(response.status,201);
+      const user=(await response.json()).user; const session=await userLogin(username,'a123456');
+      assert.equal((await api('/api/state',session)).status,403);
+      assert.equal((await api('/api/auth/password',session,{currentPassword:'a123456',newPassword:username+'-secret'})).status,200);
+      const config=(await(await api('/api/state',session)).json()).config;
+      config.telegram={apiId:123,apiHash:username+'-key'};
+      config.users=[{sourceIndex:-1,name:username,session:'same_session',useGlobalCredentials:true,bots:[{name:'@first_bot',mode:'command',command:'/sign'}],checkinSchedules:[]}];
+      assert.equal((await api('/api/config',session,config)).status,200);
+      assert.equal((await api('/api/users',session)).status,403);
+      tenants.push({user,session,username});
+    }
+    store=await connectStore();
+    for(const {user,username} of tenants) {
+      const scoped=scopedStore(store,`tenant:${user.id}:`);
+      assert.equal(scoped.read('config').telegram.users[0].name,username);
+      const result=spawnSync(python,['-c',"import storage; c=storage.read_document('config'); assert c['telegram']['users'][0]['name']=='"+username+"'; storage.write_document('profile:shared', {'owner':'"+username+"'}); storage.write_document('automation-state', {'sent':{'shared':'"+username+"'}})"],{cwd:path.join(__dirname,'..'),env:{...process.env,DATABASE_URL:url.href,AUTOCHECKIN_DOCUMENT_PREFIX:`tenant:${user.id}:`,PYTHONIOENCODING:'utf-8'},encoding:'utf8',timeout:20000});
+      assert.equal(result.status,0,result.stderr);
+      assert.equal((await scoped.refresh('profile:shared')).owner,username);
+      assert.equal((await scoped.refresh('automation-state')).sent.shared,username);
+      const executions=[];
+      const scheduleConfig={telegram:{users:[{session:'same_session',checkin_schedules:[{id:'same_rule',enabled:true,repeat:'daily',time:'09:30'}]}]}};
+      const opts={root,store:scoped,readConfig:()=>scheduleConfig,isBusy:()=>false,now:()=>new Date('2027-01-01T01:30:00Z'),runAccount:async account=>executions.push(account)};
+      await createScheduler(opts).tick(); await createScheduler(opts).tick(); assert.equal(executions.length,1,'each tenant claims same rule independently and persists dedup');
+      const tenantHistory=createRunHistory(root,scoped); tenantHistory.appendEvent({account:'same_session',category:'forward',message:username,state:'completed'}); await tenantHistory.flush();
+    }
+    assert.equal(store.read('profile:shared'),undefined,'worker prefixes cannot alter admin documents');
+    assert.ok(!JSON.stringify(store.read('web-users')).includes('pg_alice-secret'));
+    await store.close(); store=null;
+    await stopServer();await launch();Cookie=await auth();
+    for(const {username} of tenants) {
+      const session=await userLogin(username,username+'-secret');
+      const state=(await(await api('/api/state',session)).json());
+      assert.equal(state.config.users[0].name,username);
+      const history=(await(await api('/api/runs',session)).json());
+      assert.equal(history.records[0].lines[0].text,username,'tenant history survives PostgreSQL restart');
+      assert.ok(!JSON.stringify(history).includes(username==='pg_alice'?'pg_bob':'pg_alice'));
+    }
+    assert.ok(fs.existsSync(path.join(root,'.web-users.json')),'source registry retained');
+    assert.ok(!fs.existsSync(path.join(root,'.user-workspaces',tenants[0].user.id,'config.json')),'PostgreSQL tenant config is persisted in database');
     console.log('PostgreSQL integration PASS: atomic migration, source retention, restart, Node/Python state, durable schedules/history, web save/read/reset');
   } finally {
     await stopServer(); if(store) await store.close();

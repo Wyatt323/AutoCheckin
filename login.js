@@ -4,7 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { resolveCredentials } = require('./telegram_credentials');
 
-function createLoginController({ root, dataDir, readConfig, pythonCommand, isBusy, stopAutomation, resumeAutomation, onComplete = null, spawnWorker = spawn, timeoutMs = 490000 }) {
+function createLoginController({ workerEnv = {}, root, dataDir, readConfig, pythonCommand, isBusy, stopAutomation, resumeAutomation, onComplete = null, spawnWorker = spawn, timeoutMs = 490000 }) {
   let worker = null, pending = false, timer = null, killTimer = null, finishing = null;
   let state = { state: 'idle', active: false };
   const active = () => pending || !!worker;
@@ -28,7 +28,7 @@ function createLoginController({ root, dataDir, readConfig, pythonCommand, isBus
       await stopAutomation();
       if (state.state === 'cancelled' || isBusy()) throw new Error('登录已取消或服务忙碌');
       worker = spawnWorker(python.name, [...python.prefix, '-u', path.join(root, 'login_worker.py'), account, ...(profileOnly ? ['--profile-only'] : [])], {
-        cwd: root, env: { ...process.env, AUTOCHECKIN_DATA_DIR: dataDir, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true
+        cwd: root, env: { ...process.env, ...workerEnv, AUTOCHECKIN_DATA_DIR: dataDir, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true
       });
       const current = worker;
       let buffer = '', finished = false;

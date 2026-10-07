@@ -5,7 +5,7 @@ const {spawn}=require('node:child_process');
 (async()=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'autocheckin-bot-run-')); let server;
   try {
-    for(const file of ['server.js','database.js','admin_auth.js','automation.js','login.js','schedule_time.js','run_history.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
+    for(const file of ['server.js','database.js','admin_auth.js','user_auth.js','automation.js','login.js','schedule_time.js','run_history.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
     fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({telegram:{users:[{name:'Offline',session:'offline',api_id:123,api_hash:'offline',bots:['@one_bot','@two_bot']}]},ai:{model:'',providers:[]},automations:{schedules:[],forwards:[]}}));
     fs.writeFileSync(path.join(root,'offline.session'),'not-a-real-session');
     fs.writeFileSync(path.join(root,'allinone.py'),"import json,sys\nprint(json.dumps(sys.argv[1:]),flush=True)\n");

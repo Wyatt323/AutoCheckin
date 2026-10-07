@@ -17,6 +17,7 @@
   <link rel="stylesheet" href="/ui-controls.css">
   <link rel="stylesheet" href="/theme.css">
   <script src="/ui-controls.js" defer></script>
+  <script src="/users.js" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -27,8 +28,9 @@
         <button class="nav-item" data-view="accounts"><span class="nav-icon" data-icon="account">♙</span> 账号管理</button>
         <button class="nav-item" data-view="ai"><span class="nav-icon" data-icon="ai">✧</span> AI 配置</button>
         <button class="nav-item" data-view="activity"><span class="nav-icon" data-icon="log">☷</span> 运行日志</button>
+        <button class="nav-item" id="nav-users" data-view="users" hidden><span class="nav-icon" data-icon="account">♙</span> 用户管理</button>
       </nav>
-      <div class="top-actions"><span class="connection" role="status"><span class="live-dot"></span> <span id="connection-label">本地连接</span></span><button class="outline-btn" id="admin-logout" type="button">退出登录</button><div class="avatar" aria-label="AutoCheckin 工作空间">AC</div></div>
+      <div class="top-actions"><span id="web-user-name"></span><a class="text-link" id="web-password-link" href="/password" hidden>修改密码</a><span class="connection" role="status"><span class="live-dot"></span> <span id="connection-label">本地连接</span></span><button class="outline-btn" id="admin-logout" type="button">退出登录</button><div class="avatar" aria-label="AutoCheckin 工作空间">AC</div></div>
     </header>
     <main class="main">
       <div class="topbar"><div class="breadcrumbs">工作空间 <span>/</span> <strong id="breadcrumb">总览</strong></div><span class="workspace-tag">TELEGRAM AUTOMATION</span></div>
@@ -52,6 +54,11 @@
           </div>
         </section>
         <section class="view" id="view-ai"><div class="page-heading"><div><span class="kicker">AI SETTINGS</span><h1>AI 配置</h1><p>诗词验证码会依次尝试下方 AI 服务。普通图片验证码由本地 OCR 处理。</p></div><button class="primary-btn" id="add-provider">＋ 添加服务</button></div><div class="panel settings-panel"><div class="panel-head"><div><h3>通用设置</h3><p>用于所有账号的签到任务。</p></div></div><div class="field-grid"><label class="field"><span>AI 模型名称</span><input id="model-input" placeholder="例如 gpt-4o-mini"></label></div></div><div class="section-heading compact"><div><h2>服务列表</h2><p>按列表顺序尝试，前一个不可用时自动切换。</p></div></div><div id="provider-list" class="provider-list"></div><div class="bottom-save"><button class="primary-btn save-btn">保存配置</button></div></section>
+        <section class="view" id="view-users">
+          <div class="page-heading"><div><span class="kicker">WORKSPACE USERS</span><h1>用户管理</h1><p>仅管理员可创建用户。每位用户拥有独立的 Telegram 账号、任务配置和运行日志。</p></div></div>
+          <section class="panel global-telegram"><div class="panel-head"><div><h2>添加网页用户</h2><p>初始密码为 a123456，首次登录必须修改密码。</p></div></div><form id="web-user-create" class="web-user-create"><label class="field"><span>用户名</span><input id="web-new-username" name="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9_][A-Za-z0-9_.-]{2,31}" autocomplete="off" placeholder="3–32 位字母、数字、下划线、点或短横线"></label><button class="primary-btn" type="submit">＋ 添加用户</button></form></section>
+          <section class="panel table-panel"><div class="panel-head"><div><h3>网页用户</h3><p>用户数据持久化保存，服务重启后保留。</p></div></div><div class="table-wrap"><table><thead><tr><th>用户名</th><th>密码状态</th><th>创建时间</th></tr></thead><tbody id="web-users-list"></tbody></table></div></section>
+        </section>
         <section class="view" id="view-activity">
           <button class="account-back" id="log-back" type="button" hidden>← 返回账号配置</button>
           <div id="log-history-content">

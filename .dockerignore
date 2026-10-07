@@ -2,6 +2,8 @@
 .github
 data
 config.json
+.web-users.json*
+.user-workspaces
 .account-profiles
 .bot-discovery
 node_modules

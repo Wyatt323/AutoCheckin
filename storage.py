@@ -66,6 +66,7 @@ def connect():
 
 
 def read_document(key, path=None, default=None, parser=json.loads):
+    key = os.environ.get('AUTOCHECKIN_DOCUMENT_PREFIX', '') + key
     if database_enabled():
         with connect() as connection:
             row = connection.execute('SELECT value FROM autocheckin_documents WHERE key = %s', (key,)).fetchone()
@@ -79,6 +80,7 @@ def read_document(key, path=None, default=None, parser=json.loads):
 
 
 def write_document(key, value, path=None):
+    key = os.environ.get('AUTOCHECKIN_DOCUMENT_PREFIX', '') + key
     if database_enabled():
         from psycopg.types.json import Jsonb
         with connect() as connection:

@@ -6,6 +6,7 @@ services:
     restart: unless-stopped
     environment:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       TRUST_PROXY: "false"
       AUTOCHECKIN_DATA_DIR: /data
       BIND_HOST: 0.0.0.0

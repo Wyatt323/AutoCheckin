@@ -82,6 +82,7 @@ if (typeof document !== 'undefined') {
   $('#account-log-close').addEventListener('click', closeAccountLogs);
   accountDialog.addEventListener('cancel', event => { event.preventDefault(); closeAccountLogs(); });
   accountDialog.addEventListener('close', () => {
+    if (accountDialog.open) return; // Ignore a queued close event after an immediate reopen.
     historyHome.append(historyContent);
     setRunLogScope(null);
     refreshRunLogs();

@@ -20,10 +20,10 @@
     dialog.showModal = () => {
       generation++;
       closing?.cancel(); closing = null;
+      opening?.cancel(); opening = null;
       dialog.classList.remove('ui-dialog-closing');
       if (!dialog.open) show();
       if (!reduceMotion() && dialog.animate) {
-        opening?.cancel();
         opening = dialog.animate([{opacity:0,transform:'translateY(12px) scale(.97)'}, {opacity:1,transform:'translateY(0) scale(1)'}], {duration:230,easing:'cubic-bezier(.16,1,.3,1)'});
       }
     };
@@ -31,13 +31,15 @@
       if (!dialog.open) return Promise.resolve();
       if (closing) return closing.finished.catch(() => {});
       const current = ++generation;
-      opening?.cancel();
+      opening?.cancel(); opening = null;
       if (reduceMotion() || !dialog.animate) { nativeClose(value); return Promise.resolve(); }
       dialog.classList.add('ui-dialog-closing');
       closing = dialog.animate([{opacity:1,transform:'translateY(0) scale(1)'}, {opacity:0,transform:'translateY(8px) scale(.98)'}], {duration:170,easing:'ease-in',fill:'forwards'});
       return closing.finished.catch(() => {}).then(() => {
         if (current !== generation) return;
-        nativeClose(value); closing = null; dialog.classList.remove('ui-dialog-closing');
+        nativeClose(value);
+        // fill:forwards otherwise keeps the reusable dialog transparent after close.
+        closing?.cancel(); closing = null; dialog.classList.remove('ui-dialog-closing');
       });
     };
     dialog.addEventListener('cancel', event => { if (!event.defaultPrevented) { event.preventDefault(); dialog.close(); } });

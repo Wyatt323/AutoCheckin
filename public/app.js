@@ -59,11 +59,13 @@ async function api(url, options = {}) {
     throw new Error('会话已过期，请重新登录');
   }
   const data = await response.json();
+  if (data.mustChangePassword) { location.replace('/password'); throw new Error('请先修改密码'); }
   if (!response.ok) throw new Error(data.error || '请求失败');
   return data;
 }
 
 function navigate(view, keepAccount = false, logAccount = null) {
+  if (view === 'users' && typeof webUser !== 'undefined' && webUser?.role !== 'admin') view = 'overview';
   if (view === 'bots') view = 'accounts';
   if (view === 'automation') {
     if (!config?.users.length) { navigate('accounts'); toast('先添加账号，再配置消息自动化'); return; }
@@ -78,7 +80,7 @@ function navigate(view, keepAccount = false, logAccount = null) {
   if (view === 'activity' && typeof setRunLogScope === 'function') setRunLogScope(logAccount);
   $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
   $$('.view').forEach(item => item.classList.toggle('active', item.id === `view-${view}`));
-  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', ai:'AI 配置', activity:'运行日志' })[view];
+  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', ai:'AI 配置', activity:'运行日志', users:'用户管理' })[view];
   window.location.hash = view === 'activity' && logAccount ? `activity?account=${encodeURIComponent(logAccount)}` : view;
   schedulePeerLookup();
   if (view === 'activity') renderRun();
@@ -531,6 +533,7 @@ async function poll() {
     automationState = data.automation;
     checkinSchedulerState = data.checkinScheduler;
     pythonVersion = data.python;
+    if (typeof renderWebUser === 'function' && data.user) renderWebUser(data.user);
     renderRun();
     renderAutomationState();
     renderCheckinStatus();
@@ -731,11 +734,12 @@ $('#today').textContent = new Date().toLocaleDateString('zh-CN', { year:'numeric
     automationState = data.automation;
     checkinSchedulerState = data.checkinScheduler;
     pythonVersion = data.python;
+    if (typeof renderWebUser === 'function' && data.user) renderWebUser(data.user);
     renderConfig();
     renderRun();
     renderAutomationState();
     const [hash, query] = location.hash.slice(1).split('?');
-    if (['overview','bots','accounts','ai','automation','activity'].includes(hash)) navigate(hash, false, hash === 'activity' ? new URLSearchParams(query).get('account') : null);
+    if (['overview','bots','accounts','ai','automation','activity','users'].includes(hash)) navigate(hash, false, hash === 'activity' ? new URLSearchParams(query).get('account') : null);
     if (!pythonVersion) toast('未检测到 Python，配置可编辑，运行需安装 Python 环境', true);
     const statePollTimer = setInterval(() => { if (!document.hidden) poll(); }, 2000);
     document.addEventListener('visibilitychange', () => {

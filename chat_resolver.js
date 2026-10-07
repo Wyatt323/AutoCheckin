@@ -3,7 +3,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { resolveCredentials } = require('./telegram_credentials');
 
-function createChatResolver({root, dataDir, readConfig, pythonCommand, spawnWorker=spawn, timeoutMs=45000, stopGraceMs=2000}) {
+function createChatResolver({ workerEnv = {},root, dataDir, readConfig, pythonCommand, spawnWorker=spawn, timeoutMs=45000, stopGraceMs=2000}) {
   const cache = new Map(), pending = new Map(), jobs = new Map();
   let closed = false;
   let stopping;
@@ -53,7 +53,7 @@ function createChatResolver({root, dataDir, readConfig, pythonCommand, spawnWork
       let worker;
       try {
         worker = spawnWorker(python.name, [...(python.prefix || []), '-u', path.join(root,'chat_lookup.py'), account, JSON.stringify(peers)], {
-          cwd:root, env:{...process.env,AUTOCHECKIN_DATA_DIR:dataDir,PYTHONIOENCODING:'utf-8'},stdio:['ignore','pipe','pipe'],windowsHide:true
+          cwd:root, env:{...process.env,...workerEnv,AUTOCHECKIN_DATA_DIR:dataDir,PYTHONIOENCODING:'utf-8'},stdio:['ignore','pipe','pipe'],windowsHide:true
         });
       } catch { reject(new Error('无法启动名称查询')); return; }
       let output='', invalid=false, timedOut=false, killTimer, stoppingWorker=false, finish;

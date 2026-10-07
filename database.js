@@ -32,6 +32,29 @@ async function createDatabase({ dataDir, parseConfig, pool: suppliedPool } = {})
       await client.query("INSERT INTO autocheckin_documents(key, value) VALUES('migration:files-v1', $1::jsonb)", [JSON.stringify({ imported, at:new Date().toISOString() })]);
       importedCount = imported;
     }
+    const usersMigrated = await client.query("SELECT key FROM autocheckin_documents WHERE key = 'migration:web-users-v1'");
+    if (!usersMigrated.rows.length) {
+      const registryFile = path.join(dataDir,'.web-users.json');
+      const registry = fs.existsSync(registryFile) ? JSON.parse(fs.readFileSync(registryFile,'utf8')) : [];
+      if (!Array.isArray(registry)) throw new Error('网页用户数据格式错误');
+      await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb) ON CONFLICT(key) DO NOTHING',['web-users',JSON.stringify(registry)]);
+      for (const user of registry) {
+        if (!/^[a-f0-9-]{36}$/.test(user.id)) throw new Error('网页用户标识格式错误');
+        const directory = path.join(dataDir,'.user-workspaces',user.id);
+        const files = [['config','config.json'],['checkin-state','.checkin-schedule-state.json'],['automation-state','.automation-state.json'],['run-history','logs/run-history.json']];
+        for (const [prefix,folder] of [['profile:','.account-profiles'],['discovery:','.bot-discovery']]) {
+          const target = path.join(directory,folder);
+          if (fs.existsSync(target)) for (const file of fs.readdirSync(target).filter(name=>/^[a-f0-9]{64}\.json$/.test(name))) files.push([prefix+file.slice(0,-5),`${folder}/${file}`]);
+        }
+        for (const [key,file] of files) {
+          const target = path.join(directory,file);
+          if (!fs.existsSync(target)) continue;
+          const value = key === 'config' ? parseConfig(fs.readFileSync(target,'utf8')) : JSON.parse(fs.readFileSync(target,'utf8'));
+          await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb) ON CONFLICT(key) DO NOTHING',[`tenant:${user.id}:${key}`,JSON.stringify(value)]);
+        }
+      }
+      await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb)',['migration:web-users-v1',JSON.stringify({at:new Date().toISOString()})]);
+    }
     await client.query('COMMIT');
     if (importedCount !== null) console.log(`旧数据迁移完成：${importedCount} 项；源文件已保留。`);
     for (const row of (await client.query('SELECT key, value FROM autocheckin_documents')).rows) documents.set(row.key, row.value);
@@ -64,4 +87,13 @@ async function createDatabase({ dataDir, parseConfig, pool: suppliedPool } = {})
   }
   return { read:key => documents.get(key), write, refresh, keys:() => [...documents.keys()], async close() { await queue; await pool.end(); } };
 }
-module.exports = { createDatabase };
+function scopedStore(store, prefix) {
+  if (!store) return null;
+  return {
+    read:key => store.read(prefix + key),
+    write:(key,value) => store.write(prefix + key,value),
+    refresh:key => store.refresh(prefix + key),
+    keys:() => store.keys().filter(key=>key.startsWith(prefix)).map(key=>key.slice(prefix.length))
+  };
+}
+module.exports = { createDatabase, scopedStore };

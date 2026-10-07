@@ -20,7 +20,7 @@ async function main() {
   try {
     const dataDir = path.join(root, 'data');
     fs.mkdirSync(dataDir);
-    for (const name of ['database.js', 'account_profiles.js', 'server.js', 'admin_auth.js', 'automation.js', 'login.js', 'schedule_time.js', 'run_history.js', 'checkin_scheduler.js', 'telegram_credentials.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(root, name));
+    for (const name of ['database.js', 'account_profiles.js', 'server.js', 'admin_auth.js','user_auth.js', 'automation.js', 'login.js', 'schedule_time.js', 'run_history.js', 'checkin_scheduler.js', 'telegram_credentials.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(root, name));
     fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({
       telegram: { users: [{ name: 'docker-user', session: 'docker-user', api_id: 123, api_hash: 'secret' }] },
       ai: { model: 'mock', providers: [{ name: 'mock', base_url: 'https://example.com/v1', api_key: 'secret' }] },

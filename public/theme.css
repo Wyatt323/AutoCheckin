@@ -443,3 +443,11 @@ dialog::backdrop, #login-dialog::backdrop, #run-log-dialog::backdrop { backgroun
 @media (prefers-reduced-motion: reduce) {
   *, *:before, *:after { scroll-behavior: auto!important; transition: none!important; animation: none!important; }
 }
+
+[hidden] { display:none !important; }
+#web-user-name { font-size:12px; color:var(--muted); }
+.web-user-create { display:flex; align-items:end; flex-wrap:wrap; gap:16px; }
+.web-user-create .field { flex:1; min-width:220px; }
+#auth-username-field, #auth-new-fields .auth-input-wrap { margin-bottom:20px; }
+#auth-new-fields { margin-top:20px; }
+@media(max-width:720px) { #web-user-name { display:none; } .web-user-create { flex-direction:column; align-items:stretch; } }
