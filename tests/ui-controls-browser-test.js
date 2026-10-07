@@ -33,7 +33,7 @@ const path = require('node:path');
     await page.locator('.ui-picker-footer').getByRole('button', { name:'取消', exact:true }).click();
     assert.equal(await page.locator('#time').inputValue(), '09:30:17', 'cancel preserves value');
     await page.getByRole('button', { name:'选择执行日期' }).click();
-    const bounds = await page.locator('.ui-picker').boundingBox();
+    const bounds = await page.locator('.ui-picker:not([aria-hidden="true"])').boundingBox();
     assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 390, 'popover fits mobile viewport');
     await page.getByRole('button', { name:'2026-10-10', exact:true }).click();
     await page.locator('.ui-picker-footer').getByRole('button', { name:'确定', exact:true }).click();
