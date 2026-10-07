@@ -196,7 +196,7 @@ input::placeholder, textarea::placeholder { color: #76879a; opacity: 1; }
 .account-detail #account-editor .account-card { box-shadow: var(--card-shadow); padding: 26px; }
 .account-bots-head strong { color: var(--ink); font-size: 16px; }
 .account-bots-head small { color: var(--muted); font-size: 12px; line-height: 1.7; }
-.account-card .bot-table { min-width: 940px; }
+.account-card .bot-table { min-width: 1080px; }
 .account-card .bot-table th:nth-child(1) { width: 19%; }
 .account-card .bot-table th:nth-child(2) { width: 18%; }
 .account-card .bot-table th:nth-child(3) { width: 13%; }
@@ -206,7 +206,17 @@ input::placeholder, textarea::placeholder { color: #76879a; opacity: 1; }
 .bot-source-settings { background: var(--cream); border: 2px solid var(--ink); border-radius: 16px; padding: 21px; }
 .bot-source-settings h3 { color: var(--ink); font-size: 15px; }
 .bot-source-settings p, .discovery-empty { color: var(--muted); font-size: 12px; }
-.bot-own-schedule label { color: var(--ink); font-size: 11px; }
+.bot-own-schedule { grid-template-columns: auto minmax(110px, 1fr); gap: 10px; align-items: center; }
+.bot-own-schedule label { color: var(--ink); font-size: 11px; white-space: nowrap; }
+.bot-own-schedule .bot-schedule-switch { gap: 7px; }
+.bot-schedule-switch input:disabled + i { opacity: .5; }
+.peer-input-row { display: flex!important; align-items: center; gap: 12px; width: 100%; margin: 0!important; }
+.peer-input-row input { flex: 1; min-width: 0; }
+.peer-name { display: block; flex: none; max-width: 44%; border: 1.5px solid var(--ink); border-radius: 10px; padding: 8px 10px; background: var(--blue); color: var(--ink); font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.peer-name[hidden] { display: none; }
+.peer-name.resolved { background: #e6faec; color: #14763c; }
+.peer-name.loading { background: var(--lilac); color: var(--muted); }
+.peer-name.unavailable { background: #fff0dc; color: #826025; max-width: 38%; }
 input[type=checkbox] { accent-color: #159f48; }
 .bot-own-schedule input[type=checkbox] { accent-color: #159f48; width: 15px; height: 15px; }
 .discovery-method { color: var(--ink); background: var(--green-soft); border: 1.5px solid var(--ink); border-radius: 9px; }
@@ -402,7 +412,9 @@ dialog::backdrop, #login-dialog::backdrop, #run-log-dialog::backdrop { backgroun
   .bot-table td:before { content: attr(data-label); display: block; color: var(--ink); font-size: 11px; font-weight: 700; margin-bottom: 8px; }
   .bot-table td:nth-child(1), .bot-table td:nth-child(4), .bot-table td:nth-child(5), .bot-table td:nth-child(6), .bot-table td[colspan] { grid-column: 1 / -1; }
   .bot-table td:last-child:before, .bot-table td[colspan]:before { display: none; }
-  .bot-table .bot-own-schedule { grid-template-columns: 1fr 1fr; align-items: center; gap: 8px; }
+  .bot-table .bot-own-schedule { grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; }
+  .peer-input-row { gap: 8px; }
+  .peer-name { padding: 8px; font-size: 11px; max-width: 43%; }
   .bot-table .mode-trigger { gap: 5px; padding: 8px; }
   .bot-table .mode-icon { width: 20px; height: 20px; }
   .bot-table .mode-label { font-size: 11px; }

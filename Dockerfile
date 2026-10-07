@@ -17,7 +17,7 @@ COPY requirements.txt ./requirements.txt
 RUN python -m pip install --upgrade pip \
     && python -m pip install -r requirements.txt
 
-COPY --chown=node:node server.js database.js storage.py bot_discovery.py admin_auth.js automation.js login.js run_history.js schedule_time.js checkin_scheduler.js account_profiles.js account_profile.py allinone.py automation_worker.py login_worker.py telegram_credentials.js telegram_credentials.py config.example.json ./
+COPY --chown=node:node server.js database.js storage.py bot_discovery.py admin_auth.js automation.js login.js run_history.js schedule_time.js checkin_scheduler.js account_profiles.js account_profile.py chat_resolver.js chat_lookup.py allinone.py automation_worker.py login_worker.py telegram_credentials.js telegram_credentials.py config.example.json ./
 COPY --chown=node:node public ./public
 COPY --chown=node:node docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh \

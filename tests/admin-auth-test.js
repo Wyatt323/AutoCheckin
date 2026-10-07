@@ -44,7 +44,7 @@ const { createAdminAuth, requestSecurity } = require('../admin_auth');
     assert.equal((await post('/api/auth/login', { password: 'anything' })).status, 503);
     assert.equal((await fetch(base + '/api/state')).status, 401);
     await stop(); await start('integration-secret');
-    for (const [method, url] of [['GET','/api/state'],['GET','/api/login/status'],['POST','/api/config'],['POST','/api/run'],['POST','/api/stop'],['POST','/api/automation/restart'],['POST','/api/login/start'],['POST','/api/login/password'],['POST','/api/login/cancel'],['GET','/api/unknown']]) {
+    for (const [method, url] of [['GET','/api/state'],['GET','/api/login/status'],['POST','/api/config'],['POST','/api/run'],['POST','/api/stop'],['POST','/api/automation/restart'],['POST','/api/accounts/chats/resolve'],['POST','/api/login/start'],['POST','/api/login/password'],['POST','/api/login/cancel'],['GET','/api/unknown']]) {
       assert.equal((await fetch(base + url, { method })).status, 401, url);
     }
     for (const url of ['/', '/index.html', '/app.js', '/login.js', '/auth.html', '/%69ndex.html', '/foo/../index.html']) {

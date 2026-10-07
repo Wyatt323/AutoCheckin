@@ -24,7 +24,7 @@ const PUBLIC_HOST = process.env.PUBLIC_HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 8765);
 const MAX_BODY = 256 * 1024;
 const MAX_LINES = 800;
-let history, profiles, login, scheduler, database = null;
+let history, profiles, login, scheduler, chatResolver, database = null;
 let child = null;
 let runStarting = false;
 let nextRunAt = 0;
@@ -112,6 +112,7 @@ function nonempty(value, label, max = 200) {
 function chatRef(value, label) {
   const text = nonempty(value, label, 120);
   if (/^https:\/\/t\.me\/[A-Za-z0-9_]{5,}\/?$/i.test(text)) return `@${text.split('/').filter(Boolean).at(-1)}`;
+  if (/^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(text)) return `@${text}`;
   if (/^@[A-Za-z0-9_]{5,}$/.test(text) || /^-?\d+$/.test(text)) return text;
   throw new Error(`${label}须填写 @用户名、数字会话 ID 或公开 t.me 链接`);
 }
@@ -427,6 +428,12 @@ http.createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type':'image/jpeg', 'Cache-Control':'private, no-store', 'X-Content-Type-Options':'nosniff' });
         return res.end(avatar);
       }
+      if (req.method === 'POST' && url.pathname === '/api/accounts/chats/resolve') {
+        if (shuttingDown) throw new Error('服务正在停止');
+        const input = await bodyJson(req);
+        chatResolver ||= require('./chat_resolver').createChatResolver({root:ROOT, dataDir:DATA_ROOT, readConfig, pythonCommand});
+        return send(res, 200, {results:await chatResolver.resolve(input.account, input.peers)});
+      }
       if (req.method === 'POST' && url.pathname === '/api/accounts/profile/refresh') {
         if (shuttingDown) throw new Error('服务正在停止');
         return send(res, 200, { login: await login.start((await bodyJson(req)).account, { profileOnly:true }) });
@@ -489,6 +496,7 @@ async function shutdown() {
   if (child) child.kill();
   scheduler.stop();
   await login.shutdown();
+  await chatResolver?.shutdown();
   await automation.stop();
   await history.flush();
   if (database) await database.close();

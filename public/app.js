@@ -93,6 +93,7 @@ function openAccount(index, section = 'settings') {
 
 function showAccountSection(section) {
   accountSection = section;
+  $('#account-editor').hidden = !['settings','bots','checkins'].includes(section);
   $$('#account-tabs [data-account-section]').forEach(button => button.classList.toggle('active', button.dataset.accountSection === section));
   $$('#account-editor .account-pane,[data-account-pane="messages"],[data-account-pane="forwards"]').forEach(pane => { pane.hidden = pane.dataset.accountPane !== section; });
 }
@@ -104,7 +105,7 @@ function renderAccountBots(user, accountIndex) {
     <td data-label="签到方式"><button type="button" class="mode-trigger" data-mode-trigger="${accountIndex}:${botIndex}" role="combobox" aria-label="签到方式" aria-haspopup="listbox" aria-controls="mode-menu" aria-expanded="false"><span class="mode-icon">${bot.mode === 'command' ? '⌘' : '↖'}</span><span class="mode-label">${bot.mode === 'command' ? '发送命令' : '点击按钮'}</span><span class="mode-chevron" aria-hidden="true"></span></button></td>
     <td data-label="命令"><input class="cell-input" data-field="command" value="${escapeHtml(bot.command || '/sign')}" ${bot.mode === 'button' ? 'disabled' : ''} aria-label="签到命令"></td>
     <td data-label="备注"><input class="cell-input bot-note" data-field="note" value="${escapeHtml(bot.note || '')}" placeholder="用途或站点名称" maxlength="200" aria-label="Bot 备注"></td>
-    <td data-label="独立定时 · 北京时间"><div class="bot-own-schedule"><label><input type="checkbox" data-bot-schedule-enabled ${bot.schedule?.enabled ? 'checked' : ''} ${folderMode ? 'disabled' : ''}> 独立每日签到</label><input type="time" data-bot-schedule-time value="${escapeHtml(bot.schedule?.time || '09:00')}" ${!bot.schedule?.enabled || folderMode ? 'disabled' : ''} aria-label="${escapeHtml(bot.name || 'Bot')} 独立签到时间"></div></td>
+    <td data-label="独立定时 · 北京时间"><div class="bot-own-schedule"><label class="auto-switch bot-schedule-switch"><input type="checkbox" data-bot-schedule-enabled aria-label="${escapeHtml(bot.name || 'Bot')} 独立每日签到" ${bot.schedule?.enabled ? 'checked' : ''} ${folderMode ? 'disabled' : ''}><i aria-hidden="true"></i><span>独立</span></label><input type="time" data-bot-schedule-time value="${escapeHtml(bot.schedule?.time || '09:00')}" ${!bot.schedule?.enabled || folderMode ? 'disabled' : ''} aria-label="${escapeHtml(bot.name || 'Bot')} 独立签到时间"></div></td>
     <td><button class="delete-btn" data-delete="bot" data-account-index="${accountIndex}" data-index="${botIndex}">删除</button></td></tr>`).join('') : '<tr><td colspan="6" style="text-align:center;color:#aab4c5;padding:30px">此账号还没有 Bot，点击右上角添加。</td></tr>';
   const discovered = (user.discoveredBots || []).slice().sort((a,b) => String(a.bot).localeCompare(String(b.bot))).map(item => `<tr><td>${escapeHtml(item.bot)}</td><td><span class="discovery-method ${item.mode === 'unsupported' ? 'muted' : ''}">${escapeHtml(({button:'按钮签到', command:item.command, unsupported:'无需签到 · 跳过', unknown:'尚未确认'})[item.mode] || '尚未确认')}</span></td><td>${escapeHtml(({success:'已成功', failed:'执行失败', no_method:'未发现签到方式', unconfirmed:'无有效响应'})[item.lastResult] || '—')}</td><td><button type="button" class="text-link" data-reset-discovery="${escapeHtml(item.bot)}" data-account-index="${accountIndex}">重新识别</button></td></tr>`).join('');
   return `<section class="bot-source-settings"><div><h3>签到目标来源</h3><p>每个 Bot 处理完成后，随机等待 5–15 秒再处理下一个。</p></div><div class="bot-source-fields"><label class="field"><span>Bot 来源</span><select data-bot-source aria-label="Bot 来源"><option value="configured" ${!folderMode ? 'selected' : ''}>手动配置列表</option><option value="folder" ${folderMode ? 'selected' : ''}>Telegram 对话分组</option></select></label><label class="field" ${!folderMode ? 'hidden' : ''}><span>Telegram 对话分组</span><input data-dialog-folder value="${escapeHtml(user.dialogFolder || '')}" placeholder="填写分组名称或数字 ID"><small>仅轮询此分组中的 Bot，不执行下方手动配置列表。首次探测按钮、/sign 和 /checkin，之后使用已记录的方式。</small></label></div></section>${folderMode ? `<div class="notice"><span>ⓘ</span><p>分组轮询模式已开启。手动 Bot 列表及其独立定时暂不执行；没有有效响应的 Bot 会保留为待确认，不会直接永久跳过。</p></div><section class="discovered-bots"><div class="account-bots-head"><strong>分组识别记录 <span class="count-pill">${user.discoveredBots?.length || 0}</span></strong><button class="outline-btn" type="button" data-refresh-discovery="${accountIndex}">刷新记录</button></div>${discovered ? `<div class="table-wrap"><table><thead><tr><th>Bot</th><th>签到方式</th><th>最近结果</th><th></th></tr></thead><tbody>${discovered}</tbody></table></div>` : '<p class="discovery-empty">首次执行分组签到后，识别结果会显示在这里。</p>'}</section>` : ''}<div class="account-bots-head"><div><strong>Bot 管理 <span class="count-pill">${user.bots.length}</span></strong><small>勾选独立定时后，此 Bot 不再参与整账号签到。时间按北京时间执行。</small></div><button class="outline-btn" data-add-bot="${accountIndex}">＋ 添加 Bot</button></div><div class="table-wrap"><table class="bot-table"><thead><tr><th>Bot 用户名</th><th>签到方式</th><th>命令</th><th>备注</th><th>独立定时 · 北京时间</th><th></th></tr></thead><tbody class="account-bot-table">${rows}</tbody></table></div>`;
@@ -231,8 +232,66 @@ function renderAutomation() {
   renderPlannedTimes();
   $('#forward-list').innerHTML = forwards.length ? forwards.map(({ item, index }) => `
     <article class="automation-card" data-auto-kind="forwards" data-index="${index}"><div class="automation-card-head"><div class="automation-card-symbol">↗</div><div><strong>转发规则 ${index + 1}</strong><small>来源有新消息时自动转发</small></div><div class="automation-card-actions"><label class="auto-switch"><input type="checkbox" data-field="enabled" ${item.enabled !== false ? 'checked' : ''}><i></i>启用</label><button class="delete-btn" data-delete="forward" data-index="${index}">删除</button></div></div>
-    <div class="auto-field-grid"><label class="auto-field"><span>来源群组 / 频道</span><input data-field="source" value="${escapeHtml(item.source || '')}" placeholder="@来源用户名 或 -100..." maxlength="120"></label><label class="auto-field"><span>转发到</span><input data-field="target" value="${escapeHtml(item.target || '')}" placeholder="@目标用户名 或 -100..." maxlength="120"></label></div></article>`).join('') : '<div class="automation-empty">当前账号还没有转发规则。添加来源与目标后，保存即可开始监听。</div>';
+    <div class="auto-field-grid">${peerField('source', '来源群组 / 频道', item.source)}${peerField('target', '转发到', item.target)}</div></article>`).join('') : '<div class="automation-empty">当前账号还没有转发规则。添加来源与目标后，保存即可开始监听。</div>';
+  schedulePeerLookup();
 }
+
+function peerField(field, label, value) {
+  return `<label class="auto-field"><span>${label}</span><span class="peer-input-row"><input data-field="${field}" value="${escapeHtml(value || '')}" aria-label="${label}" placeholder="ID、@用户名 或 t.me 链接" maxlength="120"><span class="peer-name" data-peer-name hidden role="status" aria-live="polite"></span></span></label>`;
+}
+let peerLookupTimer = null, peerLookupRunning = false;
+const peerNames = new Map();
+const peerKey = (account, value) => JSON.stringify([account, value.trim().toLowerCase()]);
+function peerFields() { return [...document.querySelectorAll('#forward-list .peer-input-row input')]; }
+function paintPeerNames() {
+  const account = config?.users[selectedAccountIndex]?.session;
+  for (const input of peerFields()) {
+    const value = input.value.trim(), badge = input.parentElement.querySelector('[data-peer-name]');
+    const entry = peerNames.get(peerKey(account, value));
+    badge.hidden = !value;
+    badge.className = `peer-name ${entry?.status === 'ok' ? 'resolved' : entry?.status === 'error' ? 'unavailable' : 'loading'}`;
+    badge.textContent = entry?.status === 'ok' ? entry.title : entry?.message || '等待查询…';
+    badge.title = entry?.status === 'ok' ? `${entry.type === 'channel' ? '频道' : '群组'}：${entry.title} · ID ${entry.id}` : entry?.message || '使用当前账号查询会话名称';
+  }
+}
+function schedulePeerLookup() {
+  clearTimeout(peerLookupTimer);
+  paintPeerNames();
+  peerLookupTimer = setTimeout(resolvePeerNames, 650);
+}
+async function resolvePeerNames() {
+  if (peerLookupRunning) return;
+  const account = config?.users[selectedAccountIndex]?.session;
+  if (!account) return;
+  const peers = [...new Set(peerFields().map(input => input.value.trim()).filter(Boolean))].filter(value => {
+    const entry = peerNames.get(peerKey(account, value));
+    return !entry || entry.expires <= Date.now();
+  }).slice(0, 4);
+  if (!peers.length) return;
+  peerLookupRunning = true;
+  for (const value of peers) peerNames.set(peerKey(account, value), {status:'loading', message:'查询中…', expires:0});
+  paintPeerNames();
+  try {
+    const data = await api('/api/accounts/chats/resolve', {method:'POST', body:JSON.stringify({account, peers})});
+    for (const value of peers) {
+      const result = data.results?.find(item => item.value === value);
+      peerNames.set(peerKey(account, value), result?.status === 'ok' ? {...result, expires:Date.now()+600000} : {status:'error', message:result?.message || '暂时无法获取名称', expires:Date.now()+30000});
+    }
+  } catch (error) {
+    for (const value of peers) peerNames.set(peerKey(account, value), {status:'error', message:error.message, expires:Date.now()+10000});
+  } finally {
+    peerLookupRunning = false;
+    while (peerNames.size > 400) peerNames.delete(peerNames.keys().next().value);
+    paintPeerNames();
+    schedulePeerLookup();
+  }
+}
+document.addEventListener('input', event => {
+  if (event.target.matches('#forward-list .peer-input-row input')) schedulePeerLookup();
+});
+document.addEventListener('focusout', event => {
+  if (event.target.matches('#forward-list .peer-input-row input')) schedulePeerLookup();
+});
 
 function closeAutoSelect() {
   const menu = $('#auto-select-menu');
