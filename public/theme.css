@@ -175,7 +175,7 @@ input::placeholder, textarea::placeholder { color: #76879a; opacity: 1; }
 .account-tile-info small, .account-tile-activity > span { color: var(--muted); font-size: 11px; }
 .account-tile-info strong { color: var(--ink); font-size: 12px; }
 .account-tile-activity strong, .account-tile-activity small { color: var(--muted); font-size: 11px; line-height: 1.65; }
-.account-tile-actions { margin: 0 20px; gap: 7px; border-top-color: var(--line); padding: 13px 0 16px; }
+.account-tile-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 20px; gap: 7px; border-top-color: var(--line); padding: 13px 0 16px; }
 .account-tile-actions button { color: var(--ink); border: 1.5px solid transparent; padding: 7px 2px; border-radius: 9px; }
 .account-tile-actions button:hover { background: var(--blue); color: var(--ink); border-color: var(--ink); }
 .account-tile-actions span { font-size: 10px; }
@@ -274,7 +274,11 @@ input[type=checkbox] { accent-color: #159f48; }
 .automation-log-row time { color: var(--muted); }
 .log-filters { padding: 21px 25px; background: var(--cream); border-bottom: 2px solid var(--ink); gap: 18px; }
 .log-filters small { color: var(--muted); font-size: 11px; }
+.log-filter-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+#log-error { padding: 14px 24px; color: #a73446; background: #fff0ed; }
+#log-back[hidden] { display: none; }
 .log-console { background: var(--ink); border: 2px solid var(--ink); border-radius: 13px; font-size: 12px; margin: 18px; }
+.log-console .log-line { display: grid; }
 .log-console .log-line.system { color: var(--green-soft); }
 .log-empty { color: #afbfce; }
 dialog#login-dialog, dialog#run-log-dialog, .ui-confirm-dialog { background: #fff; color: var(--ink); border: 3px solid var(--ink); border-radius: 23px; box-shadow: 7px 9px 0 var(--ink); padding: 28px; }

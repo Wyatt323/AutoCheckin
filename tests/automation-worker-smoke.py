@@ -1,6 +1,8 @@
 """Exercise scheduling and forwarding without contacting Telegram."""
 
 import asyncio
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -78,5 +80,13 @@ async def exercise():
                 pass
 
 
-asyncio.run(exercise())
+output = io.StringIO()
+with contextlib.redirect_stdout(output):
+    asyncio.run(exercise())
+events = [json.loads(line) for line in output.getvalue().splitlines()]
+message = next(event for event in events if event.get('category') == 'message')
+forward = next(event for event in events if event.get('category') == 'forward' and '已转发' in event['message'])
+assert message['account'] == forward['account'] == 'test'
+assert message['ruleId'] == 'schedule_test' and forward['ruleId'] == 'forward_test'
+assert message['state'] == forward['state'] == 'completed'
 print("定时发送、转发和去重状态检查通过")

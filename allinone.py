@@ -3,6 +3,7 @@
 
 from telegram_credentials import resolve_credentials
 from storage import read_document, parse_config_text
+from checkin_logging import account_log, emit_result, install_json_output
 import asyncio
 import json
 import random
@@ -860,26 +861,35 @@ async def main(account=None, bot=None):
     previous_executed = False
     failed_any = False
     for user in users:
-        bots = user["bots"]
-        if not bots and not user['dialog_folder']:
-            print(f"⏭️ 用户 {user['name']} 没有配置 Bot，跳过")
-            continue
-        if previous_executed:
-            delay = random.randint(BOT_INTERVAL_MIN, BOT_INTERVAL_MAX)
-            print(f'⏳ 等待 {delay}s 后处理下一个账号的 Bot...')
-            await asyncio.sleep(delay)
-        previous_executed = True
-        if bot is None:
-            completed = await run_user(user, ai_model, ai_clients, bots, user["bot_commands"], user["dialog_folder"])
-        else:
-            completed = await run_user(user, ai_model, ai_clients, bots, user["bot_commands"], user["dialog_folder"], only_bot=bot)
-        if not completed:
-            failed_any = True
-            print(f"⚠️ 用户 {user['name']} 有未完成的 Bot，继续处理下一个账号")
+        with account_log(user["session"]):
+            try:
+                bots = user["bots"]
+                if not bots and not user['dialog_folder']:
+                    print(f"⏭️ 用户 {user['name']} 没有配置 Bot，跳过")
+                    emit_result(user["session"], True)
+                    continue
+                if previous_executed:
+                    delay = random.randint(BOT_INTERVAL_MIN, BOT_INTERVAL_MAX)
+                    print(f'⏳ 等待 {delay}s 后处理下一个账号的 Bot...')
+                    await asyncio.sleep(delay)
+                previous_executed = True
+                if bot is None:
+                    completed = await run_user(user, ai_model, ai_clients, bots, user["bot_commands"], user["dialog_folder"])
+                else:
+                    completed = await run_user(user, ai_model, ai_clients, bots, user["bot_commands"], user["dialog_folder"], only_bot=bot)
+                if not completed:
+                    failed_any = True
+                    print(f"⚠️ 用户 {user['name']} 有未完成的 Bot，继续处理下一个账号")
+                emit_result(user["session"], completed)
+            except Exception as error:
+                print(f"账号执行失败：{error}")
+                emit_result(user["session"], False)
+                raise
     return not failed_any
 
 
 if __name__ == '__main__':
+    install_json_output()
     import argparse
     parser = argparse.ArgumentParser(description='AutoCheckin Telegram 签到')
     parser.add_argument('--account', help='仅运行指定 Session 的账号')

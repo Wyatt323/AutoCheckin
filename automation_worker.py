@@ -21,8 +21,13 @@ _last_database_state = None
 CHINA_TIME = dt.timezone(dt.timedelta(hours=8))
 
 
-def emit(message, level="info", kind="log"):
-    print(json.dumps({"type": kind, "level": level, "message": str(message)}, ensure_ascii=False), flush=True)
+def emit(message, level="info", kind="log", **metadata):
+    print(json.dumps({"type": kind, "level": level, "message": str(message), **metadata}, ensure_ascii=False), flush=True)
+
+
+def emit_rule(rule, category, message, level="info", state=None):
+    emit(message, level, account=rule['account'], category=category, ruleId=rule['id'],
+         state=state or ('failed' if level == 'error' else 'completed'))
 
 
 def load_config():
@@ -132,11 +137,17 @@ async def main():
     in_flight = set()
     retry_after = {}
 
+    def account_error(session, message):
+        for category, entries in [('message', schedules), ('forward', forwards)]:
+            for rule in entries:
+                if rule['account'] == session:
+                    emit_rule(rule, category, message, 'error')
+
     try:
         for session in required:
             user = users.get(session)
             if not user:
-                emit(f"账号 {session} 不存在，跳过其规则", "error")
+                account_error(session, f"账号 {session} 不存在，跳过其规则")
                 continue
             api_id, api_hash = resolve_credentials(config, user)
             client = TelegramClient(str(DATA_DIR / session), api_id, api_hash, device_model="AutoCheckin")
@@ -144,12 +155,12 @@ async def main():
             try:
                 await client.connect()
                 if not await client.is_user_authorized():
-                    emit(f"账号 {session} 尚未登录，请先在账号管理中完成登录", "error")
+                    account_error(session, f"账号 {session} 尚未登录，请先在账号管理中完成登录")
                     await client.disconnect()
                     connected_clients.remove(client)
                     continue
             except Exception as error:
-                emit(f"账号 {session} 连接失败：{error}", "error")
+                account_error(session, f"账号 {session} 连接失败：{error}")
                 await client.disconnect()
                 connected_clients.remove(client)
                 continue
@@ -169,7 +180,7 @@ async def main():
                 source = await client.get_input_entity(chat_value(rule["source"]))
                 target = await client.get_input_entity(chat_value(rule["target"]))
             except Exception as error:
-                emit(f"转发规则 {rule['source']} → {rule['target']} 无法解析会话：{error}", "error")
+                emit_rule(rule, 'forward', f"转发规则 {rule['source']} → {rule['target']} 无法解析会话：{error}", "error")
                 continue
 
             queue = asyncio.Queue(maxsize=500)
@@ -181,15 +192,15 @@ async def main():
                         while True:
                             try:
                                 await client.forward_messages(target, message)
-                                emit(f"已转发 {rule['source']} 的新消息至 {rule['target']}")
+                                emit_rule(rule, 'forward', f"已转发 {rule['source']} 的新消息至 {rule['target']}")
                                 break
                             except Exception as error:
                                 wait = getattr(error, "seconds", None)
                                 if isinstance(wait, int) and 0 < wait <= 3600:
-                                    emit(f"转发触发 Telegram 限流，等待 {wait} 秒后重试", "error")
+                                    emit_rule(rule, 'forward', f"转发触发 Telegram 限流，等待 {wait} 秒后重试", "error", state='running')
                                     await asyncio.sleep(wait + 1)
                                 else:
-                                    emit(f"转发 {rule['source']} → {rule['target']} 失败：{error}", "error")
+                                    emit_rule(rule, 'forward', f"转发 {rule['source']} → {rule['target']} 失败：{error}", "error")
                                     break
                     finally:
                         queue.task_done()
@@ -198,12 +209,12 @@ async def main():
                 try:
                     queue.put_nowait(event.message)
                 except asyncio.QueueFull:
-                    emit(f"转发队列已满，无法处理 {rule['source']} 的新消息", "error")
+                    emit_rule(rule, 'forward', f"转发队列已满，无法处理 {rule['source']} 的新消息", "error")
 
             client.add_event_handler(forward_handler, events.NewMessage(chats=source))
             forward_tasks.append(asyncio.create_task(forward_loop()))
             active_forwards += 1
-            emit(f"正在监听 {rule['source']} → {rule['target']}")
+            emit_rule(rule, 'forward', f"开始监听 {rule['source']} → {rule['target']}")
 
         emit(f"自动化运行中：{len(schedules)} 条定时消息，{active_forwards} 条转发监听", kind="ready")
 
@@ -214,11 +225,11 @@ async def main():
                 await client.send_message(target, rule["message"])
                 sent[key] = dt.datetime.now(CHINA_TIME).isoformat(timespec="seconds")
                 save_sent(sent, planned, claimed)
-                emit(f"定时消息已发送至 {rule['target']}")
+                emit_rule(rule, 'message', f"定时消息已发送至 {rule['target']}")
             except Exception as error:
                 wait = getattr(error, "seconds", None)
                 retry_after[key] = time.monotonic() + (wait + 1 if isinstance(wait, int) and wait > 0 else 30)
-                emit(f"定时消息发送至 {rule['target']} 失败：{error}", "error")
+                emit_rule(rule, 'message', f"定时消息发送至 {rule['target']} 失败：{error}", "error")
             finally:
                 in_flight.discard(key)
 
@@ -258,7 +269,7 @@ async def main():
                     save_sent(sent, planned, claimed)
                 except Exception as error:
                     claimed.pop(key, None)
-                    emit(f"执行记录保存失败，不发送消息：{error}", "error")
+                    emit_rule(rule, 'message', f"执行记录保存失败，不发送消息：{error}", "error")
                     continue
                 in_flight.add(key)
                 task = asyncio.create_task(send_schedule(rule, key))

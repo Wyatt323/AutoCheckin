@@ -11,19 +11,25 @@ function filterRunLogs(records, filter) {
   const end = filter.end && (filter.end.length === 5 ? `${filter.end}:59` : filter.end);
   if (start && end && start > end) return rows;
   for (const run of records) {
-    if (filter.account && (run.account || '__all__') !== filter.account) continue;
-    if (filter.status && run.state !== filter.status) continue;
+    const category = run.category || 'checkin';
+    if (filter.category && category !== filter.category) continue;
+    if (filter.account === '__all__' && run.account) continue;
     for (const line of run.lines || []) {
+      const account = line.account || run.account;
+      const state = typeof run.accountStates?.[account] === 'string' ? run.accountStates[account] : run.state;
+      if (filter.account && filter.account !== '__all__' && account !== filter.account) continue;
+      if (filter.status && state !== filter.status) continue;
       const parts = beijingParts(line.time);
       if (!parts || (filter.date && parts.date !== filter.date) || (start && parts.time < start) || (end && parts.time > end)) continue;
-      rows.push({ ...line, runId: run.id, account: run.account, state: run.state, trigger: run.trigger });
+      rows.push({ ...line, runId: run.id, account, state, trigger: run.trigger, category, bot:run.bot });
     }
   }
-  return rows;
+  return rows.sort((a,b) => Date.parse(a.time) - Date.parse(b.time));
 }
 if (typeof module !== 'undefined') module.exports = { beijingParts, filterRunLogs };
 if (typeof document !== 'undefined') {
-  let runRecords = [], modalRunId = null, lastRevision = -1, polling = false;
+  let runRecords = [], modalRunId = null, lastRevision = -1, polling = false, logScope = null, lastQuery = null;
+  const categories = {checkin:'定时任务', message:'定时消息', forward:'监听转发'};
   const dialog = document.createElement('dialog');
   dialog.id = 'run-log-dialog';
   dialog.setAttribute('aria-labelledby', 'run-log-title');
@@ -31,12 +37,33 @@ if (typeof document !== 'undefined') {
   document.body.append(dialog);
   const filters = document.createElement('form');
   filters.id = 'log-filters'; filters.className = 'log-filters';
-  filters.innerHTML = `<label>日期 · 北京时间<input id="log-filter-date" type="date"></label><label>开始时间<input id="log-filter-start" type="time" step="1"></label><label>结束时间<input id="log-filter-end" type="time" step="1"></label><label>账号<select id="log-filter-account"><option value="">所有账号</option><option value="__all__">全部账号（批量执行）</option></select></label><label>运行状态<select id="log-filter-status"><option value="">所有状态</option>${Object.entries(statusText).map(([value,label]) => `<option value="${value}">${label}</option>`).join('')}</select></label><button class="outline-btn" type="reset">重置筛选</button><small>按每行日志时间筛选；状态为所属任务状态，批量执行不冒充单账号日志。</small>`;
+  filters.innerHTML = `<label>日志分类<select id="log-filter-category"><option value="">全部分类</option>${Object.entries(categories).map(([value,label]) => `<option value="${value}">${label}</option>`).join('')}</select></label><label>账号<select id="log-filter-account"><option value="">所有账号</option><option value="__all__">全部账号（批量执行）</option></select></label><label>日期 · 北京时间<input id="log-filter-date" type="date"></label><label>开始时间<input id="log-filter-start" type="time" step="1"></label><label>结束时间<input id="log-filter-end" type="time" step="1"></label><label>运行状态<select id="log-filter-status"><option value="">所有状态</option>${Object.entries(statusText).map(([value,label]) => `<option value="${value}">${label}</option>`).join('')}</select></label><div class="log-filter-actions"><button class="primary-btn" type="submit">筛选</button><button class="outline-btn" type="reset">重置筛选</button></div><small id="log-scope-hint">定时任务包含账号与 Bot 签到（含手动执行）；按每条日志的北京时间筛选。</small>`;
   $('#log-console').before(filters);
-  filters.addEventListener('submit', event => event.preventDefault());
+  filters.addEventListener('submit', event => { event.preventDefault(); renderHistory(); refreshRunLogs(); });
   filters.addEventListener('input', renderHistory);
   filters.addEventListener('change', renderHistory);
-  filters.addEventListener('reset', () => { setTimeout(renderHistory, 0); });
+  filters.addEventListener('reset', () => { setTimeout(() => { $('#log-filter-account').value = logScope || ''; renderHistory(); if (typeof UIControls !== 'undefined') UIControls.refresh(); }, 0); });
+  window.setRunLogScope = account => {
+    logScope = account || null;
+    filters.reset();
+    updateAccounts();
+    const select = $('#log-filter-account');
+    select.value = logScope || '';
+    select.disabled = Boolean(logScope);
+    const user = config?.users.find(user => user.session === logScope);
+    $('#log-page-title').textContent = logScope ? `${user?.name || logScope} · 运行日志` : '运行日志';
+    $('#log-page-description').textContent = logScope ? '仅显示当前账号的定时任务、定时消息和监听转发记录。' : '查看全部账号的定时任务、定时消息和监听转发记录。';
+    $('#log-back').hidden = !logScope;
+    $('#log-error').hidden = true;
+    // Drop the previous account's result immediately; revision alone is not a scope identity.
+    runRecords = []; lastRevision = -1; lastQuery = null;
+    renderHistory();
+    if (typeof UIControls !== 'undefined') UIControls.refresh();
+  };
+  $('#log-back').addEventListener('click', () => {
+    const index = config?.users.findIndex(user => user.session === logScope);
+    if (index >= 0) openAccount(index); else navigate('accounts');
+  });
   function labelFor(run) {
     if (!run.account) return '全部账号（批量执行）';
     const user = config?.users.find(user => user.session === run.account);
@@ -44,7 +71,7 @@ if (typeof document !== 'undefined') {
   }
   function lineHtml(line, detailed = false) {
     const parts = beijingParts(line.time);
-    return `<div class="log-line ${escapeHtml(line.stream)}"><time>${parts ? (detailed ? `${parts.date} ` : '') + parts.time : '—'}</time><span>${detailed ? `<b class="log-scope">${escapeHtml(labelFor(line))} · ${escapeHtml(statusText[line.state] || line.state)} · ${line.trigger === 'scheduled' ? '定时' : '手动'}</b>` : ''}${escapeHtml(line.text)}</span></div>`;
+    return `<div class="log-line ${escapeHtml(line.stream)}"><time>${parts ? (detailed ? `${parts.date} ` : '') + parts.time : '—'}</time><span>${detailed ? `<b class="log-scope">${escapeHtml(labelFor(line))} · ${categories[line.category] || '定时任务'} · ${escapeHtml(statusText[line.state] || line.state)}${line.category === 'checkin' ? ` · ${line.trigger === 'scheduled' ? '定时' : '手动'}` : ''}</b>` : ''}${escapeHtml(line.text)}</span></div>`;
   }
   function setOutput(element, html) {
     if (element.dataset.output === html) return;
@@ -56,7 +83,7 @@ if (typeof document !== 'undefined') {
   }
   function updateAccounts() {
     const select = $('#log-filter-account');
-    const accounts = [...new Set([...runRecords.map(run => run.account), ...(config?.users || []).map(user => user.session)].filter(Boolean))].sort();
+    const accounts = [...new Set([logScope, ...runRecords.flatMap(run => [run.account, ...run.lines.map(line => line.account)]), ...(config?.users || []).map(user => user.session)].filter(Boolean))].sort();
     // Append only missing options: polling must not replace focused filter controls.
     for (const account of accounts) {
       if ([...select.options].some(option => option.value === account)) continue;
@@ -65,11 +92,11 @@ if (typeof document !== 'undefined') {
     }
   }
   function renderHistory() {
-    const filter = { date: $('#log-filter-date').value, start: $('#log-filter-start').value, end: $('#log-filter-end').value, account: $('#log-filter-account').value, status: $('#log-filter-status').value };
+    const filter = { date: $('#log-filter-date').value, start: $('#log-filter-start').value, end: $('#log-filter-end').value, account: logScope || $('#log-filter-account').value, status: $('#log-filter-status').value, category:$('#log-filter-category').value };
     const rows = filterRunLogs(runRecords, filter);
-    $('#log-count').textContent = `${rows.length} 行 · ${runRecords.length} 次执行`;
+    $('#log-count').textContent = `${rows.length} 行 · ${new Set(rows.map(row => row.runId)).size} 条记录`;
     const invalid = filter.start && filter.end && filter.start > filter.end;
-    setOutput($('#log-console'), rows.length ? rows.map(row => lineHtml(row, true)).join('') : `<div class="log-empty">${invalid ? '开始时间不能晚于结束时间。' : '没有符合筛选条件的日志。'}</div>`);
+    setOutput($('#log-console'), rows.length ? rows.map(row => lineHtml(row, true)).join('') : `<div class="log-empty">${invalid ? '开始时间不能晚于结束时间。' : lastQuery === null ? '正在加载日志…' : '没有符合筛选条件的日志。'}</div>`);
   }
   function renderModal() {
     if (!dialog.open) return;
@@ -88,15 +115,19 @@ if (typeof document !== 'undefined') {
     if (!dialog.open || dialog.classList.contains('ui-dialog-closing')) dialog.showModal();
     renderModal(); refreshRunLogs();
   };
+  const currentQuery = () => currentView === 'activity' && logScope && !dialog.open ? `?account=${encodeURIComponent(logScope)}` : '';
   window.refreshRunLogs = async () => {
     if (polling || (!dialog.open && currentView !== 'activity')) return;
     polling = true;
+    const query = currentQuery();
     try {
-      const data = await api('/api/runs');
-      if (lastRevision !== data.revision) { runRecords = data.records; lastRevision = data.revision; }
+      const data = await api(`/api/runs${query}`);
+      if (query !== currentQuery()) return;
+      if (lastRevision !== data.revision || lastQuery !== query) { runRecords = data.records; lastRevision = data.revision; lastQuery = query; }
+      $('#log-error').hidden = true;
       updateAccounts(); renderHistory(); renderModal();
-    } catch (error) { if (dialog.open) $('#run-log-error').textContent = `日志读取失败：${error.message}`; }
-    finally { polling = false; }
+    } catch (error) { if (dialog.open) $('#run-log-error').textContent = `日志读取失败：${error.message}`; else { $('#log-error').hidden = false; $('#log-error').textContent = `日志读取失败：${error.message}`; } }
+    finally { polling = false; if (query !== currentQuery()) refreshRunLogs(); }
   };
   $('#run-log-close').addEventListener('click', () => dialog.close());
   dialog.addEventListener('cancel', event => { event.preventDefault(); dialog.close(); });

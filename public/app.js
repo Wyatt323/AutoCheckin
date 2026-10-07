@@ -62,7 +62,7 @@ async function api(url, options = {}) {
   return data;
 }
 
-function navigate(view, keepAccount = false) {
+function navigate(view, keepAccount = false, logAccount = null) {
   if (view === 'bots') view = 'accounts';
   if (view === 'automation') {
     if (!config?.users.length) { navigate('accounts'); toast('先添加账号，再配置消息自动化'); return; }
@@ -74,10 +74,11 @@ function navigate(view, keepAccount = false) {
   closeAutoSelect();
   if (config) { readEditors(); if (view === 'accounts') renderConfig(); }
   currentView = view;
+  if (view === 'activity' && typeof setRunLogScope === 'function') setRunLogScope(logAccount);
   $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
   $$('.view').forEach(item => item.classList.toggle('active', item.id === `view-${view}`));
   $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', ai:'AI 配置', activity:'运行日志' })[view];
-  window.location.hash = view;
+  window.location.hash = view === 'activity' && logAccount ? `activity?account=${encodeURIComponent(logAccount)}` : view;
   schedulePeerLookup();
   if (view === 'activity') renderRun();
 }
@@ -86,12 +87,14 @@ function openAccount(index, section = 'settings') {
   if (!config?.users[index]) return;
   readEditors();
   selectedAccountIndex = index;
+  if (section === 'logs') { navigate('activity', true, config.users[index].session); return; }
   accountSection = section;
   navigate('accounts', true);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function showAccountSection(section) {
+  if (section === 'logs') { openAccount(selectedAccountIndex, 'logs'); return; }
   accountSection = section;
   $('#account-editor').hidden = !['settings','bots','checkins'].includes(section);
   $$('#account-tabs [data-account-section]').forEach(button => button.classList.toggle('active', button.dataset.accountSection === section));
@@ -161,7 +164,7 @@ function renderConfig() {
     const messageCount = config.automations.schedules.filter(item => item.account === user.session).length;
     const forwardCount = config.automations.forwards.filter(item => item.account === user.session).length;
     const latest = checkinSchedulerState?.events?.filter(item => item.account === user.session).at(-1);
-    return `<article class="account-tile" data-account-index="${index}"><button type="button" class="account-tile-main" data-open-account="${index}" data-section="settings"><span class="account-tile-top"><span class="account-tile-avatar">${accountAvatar(user)}</span><span class="account-tile-title"><strong>${escapeHtml(user.name || '新账号')}</strong><small>${escapeHtml(user.profile?.username ? `@${user.profile.username}` : user.session || '待设置 Session')}</small></span><span class="account-health ${user.sessionReady ? 'ready' : 'pending'}">${user.sessionReady ? '● 正常' : '○ 待登录'}</span></span><span class="account-tile-info"><span><small>Telegram 用户 ID</small><strong>${escapeHtml(user.profile?.userId || (user.sessionReady ? '待同步' : '登录后获取'))}</strong></span><span><small>数据中心 DC</small><strong title="当前 Telegram Session 连接的数据中心">${user.profile?.dcId ? `DC ${escapeHtml(user.profile.dcId)}` : '—'}</strong></span><span><small>签到 Bot</small><strong>${user.bots.length} 个</strong></span><span><small>资料更新</small><strong>${user.profile?.updatedAt ? escapeHtml(formatDate(user.profile.updatedAt)) : '尚未同步'}</strong></span></span><span class="account-tile-activity"><span>最近运行</span><strong>${latest ? escapeHtml(latest.message) : '暂无定时签到记录'}</strong><small>${latest ? formatDate(latest.time) : `${(user.checkinSchedules || []).length} 个签到计划 · ${messageCount} 个定时消息 · ${forwardCount} 个转发`}</small></span></button><div class="account-tile-actions"><button type="button" data-login-account="${index}" title="Telegram 登录">${lineIcon('login')}<span>登录</span></button><button type="button" data-run-account="${index}" title="立即签到">${lineIcon('play')}<span>执行</span></button><button type="button" data-open-account="${index}" data-section="bots" title="Bot 管理">${lineIcon('bot')}<span>Bot</span></button><button type="button" data-open-account="${index}" data-section="checkins" title="定时任务管理">${lineIcon('clock')}<span>定时</span></button><button type="button" data-open-account="${index}" data-section="messages" title="定时消息">${lineIcon('message')}<span>消息</span></button><button type="button" data-open-account="${index}" data-section="forwards" title="监听转发">${lineIcon('forward')}<span>转发</span></button><button type="button" data-profile-account="${index}" ${!user.sessionReady ? 'disabled' : ''} title="同步 Telegram 头像、用户 ID 和 DC">${lineIcon('refresh')}<span>同步资料</span></button><button type="button" data-open-account="${index}" data-section="settings" title="账号资料">${lineIcon('edit')}<span>资料</span></button></div></article>`;
+    return `<article class="account-tile" data-account-index="${index}"><button type="button" class="account-tile-main" data-open-account="${index}" data-section="settings"><span class="account-tile-top"><span class="account-tile-avatar">${accountAvatar(user)}</span><span class="account-tile-title"><strong>${escapeHtml(user.name || '新账号')}</strong><small>${escapeHtml(user.profile?.username ? `@${user.profile.username}` : user.session || '待设置 Session')}</small></span><span class="account-health ${user.sessionReady ? 'ready' : 'pending'}">${user.sessionReady ? '● 正常' : '○ 待登录'}</span></span><span class="account-tile-info"><span><small>Telegram 用户 ID</small><strong>${escapeHtml(user.profile?.userId || (user.sessionReady ? '待同步' : '登录后获取'))}</strong></span><span><small>数据中心 DC</small><strong title="当前 Telegram Session 连接的数据中心">${user.profile?.dcId ? `DC ${escapeHtml(user.profile.dcId)}` : '—'}</strong></span><span><small>签到 Bot</small><strong>${user.bots.length} 个</strong></span><span><small>资料更新</small><strong>${user.profile?.updatedAt ? escapeHtml(formatDate(user.profile.updatedAt)) : '尚未同步'}</strong></span></span><span class="account-tile-activity"><span>最近运行</span><strong>${latest ? escapeHtml(latest.message) : '暂无定时签到记录'}</strong><small>${latest ? formatDate(latest.time) : `${(user.checkinSchedules || []).length} 个签到计划 · ${messageCount} 个定时消息 · ${forwardCount} 个转发`}</small></span></button><div class="account-tile-actions"><button type="button" data-login-account="${index}" title="Telegram 登录">${lineIcon('login')}<span>登录</span></button><button type="button" data-run-account="${index}" title="立即签到">${lineIcon('play')}<span>执行</span></button><button type="button" data-open-account="${index}" data-section="bots" title="Bot 管理">${lineIcon('bot')}<span>Bot</span></button><button type="button" data-open-account="${index}" data-section="checkins" title="定时任务管理">${lineIcon('clock')}<span>定时</span></button><button type="button" data-open-account="${index}" data-section="messages" title="定时消息">${lineIcon('message')}<span>消息</span></button><button type="button" data-open-account="${index}" data-section="forwards" title="监听转发">${lineIcon('forward')}<span>转发</span></button><button type="button" data-open-account="${index}" data-section="logs" title="账号运行日志">${lineIcon('log')}<span>日志</span></button><button type="button" data-profile-account="${index}" ${!user.sessionReady ? 'disabled' : ''} title="同步 Telegram 头像、用户 ID 和 DC">${lineIcon('refresh')}<span>同步资料</span></button><button type="button" data-open-account="${index}" data-section="settings" title="账号资料">${lineIcon('edit')}<span>资料</span></button></div></article>`;
   }).join('') || '<div class="automation-empty">还没有账号。点击右上角添加账号。</div>';
   if (selectedAccountIndex !== null && !config.users[selectedAccountIndex]) selectedAccountIndex = null;
   $('#account-overview').hidden = selectedAccountIndex !== null;
@@ -458,7 +461,7 @@ async function saveConfig() {
 async function startRun(account = null) {
   if (startingRun) return;
   startingRun = true;
-  $$('#hero-run,#activity-run,#account-run,[data-run-account]').forEach(button => { button.disabled = true; });
+  $$('#hero-run,#account-run,[data-run-account]').forEach(button => { button.disabled = true; });
   toast('正在准备签到…');
   try {
     const data = await api('/api/run', { method:'POST', body:JSON.stringify(account ? { account } : {}) });
@@ -470,29 +473,12 @@ async function startRun(account = null) {
   finally { startingRun = false; renderRun(); }
 }
 
-async function stopRun() {
-  const runId = currentRun?.id;
-  if (!runId || !['running','stopping'].includes(currentRun.state)) return;
-  const accepted = typeof UIControls !== 'undefined' ? await UIControls.confirm({ title:'停止签到任务', message:'确定停止本次签到？已经完成的 Bot 不会重新执行。', confirmText:'停止任务' }) : confirm('确定停止本次签到任务？');
-  if (!accepted) return;
-  try {
-    await api('/api/stop', { method:'POST', body:JSON.stringify({ id:runId }) });
-    toast('正在停止任务');
-    await poll();
-  } catch (error) { toast(error.message, true); }
-}
-
 function renderRun() {
   if (!currentRun) return;
   const state = currentRun.state;
   $('#stat-status').textContent = statusText[state] || state;
   $('#stat-last').textContent = currentRun.startedAt ? `启动于 ${formatDate(currentRun.startedAt)}` : '尚无运行记录';
-  $('#run-title').textContent = statusText[state] || state;
-  $('#run-detail').textContent = state === 'idle' ? (pythonVersion ? '配置完成后，即可启动批量签到。' : '未找到 Python，请先安装运行环境。') : state === 'running' ? '正在处理账号和 Bot，请保持服务运行。' : state === 'completed' ? '本次任务已结束，可查看下方完整输出。' : state === 'stopping' ? '正在等待脚本退出。' : '请查看日志中的错误信息。';
-  $('#run-indicator').className = `run-indicator ${state}`;
-  $('#run-meta').textContent = currentRun.startedAt ? `开始：${formatDate(currentRun.startedAt)}${currentRun.finishedAt ? ` · 结束：${formatDate(currentRun.finishedAt)}` : ''}` : '—';
-  $('#stop-run').disabled = !['running','stopping'].includes(state);
-  $$('#hero-run,#activity-run,#account-run,[data-run-account]').forEach(button => { button.disabled = startingRun || ['running','stopping'].includes(state) || (typeof loginState !== 'undefined' && loginState?.active); });
+  $$('#hero-run,#account-run,[data-run-account]').forEach(button => { button.disabled = startingRun || ['running','stopping'].includes(state) || (typeof loginState !== 'undefined' && loginState?.active); });
   const lines = currentRun.lines || [];
   if (typeof refreshRunLogs === 'function') refreshRunLogs();
   const latest = $('#latest-activity');
@@ -689,9 +675,7 @@ $('#restart-automation').addEventListener('click', async () => {
 });
 $$('.save-btn').forEach(button => button.addEventListener('click', saveConfig));
 $('#hero-run').addEventListener('click', () => startRun());
-$('#activity-run').addEventListener('click', () => startRun());
 $('#account-run').addEventListener('click', () => { const account = config.users[selectedAccountIndex]?.session; if (account) startRun(account); });
-$('#stop-run').addEventListener('click', stopRun);
 $('#today').textContent = new Date().toLocaleDateString('zh-CN', { year:'numeric', month:'long', day:'numeric', weekday:'long', timeZone:'Asia/Shanghai' });
 
 (async () => {
@@ -705,8 +689,8 @@ $('#today').textContent = new Date().toLocaleDateString('zh-CN', { year:'numeric
     renderConfig();
     renderRun();
     renderAutomationState();
-    const hash = location.hash.slice(1);
-    if (['overview','bots','accounts','ai','automation','activity'].includes(hash)) navigate(hash);
+    const [hash, query] = location.hash.slice(1).split('?');
+    if (['overview','bots','accounts','ai','automation','activity'].includes(hash)) navigate(hash, false, hash === 'activity' ? new URLSearchParams(query).get('account') : null);
     if (!pythonVersion) toast('未检测到 Python，配置可编辑，运行需安装 Python 环境', true);
     const statePollTimer = setInterval(() => { if (!document.hidden) poll(); }, 2000);
     document.addEventListener('visibilitychange', () => {

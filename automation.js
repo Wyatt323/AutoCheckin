@@ -21,8 +21,10 @@ function getState() {
   } catch {}
   return { ...state, planned: plans, lines: state.lines.slice(-120) };
 }
-function line(message, level = 'info') {
-  state.lines.push({ time: new Date().toISOString(), level, message: String(message).slice(0, 1000) });
+function line(message, level = 'info', metadata = {}) {
+  const entry = { time: new Date().toISOString(), level, message: String(message).slice(0, 1000), account:metadata.account, category:metadata.category, ruleId:metadata.ruleId, state:metadata.state };
+  state.lines.push(entry);
+  context?.onEvent?.(entry);
   if (state.lines.length > 300) state.lines.splice(0, state.lines.length - 300);
 }
 
@@ -112,7 +114,7 @@ function start() {
           if (event.type === 'planned') { state.planned = Array.isArray(event.planned) ? event.planned.map(({account, ruleId, date, time}) => ({account, ruleId, date, time})) : []; }
           else if (event.type === 'ready' && desired) { state.status = 'running'; state.message = event.message || '监听中'; }
           else if (event.type === 'fatal') { state.status = 'failed'; state.message = event.message || '自动化启动失败'; line(state.message, 'error'); }
-          else line(event.message || part, event.level || 'info');
+          else line(event.message || part, event.level || 'info', event);
         } catch { line(part); }
       }
       if (buffer.length > 65536) { line(buffer, level); buffer = ''; }

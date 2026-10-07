@@ -15,7 +15,7 @@ document.body.append(loginDialog);
 function renderLogin(state) {
   const previous = loginState;
   loginState = state;
-  $$('.save-btn,#hero-run,#activity-run,#account-run,#restart-automation,[data-run-account],[data-login-account],[data-profile-account]').forEach(button => {
+  $$('.save-btn,#hero-run,#account-run,#restart-automation,[data-run-account],[data-login-account],[data-profile-account]').forEach(button => {
     button.disabled = state.active || (typeof startingRun !== 'undefined' && startingRun) || ['running','stopping'].includes(currentRun?.state) || (button.classList.contains('save-btn') && typeof savingConfig !== 'undefined' && savingConfig) || (button.dataset.profileAccount !== undefined && !config?.users[Number(button.dataset.profileAccount)]?.sessionReady);
     if (button.dataset.profileAccount !== undefined) {
       const syncing = state.active && state.mode === 'profile' && config?.users[Number(button.dataset.profileAccount)]?.session === state.account;

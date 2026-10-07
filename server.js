@@ -287,9 +287,9 @@ function pythonCommand() {
   return null;
 }
 
-function addLine(text, stream = 'stdout') {
+function addLine(text, stream = 'stdout', account = run.account) {
   const clean = text.replace(/\x1b\[[0-9;]*m/g, '').replace(/tg:\/\/login\?token=[^\s]+/gi, 'tg://login?token=[已隐藏]');
-  run.lines.push({ id: (run.lines.at(-1)?.id || 0) + 1, time: new Date().toISOString(), stream, text: clean.slice(0, 2000), runId: run.id, account: run.account, trigger: run.trigger });
+  run.lines.push({ id: (run.lines.at(-1)?.id || 0) + 1, time: new Date().toISOString(), stream, text: clean.slice(0, 2000), runId: run.id, account, trigger: run.trigger });
   if (run.lines.length > MAX_LINES) run.lines.splice(0, run.lines.length - MAX_LINES);
   history.changed();
 }
@@ -311,8 +311,28 @@ async function startRun(account = null, trigger = 'manual', bot = null) {
   catch { run.state='failed'; run.finishedAt=new Date().toISOString(); throw new Error('执行记录无法保存，本次任务未启动'); }
   addLine(`使用 ${python.version} 启动${account ? `账号 ${account} 的` : '批量'}签到`, 'system');
   child = spawn(python.name, [...python.prefix, '-u', 'allinone.py', ...(account ? ['--account', account] : []), ...(bot ? ['--bot', bot] : [])], {
-    cwd: ROOT, env: { ...process.env, AUTOCHECKIN_DATA_DIR:DATA_ROOT, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
+    cwd: ROOT, env: { ...process.env, AUTOCHECKIN_DATA_DIR:DATA_ROOT, AUTOCHECKIN_LOG_JSON:'1', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
   });
+  const accounts = new Set(selected.map(user => user.session));
+  function output(line, stream) {
+    try {
+      const event = JSON.parse(line);
+      if (['checkin_log','account_result'].includes(event.type)) {
+        const owner = accounts.has(event.account) ? event.account : run.account;
+        if (event.type === 'account_result') {
+          if (owner && ['completed','failed'].includes(event.state)) (run.accountStates ||= Object.create(null))[owner] = event.state;
+          history.changed();
+          return;
+        }
+        if (typeof event.text === 'string') {
+          if (owner) (run.accountStates ||= Object.create(null))[owner] ||= 'running';
+          addLine(event.text, event.stream === 'stderr' ? 'stderr' : 'stdout', owner);
+          return;
+        }
+      }
+    } catch {}
+    addLine(line, stream);
+  }
   for (const [stream, pipe] of [['stdout', child.stdout], ['stderr', child.stderr]]) {
     let buffer = '';
     pipe.setEncoding('utf8');
@@ -320,9 +340,10 @@ async function startRun(account = null, trigger = 'manual', bot = null) {
       buffer += chunk;
       const parts = buffer.split(/\r?\n/);
       buffer = parts.pop();
-      parts.forEach(line => { if (line) addLine(line, stream); });
+      parts.forEach(line => { if (line) output(line, stream); });
+      if (buffer.length > 65536) { output(buffer, stream); buffer = ''; }
     });
-    pipe.on('end', () => { if (buffer) addLine(buffer, stream); });
+    pipe.on('end', () => { if (buffer) output(buffer, stream); });
   }
   child.on('error', error => { addLine(error.message, 'stderr'); run.state = 'failed'; run.finishedAt = new Date().toISOString(); child = null; history.changed(true); });
   child.on('close', async code => {
@@ -330,6 +351,7 @@ async function startRun(account = null, trigger = 'manual', bot = null) {
     run.finishedAt = new Date().toISOString();
     if (run.state === 'stopping') run.state = 'stopped';
     else if (run.state === 'running') run.state = code === 0 ? 'completed' : 'failed';
+    for (const owner of Object.keys(run.accountStates || {})) if (run.accountStates[owner] === 'running') run.accountStates[owner] = run.state;
     addLine(`任务结束，退出码 ${code}`, 'system');
     history.changed(true);
     child = null;
@@ -379,7 +401,7 @@ run = history.latest() || { state:'idle', lines:[] };
 nextRunAt = run.finishedAt ? Date.parse(run.finishedAt) + 5000 : 0;
 const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
 login = createLoginController({ root: ROOT, dataDir: DATA_ROOT, readConfig, pythonCommand, isBusy: () => !!child || runStarting || shuttingDown, stopAutomation: () => automation.stop(), resumeAutomation: () => { if (!shuttingDown) automation.start(); }, onComplete:async account => { if (database) await database.refresh(`profile:${discoveryKey(account)}`); } });
-automation.configure({ root: ROOT, dataDir: DATA_ROOT, store:database, readConfig, pythonCommand, canRun: () => !child && !runStarting && !login.active() && !shuttingDown });
+automation.configure({ root: ROOT, dataDir: DATA_ROOT, store:database, readConfig, pythonCommand, onEvent:event => history.appendEvent(event), canRun: () => !child && !runStarting && !login.active() && !shuttingDown });
 scheduler = createScheduler({ root: DATA_ROOT, store:database, readConfig, runAccount: (account, bot) => launchRun(account, 'scheduled', bot), isBusy: () => !!child || runStarting || login.active() || shuttingDown || Date.now() < nextRunAt });
 http.createServer(async (req, res) => {
   try {
@@ -450,7 +472,7 @@ http.createServer(async (req, res) => {
         if (url.pathname === '/api/login/password') return send(res, 200, { login: login.password(input.id, input.password) });
         if (url.pathname === '/api/login/cancel') return send(res, 200, { login: login.cancel(input.id) });
       }
-      if (req.method === 'GET' && url.pathname === '/api/runs') return send(res, 200, history.snapshot());
+      if (req.method === 'GET' && url.pathname === '/api/runs') return send(res, 200, history.snapshot({account:url.searchParams.get('account') || '', category:url.searchParams.get('category') || ''}));
       if (req.method === 'GET' && url.pathname === '/api/state') {
         const state = { run: { ...run, lines: run.lines.slice(-150) }, automation: automation.getState(), checkinScheduler: scheduler.getState(), python: pythonCommand()?.version || null };
         // Routine polling needs status only; initial load and explicit refresh keep the full response.
