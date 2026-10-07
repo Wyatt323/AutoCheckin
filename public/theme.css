@@ -252,6 +252,9 @@ input[type=checkbox] { accent-color: #159f48; }
 .checkin-rules { gap: 18px; }
 .checkin-status:not(:empty) { color: #157a3e; }
 .checkin-status.error:not(:empty) { color: #af3545; }
+.checkin-status > span { display: block; }
+.checkin-status .checkin-history { color: var(--muted); }
+.checkin-status .checkin-history.error { color: #af3545; }
 .checkin-segments { height: 43px; background: var(--lilac); border: 2px solid var(--ink); border-radius: 11px; }
 .checkin-segments button { color: var(--ink); font-size: 12px; }
 .checkin-segments button[aria-pressed=true] { background: var(--green-soft); color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }

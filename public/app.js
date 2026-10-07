@@ -12,6 +12,7 @@ let currentView = 'overview';
 let openModeIndex = null;
 let automationState = null;
 let checkinSchedulerState = null;
+let savedCheckinSettings = new Map();
 let openAutoSelect = null;
 let selectedAccountIndex = null;
 let accountSection = 'settings';
@@ -126,7 +127,8 @@ function renderPlannedTimes() {
     const plan = plans?.find(plan => plan.account === element.dataset.plannedAccount && plan.ruleId === element.dataset.plannedId && plan.date === today);
     const row = element.closest('.checkin-rule,.automation-card');
     const mode = row?.querySelector('[data-field="timeMode"]')?.value;
-    element.textContent = mode === 'random' ? (plan ? `今日抽中：${plan.time}（北京时间）` : '今日抽中：等待保存并启动计划') : '';
+    const enabled = row?.querySelector('[data-field="enabled"]')?.checked;
+    element.textContent = mode === 'random' ? (enabled === false ? '计划已关闭' : plan ? `今日抽中：${plan.time}（北京时间）` : '今日抽中：等待保存并启动计划') : '';
   });
 }
 function renderCheckinSchedules(user, accountIndex) {
@@ -161,10 +163,7 @@ function renderConfig() {
   $('#global-api-hash').placeholder = config.telegram.hasApiHash ? '已保存 · 留空保持不变' : '填写全局 API Hash';
   $('#global-api-status').textContent = config.telegram.apiId && (config.telegram.hasApiHash || config.telegram.apiHash) ? '全局凭据已配置' : '全局凭据未完整配置（独立账号仍可使用）';
   $('#account-list').innerHTML = config.users.map((user, index) => {
-    const messageCount = config.automations.schedules.filter(item => item.account === user.session).length;
-    const forwardCount = config.automations.forwards.filter(item => item.account === user.session).length;
-    const latest = checkinSchedulerState?.events?.filter(item => item.account === user.session).at(-1);
-    return `<article class="account-tile" data-account-index="${index}"><button type="button" class="account-tile-main" data-open-account="${index}" data-section="settings"><span class="account-tile-top"><span class="account-tile-avatar">${accountAvatar(user)}</span><span class="account-tile-title"><strong>${escapeHtml(user.name || '新账号')}</strong><small>${escapeHtml(user.profile?.username ? `@${user.profile.username}` : user.session || '待设置 Session')}</small></span><span class="account-health ${user.sessionReady ? 'ready' : 'pending'}">${user.sessionReady ? '● 正常' : '○ 待登录'}</span></span><span class="account-tile-info"><span><small>Telegram 用户 ID</small><strong>${escapeHtml(user.profile?.userId || (user.sessionReady ? '待同步' : '登录后获取'))}</strong></span><span><small>数据中心 DC</small><strong title="当前 Telegram Session 连接的数据中心">${user.profile?.dcId ? `DC ${escapeHtml(user.profile.dcId)}` : '—'}</strong></span><span><small>签到 Bot</small><strong>${user.bots.length} 个</strong></span><span><small>资料更新</small><strong>${user.profile?.updatedAt ? escapeHtml(formatDate(user.profile.updatedAt)) : '尚未同步'}</strong></span></span><span class="account-tile-activity"><span>最近运行</span><strong>${latest ? escapeHtml(latest.message) : '暂无定时签到记录'}</strong><small>${latest ? formatDate(latest.time) : `${(user.checkinSchedules || []).length} 个签到计划 · ${messageCount} 个定时消息 · ${forwardCount} 个转发`}</small></span></button><div class="account-tile-actions"><button type="button" data-login-account="${index}" title="Telegram 登录">${lineIcon('login')}<span>登录</span></button><button type="button" data-run-account="${index}" title="立即签到">${lineIcon('play')}<span>执行</span></button><button type="button" data-open-account="${index}" data-section="bots" title="Bot 管理">${lineIcon('bot')}<span>Bot</span></button><button type="button" data-open-account="${index}" data-section="checkins" title="定时任务管理">${lineIcon('clock')}<span>定时</span></button><button type="button" data-open-account="${index}" data-section="messages" title="定时消息">${lineIcon('message')}<span>消息</span></button><button type="button" data-open-account="${index}" data-section="forwards" title="监听转发">${lineIcon('forward')}<span>转发</span></button><button type="button" data-open-account="${index}" data-section="logs" title="账号运行日志">${lineIcon('log')}<span>日志</span></button><button type="button" data-profile-account="${index}" ${!user.sessionReady ? 'disabled' : ''} title="同步 Telegram 头像、用户 ID 和 DC">${lineIcon('refresh')}<span>同步资料</span></button><button type="button" data-open-account="${index}" data-section="settings" title="账号资料">${lineIcon('edit')}<span>资料</span></button></div></article>`;
+    return `<article class="account-tile" data-account-index="${index}"><button type="button" class="account-tile-main" data-open-account="${index}" data-section="settings"><span class="account-tile-top"><span class="account-tile-avatar">${accountAvatar(user)}</span><span class="account-tile-title"><strong>${escapeHtml(user.name || '新账号')}</strong><small>${escapeHtml(user.profile?.username ? `@${user.profile.username}` : user.session || '待设置 Session')}</small></span><span class="account-health ${user.sessionReady ? 'ready' : 'pending'}">${user.sessionReady ? '● 正常' : '○ 待登录'}</span></span><span class="account-tile-info"><span><small>Telegram 用户 ID</small><strong>${escapeHtml(user.profile?.userId || (user.sessionReady ? '待同步' : '登录后获取'))}</strong></span><span><small>数据中心 DC</small><strong title="当前 Telegram Session 连接的数据中心">${user.profile?.dcId ? `DC ${escapeHtml(user.profile.dcId)}` : '—'}</strong></span><span><small>签到 Bot</small><strong>${user.bots.length} 个</strong></span><span><small>资料更新</small><strong>${user.profile?.updatedAt ? escapeHtml(formatDate(user.profile.updatedAt)) : '尚未同步'}</strong></span></span><span class="account-tile-activity"><span>签到状态</span><strong></strong><small></small></span></button><div class="account-tile-actions"><button type="button" data-login-account="${index}" title="Telegram 登录">${lineIcon('login')}<span>登录</span></button><button type="button" data-run-account="${index}" title="立即签到">${lineIcon('play')}<span>执行</span></button><button type="button" data-open-account="${index}" data-section="bots" title="Bot 管理">${lineIcon('bot')}<span>Bot</span></button><button type="button" data-open-account="${index}" data-section="checkins" title="定时任务管理">${lineIcon('clock')}<span>定时</span></button><button type="button" data-open-account="${index}" data-section="messages" title="定时消息">${lineIcon('message')}<span>消息</span></button><button type="button" data-open-account="${index}" data-section="forwards" title="监听转发">${lineIcon('forward')}<span>转发</span></button><button type="button" data-open-account="${index}" data-section="logs" title="账号运行日志">${lineIcon('log')}<span>日志</span></button><button type="button" data-profile-account="${index}" ${!user.sessionReady ? 'disabled' : ''} title="同步 Telegram 头像、用户 ID 和 DC">${lineIcon('refresh')}<span>同步资料</span></button><button type="button" data-open-account="${index}" data-section="settings" title="账号资料">${lineIcon('edit')}<span>资料</span></button></div></article>`;
   }).join('') || '<div class="automation-empty">还没有账号。点击右上角添加账号。</div>';
   if (selectedAccountIndex !== null && !config.users[selectedAccountIndex]) selectedAccountIndex = null;
   $('#account-overview').hidden = selectedAccountIndex !== null;
@@ -209,12 +208,49 @@ function renderConfig() {
 
 function renderCheckinStatus() {
   renderPlannedTimes();
-  $$('.checkin-status').forEach(element => {
-    const account = config.users[Number(element.dataset.checkinStatus)]?.session;
-    const event = checkinSchedulerState?.events?.filter(item => item.account === account).at(-1);
-    element.textContent = event ? `最近：${event.message} · ${formatDate(event.time)}` : '';
-    element.classList.toggle('error', event?.level === 'error');
+  $$('.account-tile[data-account-index]').forEach(element => {
+    const user = config.users[Number(element.dataset.accountIndex)];
+    if (!user) return;
+    const status = accountCheckinStatus(user);
+    element.querySelector('.account-tile-activity strong').textContent = status.text;
+    element.querySelector('.account-tile-activity small').textContent = status.history || '暂无定时签到记录';
   });
+  $$('.checkin-status').forEach(element => {
+    const user = config.users[Number(element.dataset.checkinStatus)];
+    if (!user) return;
+    const status = accountCheckinStatus(user);
+    element.innerHTML = `<span>${escapeHtml(status.text)}</span>${status.history ? `<span class="checkin-history${status.error ? ' error' : ''}">${escapeHtml(status.history)}</span>` : ''}`;
+  });
+}
+
+function checkinSettingsSignature(user) {
+  return JSON.stringify({
+    folder: user.botSource ? user.botSource === 'folder' : Boolean(user.dialogFolder),
+    schedules: (user.checkinSchedules || []).map(rule => [rule.id, rule.enabled !== false]),
+    bots: (user.bots || []).map(bot => [bot.name, Boolean(bot.schedule?.enabled)])
+  });
+}
+
+function rememberSavedCheckinSettings() {
+  savedCheckinSettings = new Map(config.users.map(user => [user.session, checkinSettingsSignature(user)]));
+}
+
+function accountCheckinStatus(user) {
+  const enabled = (user.checkinSchedules || []).filter(rule => rule.enabled !== false).length;
+  const folderMode = user.botSource ? user.botSource === 'folder' : Boolean(user.dialogFolder);
+  const independent = folderMode ? 0 : (user.bots || []).filter(bot => bot.schedule?.enabled).length;
+  let text = enabled ? `账号定时已启用 · ${enabled} 个任务` : '账号定时已关闭';
+  if (independent) text += ` · ${independent} 个 Bot 独立定时已启用`;
+  if (savedCheckinSettings.get(user.session) !== checkinSettingsSignature(user)) text += '（未保存，保存后生效）';
+  if (['running', 'stopping'].includes(currentRun?.state) && (currentRun.account === user.session || currentRun.accountStates?.[user.session] === 'running')) {
+    text += currentRun.state === 'stopping' ? ' · 当前签到正在停止' : ' · 当前签到运行中';
+  }
+  const event = checkinSchedulerState?.events?.filter(item => item.account === user.session).at(-1);
+  return {
+    text,
+    history: event ? `上次调度：${event.message.replace(/已启动$/, '已触发')} · ${formatDate(event.time)}` : '',
+    error: event?.level === 'error'
+  };
 }
 
 function accountLabel(session) {
@@ -445,6 +481,7 @@ async function saveConfig() {
   try {
     const data = await api('/api/config', { method:'POST', body:JSON.stringify(config) });
     config = data.config;
+    rememberSavedCheckinSettings();
     automationState = data.automation;
     checkinSchedulerState = data.checkinScheduler;
     renderConfig();
@@ -589,6 +626,13 @@ document.addEventListener('change', event => {
     const input = event.target.closest('tr').querySelector('[data-bot-schedule-time]');
     input.disabled = !event.target.checked;
     if (typeof UIControls !== 'undefined') UIControls.refresh();
+    readEditors();
+    renderCheckinStatus();
+    return;
+  }
+  if (event.target.matches('.checkin-rule [data-field="enabled"]')) {
+    readEditors();
+    renderCheckinStatus();
     return;
   }
   if (!event.target.matches('[data-time-mode]')) return;
@@ -682,6 +726,7 @@ $('#today').textContent = new Date().toLocaleDateString('zh-CN', { year:'numeric
   try {
     const data = await api('/api/state');
     config = data.config;
+    rememberSavedCheckinSettings();
     currentRun = data.run;
     automationState = data.automation;
     checkinSchedulerState = data.checkinScheduler;

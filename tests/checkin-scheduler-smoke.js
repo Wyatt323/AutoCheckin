@@ -29,6 +29,12 @@ async function main() {
     current = new Date('2027-01-03T01:30:00Z');
     await restarted.tick();
     assert.equal(runs.length, 3, 'daily rule fires next day');
+    config.telegram.users[0].checkin_schedules.forEach(rule => { rule.enabled = false; });
+    const history = restarted.getState().events;
+    current = new Date('2027-01-04T01:30:00Z');
+    await restarted.tick();
+    assert.equal(runs.length, 3, 'disabled rules cannot run on the next day');
+    assert.deepEqual(restarted.getState().events, history, 'disabling preserves historical scheduler events');
     assert.ok(fs.existsSync(path.join(root, '.checkin-schedule-state.json')));
     console.log('签到计划按账号触发、每日重复和重启去重检查通过');
   } finally {
