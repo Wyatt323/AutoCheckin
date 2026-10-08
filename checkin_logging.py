@@ -16,6 +16,36 @@ def emit_result(account, completed):
         _sink.flush()
 
 
+def result_status(result):
+    if "已签到" in result:
+        return "already"
+    if "签到成功" in result or "签到完成" in result or "打卡成功" in result:
+        return "success"
+    if "超时" in result:
+        return "timeout"
+    if "无签到方式" in result or "跳过" in result:
+        return "skipped"
+    if "失败" in result or "错误" in result:
+        return "failed"
+    return "unknown"
+
+
+def emit_bot_result(account, bot, name, note, result):
+    status = result_status(result)
+    if _sink is not None:
+        _sink.write(json.dumps({"type": "bot_result", "account": account, "bot": str(bot),
+                               "name": name, "note": note, "status": status, "result": result},
+                              ensure_ascii=False) + "\n")
+        _sink.flush()
+    else:
+        label = f"{note}（{name}）" if note else name
+        prefix = {"success": "✅", "already": "✅", "timeout": "⏰", "failed": "❌",
+                  "skipped": "⏭️", "unknown": "⚠️"}[status]
+        suffix = {"already": "已签到", "timeout": "超时", "failed": "失败",
+                  "skipped": "无签到方式，跳过", "unknown": "结果未确认"}.get(status)
+        print(f"  {prefix} {label}" + (f"：{suffix}" if suffix else ""))
+
+
 class ScopedOutput:
     def __init__(self, sink, stream):
         self.sink, self.stream = sink, stream

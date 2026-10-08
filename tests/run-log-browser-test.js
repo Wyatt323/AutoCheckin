@@ -8,7 +8,7 @@ const { spawn } = require('node:child_process');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-log-browser-'));
   let server, browser;
   try {
-    for (const file of ['database.js', 'account_profiles.js','server.js','admin_auth.js','user_auth.js','automation.js','login.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','run_history.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
+    for (const file of ['database.js', 'account_profiles.js','server.js','admin_auth.js','user_auth.js','system_settings.js','telegram_notifications.js','checkin_results.js','automation.js','login.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','run_history.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
     fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
     fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({telegram:{api_id:123,api_hash:'offline',users:['alpha','beta'].map(session=>({name:session,session,bots:['@example_bot']}))},ai:{providers:[]},automations:{schedules:[],forwards:[]}}));
     for (const session of ['alpha','beta']) fs.writeFileSync(path.join(root,session+'.session'),'offline fixture');
@@ -112,12 +112,14 @@ const { spawn } = require('node:child_process');
         // Reopen before the previous native close event has been dispatched.
         openAccountLogs(account);
         await new Promise(resolve=>setTimeout(resolve,280));
+        await Promise.all(dialog.getAnimations().map(animation=>animation.finished.catch(()=>{})));
         results.push({open:dialog.open,opacity:getComputedStyle(dialog).opacity,content:dialog.contains(document.querySelector('#log-history-content')),account:document.querySelector('#log-filter-account').value});
       }
       const closing = dialog.close();
       openAccountLogs('alpha');
       await closing;
       await new Promise(resolve=>setTimeout(resolve,280));
+      await Promise.all(dialog.getAnimations().map(animation=>animation.finished.catch(()=>{})));
       results.push({open:dialog.open,opacity:getComputedStyle(dialog).opacity,content:dialog.contains(document.querySelector('#log-history-content')),account:document.querySelector('#log-filter-account').value});
       return results;
     });
@@ -146,9 +148,9 @@ const { spawn } = require('node:child_process');
     await page.locator('[data-view="overview"]').click(); await page.locator('#hero-run').click();
     await page.locator('#run-log-dialog[open]').waitFor(); assert.equal(new URL(page.url()).hash,'#overview');
     assert.match(await page.locator('#run-log-target').innerText(),/全部账号/);
-    await page.locator('#run-log-stop').click(); await page.locator('.ui-confirm-dialog .outline-btn').click();
+    await page.locator('#run-log-stop').click(); await page.locator('.ui-confirm-dialog[open] .outline-btn').click();
     assert.equal((await(await fetch(base+'/api/state')).json()).run.state,'running');
-    await page.locator('#run-log-stop').click(); await page.locator('.ui-confirm-dialog .primary-btn').click();
+    await page.locator('#run-log-stop').click(); await page.locator('.ui-confirm-dialog[open] .primary-btn').click();
     await page.waitForFunction(()=>document.querySelector('#run-log-status').textContent.includes('已停止'));
     await page.locator('#run-log-close').click(); await page.locator('[data-view="activity"]').click();
     await page.selectOption('#log-filter-account','__all__'); await page.selectOption('#log-filter-status','stopped');

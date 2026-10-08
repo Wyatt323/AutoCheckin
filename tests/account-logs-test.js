@@ -8,7 +8,7 @@ const { spawn } = require('node:child_process');
   let server;
   const stop = async () => { if (server) { const done = new Promise(resolve => server.once('close', resolve)); server.kill(); await done; server = null; } };
   try {
-    for (const file of ['server.js','database.js','admin_auth.js','user_auth.js','automation.js','login.js','schedule_time.js','run_history.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js']) fs.copyFileSync(path.join(__dirname, '..', file), path.join(root, file));
+    for (const file of ['server.js','database.js','admin_auth.js','user_auth.js','system_settings.js','telegram_notifications.js','checkin_results.js','automation.js','login.js','schedule_time.js','run_history.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js']) fs.copyFileSync(path.join(__dirname, '..', file), path.join(root, file));
     const config = { telegram:{users:['alpha','beta'].map(session => ({name:session,session,api_id:123,api_hash:'offline',bots:['@example_bot']}))}, ai:{providers:[]}, automations:{schedules:[{id:'offline_message',account:'alpha',enabled:true}],forwards:[{id:'offline_forward',account:'beta',enabled:true}]} };
     fs.writeFileSync(path.join(root,'config.json'),JSON.stringify(config));
     for (const account of ['alpha','beta']) fs.writeFileSync(path.join(root,account+'.session'),'offline fake session');

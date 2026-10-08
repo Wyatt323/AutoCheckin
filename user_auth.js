@@ -20,11 +20,13 @@ const publicUser = user => ({id:user.id, username:user.username, role:'user', mu
 
 async function createUserAuth({dataDir, store = null, password = process.env.ADMIN_PASSWORD, adminUsername = process.env.ADMIN_USERNAME || 'admin', now = Date.now} = {}) {
   const admin = createAdminAuth({password, now});
-  const administrator = {id:'admin', username:adminUsername, role:'admin', mustChangePassword:false};
+  const adminFile = path.join(dataDir,'.admin-profile.json');
+  const adminProfile = store ? store.read('admin-profile') : fs.existsSync(adminFile) ? JSON.parse(fs.readFileSync(adminFile,'utf8')) : null;
+  const administrator = {id:'admin', username:adminProfile?.username || adminUsername, role:'admin', mustChangePassword:false};
   const file = path.join(dataDir, '.web-users.json');
   let users = store ? structuredClone(store.read('web-users') || []) : fs.existsSync(file) ? JSON.parse(fs.readFileSync(file,'utf8')) : [];
   if (!Array.isArray(users)) throw new Error('网页用户数据格式错误');
-  if (users.some(user=>!user || !/^[a-f0-9-]{36}$/.test(user.id) || typeof user.username !== 'string' || user.username.toLowerCase() === adminUsername.toLowerCase())) throw new Error('网页用户标识无效或管理员用户名冲突');
+  if (users.some(user=>!user || !/^[a-f0-9-]{36}$/.test(user.id) || typeof user.username !== 'string' || (!user.deletedAt && user.username.toLowerCase() === administrator.username.toLowerCase()))) throw new Error('网页用户标识无效或管理员用户名冲突');
   const sessions = new Map(), failures = new Map();
   let queue = Promise.resolve();
   function mutate(operation) {
@@ -51,17 +53,30 @@ async function createUserAuth({dataDir, store = null, password = process.env.ADM
     cleanup();
     if (admin.authenticated(req)) return administrator;
     const session = sessions.get(token(req));
-    const user = session && users.find(user=>user.id === session.id && user.version === session.version);
+    const user = session && users.find(user=>!user.deletedAt && user.id === session.id && user.version === session.version);
     return user ? publicUser(user) : null;
   }
   function cookie(value,secure,age) { return `ac_session=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`; }
   return {
     configured:admin.configured,
+    adminUsername:()=>administrator.username,
+    async updateAdministrator(username) {
+      if (typeof username !== 'string' || !/^[A-Za-z0-9_][A-Za-z0-9_.-]{2,31}$/.test(username)) throw Error('用户名须为 3–32 位字母、数字、下划线、点或短横线');
+      const result = queue.then(async()=>{
+        if (users.some(user=>!user.deletedAt && user.username.toLowerCase() === username.toLowerCase())) throw Error('用户名已存在');
+        if (store) await store.write('admin-profile',{username});
+        else {fs.writeFileSync(adminFile+'.tmp',JSON.stringify({username}),{mode:0o600});fs.renameSync(adminFile+'.tmp',adminFile);}
+        administrator.username = username;
+        return {...administrator};
+      });
+      queue = result.catch(()=>{});
+      return result;
+    },
     identity,
-    list:()=>users.map(publicUser),
+    list:()=>users.filter(user=>!user.deletedAt).map(publicUser),
     async login(req,input,secure) {
-      const username = typeof input.username === 'string' ? input.username.trim() : adminUsername;
-      if (username.toLowerCase() === adminUsername.toLowerCase()) {
+      const username = typeof input.username === 'string' ? input.username.trim() : administrator.username;
+      if (username.toLowerCase() === administrator.username.toLowerCase()) {
         const result = admin.login(req,input,secure);
         sessions.delete(token(req));
         return {...result,user:result.status === 200 ? administrator : undefined};
@@ -69,7 +84,7 @@ async function createUserAuth({dataDir, store = null, password = process.env.ADM
       cleanup();
       const ip = req.socket.remoteAddress || 'unknown';
       if ((failures.get(ip)?.count || 0) >= 10 || (!failures.has(ip) && failures.size >= 2048)) return {status:429,error:'尝试次数过多，请 15 分钟后重试。'};
-      const user = users.find(user=>user.username.toLowerCase() === username.toLowerCase());
+      const user = users.find(user=>!user.deletedAt && user.username.toLowerCase() === username.toLowerCase());
       // Perform the same expensive check for unknown usernames.
       const valid = await matches(input.password, user || {salt:'unknown-user',hash:'00'.repeat(64)});
       if (!user || !valid) {
@@ -87,10 +102,36 @@ async function createUserAuth({dataDir, store = null, password = process.env.ADM
     async add(username) {
       if (typeof username !== 'string' || !/^[A-Za-z0-9_][A-Za-z0-9_.-]{2,31}$/.test(username)) throw new Error('用户名须为 3–32 位字母、数字、下划线、点或短横线');
       return mutate(async next => {
-        if (username.toLowerCase() === adminUsername.toLowerCase() || next.some(user=>user.username.toLowerCase() === username.toLowerCase())) throw new Error('用户名已存在');
-        if (next.length >= 100) throw new Error('网页用户数量已达上限');
+        if (username.toLowerCase() === administrator.username.toLowerCase() || next.some(user=>!user.deletedAt && user.username.toLowerCase() === username.toLowerCase())) throw new Error('用户名已存在');
+        if (next.filter(user=>!user.deletedAt).length >= 100) throw new Error('网页用户数量已达上限');
         const user = {id:crypto.randomUUID(),username,...await passwordHash(DEFAULT_PASSWORD),mustChangePassword:true,version:1,createdAt:new Date(now()).toISOString()};
         next.push(user); return publicUser(user);
+      });
+    },
+    async update(id,username) {
+      if (typeof username !== 'string' || !/^[A-Za-z0-9_][A-Za-z0-9_.-]{2,31}$/.test(username)) throw new Error('用户名须为 3–32 位字母、数字、下划线、点或短横线');
+      return mutate(async next=>{
+        const user = next.find(user=>!user.deletedAt && user.id === id);
+        if (!user) throw new Error('用户不存在');
+        if (username.toLowerCase() === administrator.username.toLowerCase() || next.some(item=>!item.deletedAt && item.id !== id && item.username.toLowerCase() === username.toLowerCase())) throw new Error('用户名已存在');
+        if (user.username !== username) { user.username = username; user.version++; }
+        return publicUser(user);
+      });
+    },
+    async resetPassword(id) {
+      return mutate(async next=>{
+        const user = next.find(user=>!user.deletedAt && user.id === id);
+        if (!user) throw new Error('用户不存在');
+        Object.assign(user,await passwordHash(DEFAULT_PASSWORD),{mustChangePassword:true,version:user.version+1});
+        return publicUser(user);
+      });
+    },
+    async remove(id) {
+      return mutate(async next=>{
+        const user = next.find(user=>!user.deletedAt && user.id === id);
+        if (!user) throw new Error('用户不存在');
+        user.deletedAt = new Date(now()).toISOString(); user.version++;
+        return {id:user.id};
       });
     },
     async changePassword(req,input) {
@@ -99,6 +140,7 @@ async function createUserAuth({dataDir, store = null, password = process.env.ADM
       const password = input.newPassword;
       if (typeof password !== 'string' || password.length < 8 || password.length > 128 || password === DEFAULT_PASSWORD) throw new Error('新密码须为 8–128 位，且不能使用默认密码');
       const changed = await mutate(async next => {
+        if (!identity(req)) throw new Error('登录状态已失效，请重新登录');
         const user = next.find(user=>user.id === current.id);
         if (!await matches(input.currentPassword,user)) throw new Error('原密码不正确');
         if (await matches(password,user)) throw new Error('新密码不能与原密码相同');

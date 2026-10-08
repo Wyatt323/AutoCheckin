@@ -1,0 +1,42 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const {createSystemSettings,applySystemConfig}=require('../system_settings');
+const {resolveCredentials}=require('../telegram_credentials');
+const {createUserAuth}=require('../user_auth');
+(async()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'system-settings-'));
+  try {
+    const settings=await createSystemSettings({dataDir:root});
+    await settings.update({telegram:{apiId:'321',apiHash:'global-secret'},model:'model',providers:[{name:'primary',baseUrl:'https://example.invalid/v1',apiKey:'ai-secret'}]});
+    const own={telegram:{api_id:123,api_hash:'own-secret',use_system:true},ai:{model:'own-model',providers:[{api_key:'own-ai'}],use_system:true}};
+    const effective=applySystemConfig(own,settings.read());
+    assert.deepEqual(resolveCredentials(effective,{}),{apiId:321,apiHash:'global-secret'});
+    assert.deepEqual(resolveCredentials(effective,{api_id:999,api_hash:'account-secret'}),{apiId:999,apiHash:'account-secret'});
+    assert.equal(effective.ai.providers[0].api_key,'ai-secret');assert.equal(own.ai.model,'own-model','stored personal config is retained');
+    const personal=applySystemConfig({...own,telegram:{...own.telegram,use_system:false},ai:{...own.ai,use_system:false}},settings.read());
+    assert.equal(resolveCredentials(personal,{}).apiHash,'own-secret');assert.equal(personal.ai.model,'own-model');
+    assert.ok(!JSON.stringify(settings.view()).includes('global-secret') && !JSON.stringify(settings.view()).includes('ai-secret'));
+    assert.deepEqual((await createSystemSettings({dataDir:root})).read(),settings.read(),'file persistence');
+    let saved,fail=false;
+    const store={read:()=>saved,write:async(key,value)=>{if(fail)throw Error('write failure');saved=structuredClone(value);}};
+    const db=await createSystemSettings({dataDir:root,store});
+    await assert.rejects(db.update(settings.view()),/完整填写/);
+    const input={telegram:{apiId:'321',apiHash:'global-secret'},model:'model',providers:[{name:'primary',baseUrl:'https://example.invalid/v1',apiKey:'ai-secret'}]};
+    await db.update(input);fail=true;
+    await assert.rejects(db.update({...input,model:'not-committed'}),/write failure/);assert.equal(db.view().model,'model');
+    fail=false;assert.equal((await createSystemSettings({dataDir:root,store})).view().model,'model','database store persistence');
+    const auth=await createUserAuth({dataDir:root,password:'admin-secret'});
+    await auth.add('alice');await assert.rejects(auth.updateAdministrator('ALICE'),/已存在/);
+    await auth.updateAdministrator('owner');
+    const reloaded=await createUserAuth({dataDir:root,password:'admin-secret'});
+    assert.equal(reloaded.adminUsername(),'owner');await assert.rejects(reloaded.add('OWNER'),/已存在/);
+    const req={headers:{},socket:{remoteAddress:'127.0.0.1'}};
+    assert.equal((await reloaded.login(req,{username:'admin',password:'admin-secret'},false)).status,401);
+    assert.equal((await reloaded.login(req,{username:'owner',password:'admin-secret'},false)).status,200);
+    const docs=new Map(),authStore={read:key=>docs.get(key),write:async(key,value)=>{if(fail)throw Error('write failure');docs.set(key,structuredClone(value));}};
+    const dbAuth=await createUserAuth({dataDir:root,store:authStore,password:'secret'});
+    await dbAuth.updateAdministrator('db_owner');fail=true;
+    await assert.rejects(dbAuth.updateAdministrator('not_saved'),/write failure/);assert.equal(dbAuth.adminUsername(),'db_owner');
+    fail=false;assert.equal((await createUserAuth({dataDir:root,store:authStore,password:'secret'})).adminUsername(),'db_owner');
+    console.log('System settings PASS: selection, overrides, retained personal settings, secret redaction, persistence, failed-write rollback and administrator rename');
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+})().catch(error=>{console.error(error);process.exitCode=1;});

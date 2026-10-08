@@ -1,30 +1,53 @@
 // Filters use log timestamps in Beijing time, independent of browser timezone.
+const LogResults = typeof module !== 'undefined' ? require('../checkin_results') : CheckinResults;
 function beijingParts(value) {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return null;
   const text = new Date(date.getTime() + 28800000).toISOString();
   return { date: text.slice(0, 10), time: text.slice(11, 19) };
 }
-function filterRunLogs(records, filter) {
+function filterRunLogs(records, filter, accounts = []) {
   const rows = [];
   const start = filter.start && (filter.start.length === 5 ? `${filter.start}:00` : filter.start);
   const end = filter.end && (filter.end.length === 5 ? `${filter.end}:59` : filter.end);
   if (start && end && start > end) return rows;
   for (const run of records) {
+    const summaries = new Map();
     const category = run.category || 'checkin';
     if (filter.category && category !== filter.category) continue;
     if (filter.account === '__all__' && run.account) continue;
     for (const line of run.lines || []) {
       const account = line.account || run.account;
-      const state = typeof run.accountStates?.[account] === 'string' ? run.accountStates[account] : run.state;
+      if (!summaries.has(account)) summaries.set(account, category === 'checkin' ? LogResults.summarize(run,account) : {state:run.state});
+      const summary = summaries.get(account), state = summary.state;
       if (filter.account && filter.account !== '__all__' && account !== filter.account) continue;
       if (filter.status && state !== filter.status) continue;
       const parts = beijingParts(line.time);
       if (!parts || (filter.date && parts.date !== filter.date) || (start && parts.time < start) || (end && parts.time > end)) continue;
-      rows.push({ ...line, runId: run.id, account, state, trigger: run.trigger, category, bot:run.bot });
+      let botResult = category === 'checkin' ? LogResults.resultForLine(line,run) : null;
+      if (botResult && !botResult.note) {
+        const note = accounts.find(item=>item.session===account)?.bots?.find(item=>LogResults.key(item.name)===LogResults.key(botResult.bot))?.note;
+        if (note) botResult = {...botResult,note};
+      }
+      rows.push({ ...line, text:botResult ? LogResults.resultLine(botResult) : line.text, botResult, runId: run.id, account, state, summary, trigger: run.trigger, category, bot:run.bot });
     }
   }
   return rows.sort((a,b) => Date.parse(a.time) - Date.parse(b.time));
+}
+function runLogGroupsHtml(rows, accountLabel) {
+  const groups = new Map(), categories = {checkin:'定时任务',message:'定时消息',forward:'监听转发'};
+  for (const row of rows) {
+    const key = JSON.stringify([row.runId,row.account,row.category]);
+    if (!groups.has(key)) groups.set(key,[]);
+    groups.get(key).push(row);
+  }
+  return [...groups.values()].map(lines=>{
+    const first=lines[0], summary=first.summary, counts=summary?.counts;
+    const label=summary?.label || statusText[first.state] || first.state;
+    const stats=counts?.total ? `共 ${counts.total} 个 · 成功 ${counts.success} · 超时 ${counts.timeout} · 失败 ${counts.failed}${counts.unknown ? ` · 待确认 ${counts.unknown}` : ''}${counts.skipped ? ` · 跳过 ${counts.skipped}` : ''}` : '';
+    const trigger=first.category==='forward' ? '自动转发' : first.trigger==='scheduled' ? '定时' : '手动';
+    return `<section class="log-run-group"><header class="log-run-heading"><div><b>${escapeHtml(accountLabel(first))}</b><span>${categories[first.category] || first.category} · ${trigger}${first.bot ? ' · '+escapeHtml(first.bot) : ''}</span></div><strong class="log-run-state ${escapeHtml(first.state)}">${escapeHtml(label)}</strong>${stats ? `<small>${escapeHtml(stats)}</small>` : ''}</header>${lines.map(line=>{const parts=beijingParts(line.time);return `<div class="log-line ${escapeHtml(line.botResult && ['success','already'].includes(line.botResult.status) ? 'success' : line.stream)}"><time>${parts ? parts.date+' '+parts.time : '—'}</time><span>${escapeHtml(line.text)}</span></div>`;}).join('')}</section>`;
+  }).join('');
 }
 if (typeof module !== 'undefined') module.exports = { beijingParts, filterRunLogs };
 if (typeof document !== 'undefined') {
@@ -96,9 +119,9 @@ if (typeof document !== 'undefined') {
     const user = config?.users.find(user => user.session === run.account);
     return (user ? `${user.name} (${run.account})` : run.account) + (run.bot ? ` · ${run.bot}` : '');
   }
-  function lineHtml(line, detailed = false) {
+  function lineHtml(line) {
     const parts = beijingParts(line.time);
-    return `<div class="log-line ${escapeHtml(line.stream)}"><time>${parts ? (detailed ? `${parts.date} ` : '') + parts.time : '—'}</time><span>${detailed ? `<b class="log-scope">${escapeHtml(labelFor(line))} · ${categories[line.category] || '定时任务'} · ${escapeHtml(statusText[line.state] || line.state)}${line.category === 'checkin' ? ` · ${line.trigger === 'scheduled' ? '定时' : '手动'}` : ''}</b>` : ''}${escapeHtml(line.text)}</span></div>`;
+    return `<div class="log-line ${escapeHtml(line.stream)}"><time>${parts ? parts.time : '—'}</time><span>${escapeHtml(line.text)}</span></div>`;
   }
   function setOutput(element, html) {
     if (element.dataset.output === html) return;
@@ -120,17 +143,18 @@ if (typeof document !== 'undefined') {
   }
   function renderHistory() {
     const filter = { date: $('#log-filter-date').value, start: $('#log-filter-start').value, end: $('#log-filter-end').value, account: logScope || $('#log-filter-account').value, status: $('#log-filter-status').value, category:$('#log-filter-category').value };
-    const rows = filterRunLogs(runRecords, filter);
+    const rows = filterRunLogs(runRecords, filter, config?.users || []);
     $('#log-count').textContent = `${rows.length} 行 · ${new Set(rows.map(row => row.runId)).size} 条记录`;
     const invalid = filter.start && filter.end && filter.start > filter.end;
-    setOutput($('#log-console'), rows.length ? rows.map(row => lineHtml(row, true)).join('') : `<div class="log-empty">${invalid ? '开始时间不能晚于结束时间。' : lastQuery === null ? '正在加载日志…' : '没有符合筛选条件的日志。'}</div>`);
+    setOutput($('#log-console'), rows.length ? runLogGroupsHtml(rows, row=>labelFor({...row,bot:null})) : `<div class="log-empty">${invalid ? '开始时间不能晚于结束时间。' : lastQuery === null ? '正在加载日志…' : '没有符合筛选条件的日志。'}</div>`);
   }
   function renderModal() {
     if (!dialog.open) return;
     const run = runRecords.find(run => run.id === modalRunId);
     if (!run) { $('#run-log-status').textContent = '此记录已超出保留范围'; $('#run-log-stop').disabled = true; return; }
     $('#run-log-target').textContent = `${labelFor(run)} · ${run.trigger === 'scheduled' ? '定时执行' : '手动执行'} · ${formatDate(run.startedAt)}`;
-    $('#run-log-status').textContent = `${statusText[run.state] || run.state}${run.finishedAt ? ` · 结束：${formatDate(run.finishedAt)}` : ''}`;
+    const summary = LogResults.summarize(run,run.account);
+    $('#run-log-status').textContent = `${summary.label || statusText[summary.state] || summary.state}${summary.counts.total ? ` · 成功 ${summary.counts.success} / ${summary.counts.total} · 超时 ${summary.counts.timeout} · 失败 ${summary.counts.failed}` : ''}${run.finishedAt ? ` · 结束：${formatDate(run.finishedAt)}` : ''}`;
     $('#run-log-stop').disabled = run.state !== 'running';
     setOutput($('#run-log-output'), run.lines.length ? run.lines.map(line => lineHtml(line)).join('') : '<div class="log-empty">等待任务输出…</div>');
   }

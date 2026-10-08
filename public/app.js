@@ -41,7 +41,7 @@ function lineIcon(name) {
 document.querySelectorAll('[data-icon]').forEach(element => { element.innerHTML = lineIcon(element.dataset.icon); });
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]);
 const formatDate = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '—';
-const statusText = { idle:'待运行', running:'运行中', stopping:'正在停止', completed:'已完成', failed:'运行失败', stopped:'已停止' };
+const statusText = { idle:'待运行', running:'运行中', stopping:'正在停止', completed:'已完成', partial:'部分成功', failed:'运行失败', stopped:'已停止' };
 
 function toast(message, error = false) {
   const el = $('#toast');
@@ -65,7 +65,7 @@ async function api(url, options = {}) {
 }
 
 function navigate(view, keepAccount = false, logAccount = null) {
-  if (view === 'users' && typeof webUser !== 'undefined' && webUser?.role !== 'admin') view = 'overview';
+  if (['users','audit'].includes(view) && typeof webUser !== 'undefined' && webUser?.role !== 'admin') view = 'overview';
   if (view === 'bots') view = 'accounts';
   if (view === 'automation') {
     if (!config?.users.length) { navigate('accounts'); toast('先添加账号，再配置消息自动化'); return; }
@@ -80,10 +80,12 @@ function navigate(view, keepAccount = false, logAccount = null) {
   if (view === 'activity' && typeof setRunLogScope === 'function') setRunLogScope(logAccount);
   $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
   $$('.view').forEach(item => item.classList.toggle('active', item.id === `view-${view}`));
-  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', ai:'AI 配置', activity:'运行日志', users:'用户管理' })[view];
+  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', ai:'AI 配置', activity:'运行日志', users:'用户管理', audit:'后台审计',notifications:'TG 通知' })[view];
   window.location.hash = view === 'activity' && logAccount ? `activity?account=${encodeURIComponent(logAccount)}` : view;
   schedulePeerLookup();
   if (view === 'activity') renderRun();
+  if (view === 'audit' && typeof loadAuditUsers === 'function') loadAuditUsers();
+  if (view === 'notifications' && typeof loadNotificationSettings === 'function') loadNotificationSettings();
 }
 
 function openAccount(index, section = 'settings') {
@@ -152,18 +154,33 @@ document.addEventListener('error', event => {
   if (event.target.matches?.('.account-tile-avatar img,.account-detail-avatar img')) event.target.remove();
 }, true);
 
+function updateSystemChoices() {
+  const useAPI = $('#use-system-api').checked;
+  $('#personal-api-fields').hidden = useAPI;
+  $('#global-api-status').textContent = useAPI ? (config.system?.telegram?.hasApiHash ? '使用管理员提供的系统 API，保存后生效' : '管理员尚未配置系统 API') : ($('#global-api-id').value && (config.telegram?.hasApiHash || $('#global-api-hash').value) ? '个人 API 凭据已配置' : '个人 API 凭据未完整配置（账号独立凭据仍可使用）');
+  const useAI = $('#use-system-ai').checked;
+  $('#view-ai .settings-panel').hidden = useAI;
+  $('#view-ai .section-heading').hidden = useAI;
+  $('#provider-list').hidden = useAI;
+  $('#add-provider').hidden = useAI;
+}
+$('#use-system-api').addEventListener('change',updateSystemChoices);
+$('#use-system-ai').addEventListener('change',updateSystemChoices);
 function renderConfig() {
   closeModeMenu();
   closeAutoSelect();
   $('#stat-users').textContent = config.users.length;
   $('#stat-bots').textContent = config.users.reduce((sum, user) => sum + user.bots.length, 0);
-  $('#stat-providers').textContent = config.providers.length;
+  $('#stat-providers').textContent = config.useSystemAI ? (config.system?.providers?.length || 0) : config.providers.length;
+  $('#use-system-api').checked = config.telegram?.useSystem === true;
+  $('#use-system-ai').checked = config.useSystemAI === true;
+  $('#system-api-summary').textContent = config.system?.telegram?.hasApiHash ? '已配置 · API ID ' + config.system.telegram.apiId + '；账号独立凭据优先' : '管理员尚未配置系统 API';
+  $('#system-ai-summary').textContent = config.system?.providers?.length ? config.system.providers.map(p=>p.name).join('、') + ' · 模型 ' + config.system.model : '管理员尚未配置系统 AI 提供商';
   $('#model-input').value = config.model;
   config.telegram ||= { apiId: '', hasApiHash: false };
   $('#global-api-id').value = config.telegram.apiId || '';
   $('#global-api-hash').value = config.telegram.apiHash || '';
   $('#global-api-hash').placeholder = config.telegram.hasApiHash ? '已保存 · 留空保持不变' : '填写全局 API Hash';
-  $('#global-api-status').textContent = config.telegram.apiId && (config.telegram.hasApiHash || config.telegram.apiHash) ? '全局凭据已配置' : '全局凭据未完整配置（独立账号仍可使用）';
   $('#account-list').innerHTML = config.users.map((user, index) => {
     return `<article class="account-tile" data-account-index="${index}"><button type="button" class="account-tile-main" data-open-account="${index}" data-section="settings"><span class="account-tile-top"><span class="account-tile-avatar">${accountAvatar(user)}</span><span class="account-tile-title"><strong>${escapeHtml(user.name || '新账号')}</strong><small>${escapeHtml(user.profile?.username ? `@${user.profile.username}` : user.session || '待设置 Session')}</small></span><span class="account-health ${user.sessionReady ? 'ready' : 'pending'}">${user.sessionReady ? '● 正常' : '○ 待登录'}</span></span><span class="account-tile-info"><span><small>Telegram 用户 ID</small><strong>${escapeHtml(user.profile?.userId || (user.sessionReady ? '待同步' : '登录后获取'))}</strong></span><span><small>数据中心 DC</small><strong title="当前 Telegram Session 连接的数据中心">${user.profile?.dcId ? `DC ${escapeHtml(user.profile.dcId)}` : '—'}</strong></span><span><small>签到 Bot</small><strong>${user.bots.length} 个</strong></span><span><small>资料更新</small><strong>${user.profile?.updatedAt ? escapeHtml(formatDate(user.profile.updatedAt)) : '尚未同步'}</strong></span></span><span class="account-tile-activity"><span>签到状态</span><strong></strong><small></small></span></button><div class="account-tile-actions"><button type="button" data-login-account="${index}" title="Telegram 登录">${lineIcon('login')}<span>登录</span></button><button type="button" data-run-account="${index}" title="立即签到">${lineIcon('play')}<span>执行</span></button><button type="button" data-open-account="${index}" data-section="bots" title="Bot 管理">${lineIcon('bot')}<span>Bot</span></button><button type="button" data-open-account="${index}" data-section="checkins" title="定时任务管理">${lineIcon('clock')}<span>定时</span></button><button type="button" data-open-account="${index}" data-section="messages" title="定时消息">${lineIcon('message')}<span>消息</span></button><button type="button" data-open-account="${index}" data-section="forwards" title="监听转发">${lineIcon('forward')}<span>转发</span></button><button type="button" data-open-account="${index}" data-section="logs" title="账号运行日志">${lineIcon('log')}<span>日志</span></button><button type="button" data-profile-account="${index}" ${!user.sessionReady ? 'disabled' : ''} title="同步 Telegram 头像、用户 ID 和 DC">${lineIcon('refresh')}<span>同步资料</span></button><button type="button" data-open-account="${index}" data-section="settings" title="账号资料">${lineIcon('edit')}<span>资料</span></button></div></article>`;
   }).join('') || '<div class="automation-empty">还没有账号。点击右上角添加账号。</div>';
@@ -204,6 +221,7 @@ function renderConfig() {
   $('#provider-list').innerHTML = config.providers.map((provider, index) => `
     <article class="provider-card" data-index="${index}"><div class="card-top"><div class="card-symbol">✧</div><div><strong>${escapeHtml(provider.name || '新服务')}</strong><small>优先级 ${index + 1}</small></div><button class="delete-btn" data-delete="provider" data-index="${index}">删除</button></div>
     <div class="field-grid"><label class="field"><span>服务名称</span><input data-field="name" value="${escapeHtml(provider.name)}" placeholder="例如 primary"></label><label class="field"><span>Base URL</span><input data-field="baseUrl" value="${escapeHtml(provider.baseUrl)}" placeholder="https://api.example.com/v1"></label><label class="field"><span>API Key</span><input data-field="apiKey" type="password" value="${escapeHtml(provider.apiKey || '')}" placeholder="${provider.hasApiKey ? '已保存 · 留空保持不变' : '填写 API Key'}" autocomplete="new-password"></label></div></article>`).join('');
+  updateSystemChoices();
   renderAutomation();
   renderCheckinStatus();
 }
@@ -441,6 +459,8 @@ function chooseMode(mode) {
 
 function readEditors() {
   config.telegram ||= {};
+  config.telegram.useSystem = $('#use-system-api').checked;
+  config.useSystemAI = $('#use-system-ai').checked;
   config.telegram.apiId = $('#global-api-id').value;
   config.telegram.apiHash = $('#global-api-hash').value;
   $$('#account-editor .account-card').forEach(card => {
@@ -515,7 +535,8 @@ async function startRun(account = null) {
 function renderRun() {
   if (!currentRun) return;
   const state = currentRun.state;
-  $('#stat-status').textContent = statusText[state] || state;
+  const summary = CheckinResults.summarize(currentRun,currentRun.account);
+  $('#stat-status').textContent = summary.label || statusText[summary.state] || summary.state;
   $('#stat-last').textContent = currentRun.startedAt ? `启动于 ${formatDate(currentRun.startedAt)}` : '尚无运行记录';
   $$('#hero-run,#account-run,[data-run-account]').forEach(button => { button.disabled = startingRun || ['running','stopping'].includes(state) || (typeof loginState !== 'undefined' && loginState?.active); });
   const lines = currentRun.lines || [];
@@ -739,7 +760,7 @@ $('#today').textContent = new Date().toLocaleDateString('zh-CN', { year:'numeric
     renderRun();
     renderAutomationState();
     const [hash, query] = location.hash.slice(1).split('?');
-    if (['overview','bots','accounts','ai','automation','activity','users'].includes(hash)) navigate(hash, false, hash === 'activity' ? new URLSearchParams(query).get('account') : null);
+    if (['overview','bots','accounts','ai','automation','activity','users','audit','notifications'].includes(hash)) navigate(hash, false, hash === 'activity' ? new URLSearchParams(query).get('account') : null);
     if (!pythonVersion) toast('未检测到 Python，配置可编辑，运行需安装 Python 环境', true);
     const statePollTimer = setInterval(() => { if (!document.hidden) poll(); }, 2000);
     document.addEventListener('visibilitychange', () => {

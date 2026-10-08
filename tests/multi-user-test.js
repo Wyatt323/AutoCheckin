@@ -7,7 +7,7 @@ const {scopedStore} = require('../database');
 (async()=>{
   const root = fs.mkdtempSync(path.join(os.tmpdir(),'multi-user-'));
   let server, browser;
-  const baseFiles = ['server.js','user_auth.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'];
+  const baseFiles = ['server.js','user_auth.js','system_settings.js','telegram_notifications.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'];
   const stop = async()=>{if(server){const done=new Promise(resolve=>server.once('close',resolve));server.kill();await done;server=null;}};
   try {
     // Exercise the same registry and prefix wrapper used with PostgreSQL.
@@ -28,6 +28,19 @@ const {scopedStore} = require('../database');
     const failingAuth = await createUserAuth({dataDir:root,store:{...store,write:async(...args)=>{if(failWrite)throw Error('injected write failure');return store.write(...args);}},password:'admin-secret'});
     failWrite=true; await assert.rejects(failingAuth.add('not_committed'),/write failure/);
     assert.ok(!failingAuth.list().some(user=>user.username==='not_committed'),'failed persistent write does not add usable user');
+    await assert.rejects(failingAuth.update(created.id,'not_committed'),/write failure/);
+    await assert.rejects(failingAuth.resetPassword(created.id),/write failure/);
+    await assert.rejects(failingAuth.remove(created.id),/write failure/);
+    assert.equal(failingAuth.list()[0].username,'stored_user','failed management writes leave committed user intact');
+    await auth.update(created.id,'stored_renamed');
+    await auth.resetPassword(created.id);
+    const persistedAuth=await createUserAuth({dataDir:root,store,password:'admin-secret'});
+    assert.equal(persistedAuth.list()[0].username,'stored_renamed');
+    const authReq={headers:{},socket:{remoteAddress:'127.0.0.1'}};
+    const persistedLogin=await persistedAuth.login(authReq,{username:'stored_renamed',password:'a123456'},false);
+    assert.equal(persistedLogin.user.mustChangePassword,true,'reset password persists in database store');
+    await persistedAuth.remove(created.id);
+    assert.equal((await createUserAuth({dataDir:root,store,password:'admin-secret'})).list().length,0,'deletion persists in database store');
 
     for(const file of baseFiles) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
     fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
@@ -35,10 +48,14 @@ const {scopedStore} = require('../database');
     fs.writeFileSync(path.join(root,'config.json'),JSON.stringify(original));
     fs.writeFileSync(path.join(root,'allinone.py'),`import os,time,json
 print(json.dumps(dict(type='checkin_log',account='shared',text=os.environ.get('AUTOCHECKIN_DOCUMENT_PREFIX','ADMIN'))),flush=True)
+with open(os.path.join(os.environ['AUTOCHECKIN_DATA_DIR'],'config.json')) as handle: key=json.load(handle)['telegram']['api_hash']
+print('credential '+key+' system-secret system-ai-secret',flush=True)
+print(json.dumps(dict(type='bot_result',account='shared',bot='@example_bot',name='example_bot',note='system-secret',status='success',result='system-ai-secret')),flush=True)
 time.sleep(3)
 print(json.dumps(dict(type='account_result',account='shared',state='completed')),flush=True)
 `);
     fs.writeFileSync(path.join(root,'automation_worker.py'),`import os,time,json
+with open(os.path.join(os.environ['AUTOCHECKIN_DATA_DIR'],'worker.pid'),'w') as handle: handle.write(str(os.getpid()))
 print(json.dumps(dict(type='log',category='message',account='shared',state='completed',message=os.environ.get('AUTOCHECKIN_DOCUMENT_PREFIX','ADMIN'))),flush=True)
 print(json.dumps(dict(type='ready')),flush=True)
 time.sleep(60)
@@ -78,6 +95,21 @@ time.sleep(60)
     assert.equal((await request('/api/auth/password',bob,{currentPassword:'a123456',newPassword:'bob-secret'})).status,200);
     assert.equal((await request('/api/users',alice)).status,403);
     assert.equal((await request('/api/users',alice,{username:'intruder'})).status,403);
+    const adminRequest=(url,method,input,cookie=admin)=>fetch(base+url,{method,headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify(input)});
+    assert.equal((await adminRequest('/api/notifications','PUT',{enabled:false,botToken:'123456:alice_notification_token_123456',chatId:'111'},alice)).status,200);
+    assert.equal((await adminRequest('/api/notifications','PUT',{enabled:false,botToken:'123456:bob_notification_token_123456',chatId:'222'},bob)).status,200);
+    assert.equal((await(await request('/api/notifications',alice)).json()).notifications.chatId,'111');
+    assert.equal((await(await request('/api/notifications',bob)).json()).notifications.chatId,'222');
+    assert.equal((await(await request('/api/notifications',admin)).json()).notifications.hasToken,false);
+    assert.ok(!JSON.stringify(await(await request('/api/notifications',alice)).json()).includes('alice_notification_token'));
+    assert.equal((await request('/api/admin/settings',alice)).status,403);
+    assert.equal((await request('/api/admin/audit/users',alice)).status,403);
+    assert.equal((await adminRequest('/api/admin/profile','PATCH',{username:'intruder'},alice)).status,403);
+    assert.equal((await adminRequest('/api/admin/settings','PUT',{telegram:{apiId:'456',apiHash:'system-secret'},model:'system-model',providers:[{name:'System AI',baseUrl:'https://example.invalid/v1',apiKey:'system-ai-secret'}]})).status,200);
+    const publicSystem=(await state(alice)).config.system;
+    assert.equal(publicSystem.telegram.apiId,456);
+    assert.ok(!JSON.stringify(publicSystem).includes('system-secret') && !JSON.stringify(publicSystem).includes('system-ai-secret'),'global secrets never enter public config');
+    assert.equal((await adminRequest('/api/admin/settings','PUT',{telegram:{apiId:'456',apiHash:''},model:'system-model',providers:[{sourceIndex:0,name:'System AI',baseUrl:'https://example.invalid/v1',apiKey:''}]})).status,200,'blank system secrets retain existing values');
     assert.equal((await state(alice)).config.users.length,0,'new users do not inherit admin Telegram accounts');
     assert.equal((await state(alice)).config.telegram.hasApiHash,false,'new users do not inherit admin API secret');
     assert.equal((await state(admin)).config.users[0].session,'legacy','legacy data stays with administrator');
@@ -85,7 +117,7 @@ time.sleep(60)
     for(const [name,cookie] of [['alice',alice],['bob',bob]]) {
       const config=(await state(cookie)).config;
       config.telegram={apiId:'123',apiHash:`${name}-only`};
-      config.users=[{name,session:'shared',sourceIndex:-1,useGlobalCredentials:true,bots:[{name:'@example_bot',mode:'command',command:'/sign'}],checkinSchedules:[]}];
+      config.users=[{name,session:'shared',sourceIndex:-1,useGlobalCredentials:true,bots:[{name:'@example_bot',mode:'command',command:'/sign',note:name+' bot note',schedule:{enabled:true,time:'23:59'}}],checkinSchedules:[]}];
       config.automations={schedules:[{id:'same_rule_001',account:'shared',enabled:true,target:'@example_bot',repeat:'daily',time:'09:00',message:name}],forwards:[]};
       fs.writeFileSync(path.join(userDir(name),'shared.session'),'fake session');
       assert.equal((await request('/api/config',cookie,config)).status,200);
@@ -106,11 +138,27 @@ time.sleep(60)
     assert.ok((await state(alice)).run.lines.some(line=>line.text.includes(aliceId)));
     assert.ok(!(await state(alice)).run.lines.some(line=>line.text.includes(bobId)));
     assert.equal((await state(admin)).run.state,'idle');
+    const audit=await(await request('/api/admin/audit/users/'+aliceId,admin)).json();
+    assert.equal(audit.user.username,'alice');assert.equal(audit.accounts[0].bots[0].note,'alice bot note');
+    assert.equal(audit.accounts[0].bots[0].schedule.time,'23:59');
+    assert.ok(audit.records.every(record=>(record.category || 'checkin')==='checkin'),'audit includes only check-in records');
+    assert.ok(audit.records.some(record=>record.lines.some(line=>line.text.includes(aliceId))));
+    assert.ok(!JSON.stringify(audit).includes(bobId) && !JSON.stringify(audit).includes('alice-only'),'audit stays scoped to chosen user without API secrets');
+    assert.ok(JSON.stringify(audit).includes('[已隐藏]') && !JSON.stringify(audit).includes('system-secret') && !JSON.stringify(audit).includes('system-ai-secret'),'audit redacts configured secrets in log content');
+    assert.equal(audit.records.find(record=>record.botResults?.length).botResults[0].note,'[已隐藏]','structured results are also redacted');
+    assert.equal((await request('/api/admin/audit/users/'+aliceId,bob)).status,403);
+    assert.equal((await request('/api/admin/audit/users/'+aliceId,'')).status,401);
+    assert.equal((await request('/api/admin/audit/users/'+aliceId,admin,{})).status,405);
+    assert.equal((await request('/api/admin/audit/users/../../config',admin)).status,404);
+    const filteredAudit=await(await request('/api/admin/audit/users/'+aliceId+'?account=absent',admin)).json();
+    assert.equal(filteredAudit.records.length,0);
+    assert.equal((await state(admin)).config.users[0].session,'legacy','audit does not switch administrator workspace');
     const raw=fs.readFileSync(path.join(root,'.web-users.json'),'utf8');
     assert.ok(!raw.includes('a123456') && !raw.includes('alice-secret') && !raw.includes('bob-secret'),'only salted hashes stored');
     await stop(); await start();
     assert.equal((await request('/api/state',alice)).status,401,'server restart expires sessions');
     alice=await login('alice','alice-secret'); bob=await login('bob','bob-secret'); admin=await login('admin','admin-secret');
+    assert.equal((await(await request('/api/notifications',alice)).json()).notifications.chatId,'111','user notification settings survive restart');
     assert.equal((await state(alice)).config.users[0].name,'alice'); assert.equal((await state(bob)).config.users[0].name,'bob');
     assert.equal((await state(alice)).run.id,runAlice.id); assert.equal((await state(bob)).run.id,runBob.id);
     assert.equal((await request('/api/auth/login','',{username:'alice',password:'a123456'})).status,401);
@@ -124,6 +172,31 @@ time.sleep(60)
       await page.goto(base+'/login'); await page.fill('#auth-username','admin');await page.fill('#admin-password','admin-secret');await page.click('#auth-submit');await page.waitForURL(base+'/');
       await page.locator('#nav-users').click();await page.fill('#web-new-username','charlie');await page.locator('#web-user-create button').click();
       await page.locator('#web-users-list').filter({hasText:'charlie'}).waitFor();
+      await page.locator('#system-api-id').fill('789');
+      await page.locator('#system-settings-form [type="submit"]').click();
+      await page.locator('#toast').filter({hasText:'系统配置已保存'}).waitFor();
+      assert.equal((await state(admin)).config.system.telegram.apiId,789);
+      await page.locator('#nav-audit').click();
+      await page.locator('#audit-user option[value="'+aliceId+'"]').waitFor({state:'attached'});
+      await page.locator('#audit-user').selectOption(aliceId);
+      await page.locator('#audit-summary').filter({hasText:'alice · 1'}).waitFor();
+      await page.locator('#audit-log-output').filter({hasText:aliceId}).waitFor();
+      await page.locator('#audit-tab-bots').click();
+      await page.locator('#audit-bots').filter({hasText:'alice bot note'}).waitFor();
+      assert.ok((await page.locator('#audit-bots').innerText()).includes('23:59'));
+      await page.locator('#audit-user').selectOption(bobId);
+      await page.locator('#audit-bots').filter({hasText:'bob bot note'}).waitFor();
+      assert.ok(!(await page.locator('#audit-bots').innerText()).includes('alice bot note'));
+      await page.locator('#audit-tab-logs').click();await page.locator('#audit-log-output').filter({hasText:bobId}).waitFor();
+      assert.ok(!(await page.locator('#audit-log-output').innerText()).includes(aliceId));
+      if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR) await page.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,'admin-audit-logs.png'),fullPage:true});
+      await page.locator('#audit-date').fill('2000-01-01');await page.locator('#audit-log-filters [type="submit"]').click();
+      await page.locator('#audit-log-output').filter({hasText:'没有签到日志'}).waitFor();
+      await page.locator('#audit-log-filters [type="reset"]').click();await page.locator('#audit-log-output').filter({hasText:bobId}).waitFor();
+      await page.setViewportSize({width:390,height:844});await page.locator('#audit-tab-bots').click();
+      assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'audit fits mobile viewport');
+      if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR) await page.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,'admin-audit-bots-mobile.png'),fullPage:true});
+      await page.setViewportSize({width:1280,height:720});
       if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR) await page.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,'web-user-management.png'),fullPage:true});
       await page.click('#admin-logout');await page.waitForURL('**/login');
       await page.fill('#auth-username','charlie');await page.fill('#admin-password','a123456');await page.click('#auth-submit');await page.waitForURL('**/password');
@@ -132,6 +205,7 @@ time.sleep(60)
       await page.fill('#admin-password','a123456');await page.fill('#auth-new-password','charlie-secret');await page.fill('#auth-confirm-password','charlie-secret');await page.click('#auth-submit');await page.waitForURL(base+'/');
       await page.locator('#web-user-name').filter({hasText:'charlie'}).waitFor();
       assert.equal(await page.locator('#nav-users').isVisible(),false);
+      assert.equal(await page.locator('#nav-audit').isVisible(),false);
       await page.locator('[data-view="accounts"]').click(); assert.equal(await page.locator('.account-tile').count(),0);
       await page.locator('#add-account').click();
       await page.locator('.account-fields [data-field="name"]').fill('charlie TG');
@@ -148,9 +222,91 @@ time.sleep(60)
       await page.locator('#account-detail .save-btn').first().click();
       await page.locator('#toast').filter({hasText:'配置已保存'}).waitFor();
       assert.equal((await(await page.request.get(base+'/api/state')).json()).config.users[0].checkinSchedules.length,1,'regular user can create and persist own tasks through UI');
+      await page.locator('#account-back').click();
+      await page.locator('#use-system-api').check();assert.equal(await page.locator('#personal-api-fields').isVisible(),false);
+      await page.locator('#account-overview .save-btn').first().click();await page.locator('#toast').filter({hasText:'配置已保存'}).waitFor();
+      await page.locator('[data-view="ai"]').click();await page.locator('#use-system-ai').check();
+      assert.equal(await page.locator('#provider-list').isVisible(),false);
+      await page.locator('#view-ai .save-btn').click();await page.locator('#toast').filter({hasText:'配置已保存'}).waitFor();
+      const charlieState=(await(await page.request.get(base+'/api/state')).json()).config;
+      assert.equal(charlieState.telegram.useSystem,true);assert.equal(charlieState.useSystemAI,true);
       await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+      await page.click('#admin-logout');await page.waitForURL('**/login');
+      await page.fill('#auth-username','admin');await page.fill('#admin-password','admin-secret');await page.click('#auth-submit');await page.waitForURL(base+'/');
+      await page.locator('#nav-users').click();
+      assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'administrator settings fit mobile viewport');
+      if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR) await page.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,'web-user-management-mobile.png'),fullPage:true});
+      const row=page.locator('#web-users-list tr[data-web-username="charlie"]');
+      await row.locator('[data-web-user-action="edit"]').click();
+      await page.fill('#web-edit-username','charlie_new');await page.locator('#web-user-edit-form [type="submit"]').click();
+      const renamed=page.locator('#web-users-list tr[data-web-username="charlie_new"]');
+      await renamed.waitFor();
+      const charlieCookie=await login('charlie_new','charlie-secret');
+      assert.equal((await state(charlieCookie)).config.users[0].session,'charlie_tg','rename retains data');
+      await renamed.locator('[data-web-user-action="reset"]').click();
+      await page.locator('.ui-confirm-dialog:not(#web-user-edit-dialog) .outline-btn').click();
+      assert.equal((await request('/api/state',charlieCookie)).status,200,'cancel reset keeps session valid');
+      await renamed.locator('[data-web-user-action="reset"]').click();
+      await page.locator('.ui-confirm-dialog:not(#web-user-edit-dialog) .primary-btn').click();
+      await renamed.filter({hasText:'待修改密码'}).waitFor();
+      assert.equal((await request('/api/state',charlieCookie)).status,401,'reset logs out every session');
+      const resetCookie=await login('charlie_new','a123456');
+      assert.equal((await request('/api/state',resetCookie)).status,403);
+      await renamed.locator('[data-web-user-action="delete"]').click();
+      await page.locator('.ui-confirm-dialog:not(#web-user-edit-dialog) .outline-btn').click();
+      assert.equal(await renamed.count(),1,'cancel delete preserves user');
+      await renamed.locator('[data-web-user-action="delete"]').click();
+      await page.locator('.ui-confirm-dialog:not(#web-user-edit-dialog) .primary-btn').click();
+      await renamed.waitFor({state:'detached'});
+      assert.equal((await request('/api/auth/status',resetCookie)).status,200);
+      assert.equal((await request('/api/state',resetCookie)).status,401,'deleted account no longer has access');
       assert.deepEqual(errors,[]);
     }
+    // Test all management routes without relying on hidden controls.
+    const patchUser=(id,username,cookie=admin)=>fetch(base+'/api/users/'+id,{method:'PATCH',headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({username})});
+    const deleteUser=(id,cookie=admin)=>fetch(base+'/api/users/'+id,{method:'DELETE',headers:{Cookie:cookie}});
+    for(const response of [await patchUser(bobId,'bad',alice),await request(`/api/users/${bobId}/reset-password`,alice,{}),await deleteUser(bobId,alice)]) assert.equal(response.status,403);
+    assert.equal((await patchUser(aliceId,'bob')).status,400);
+    assert.equal((await patchUser(aliceId,'admin')).status,400);
+    assert.equal((await patchUser(aliceId,'alice_renamed')).status,200);
+    assert.equal((await request('/api/state',alice)).status,401);
+    assert.equal((await request('/api/auth/login','',{username:'alice',password:'alice-secret'})).status,401);
+    alice=await login('alice_renamed','alice-secret');
+    assert.equal((await state(alice)).config.users[0].name,'alice');
+    assert.equal((await request(`/api/users/${aliceId}/reset-password`,admin,{})).status,200);
+    assert.equal((await request('/api/state',alice)).status,401);
+    assert.equal((await request('/api/auth/login','',{username:'alice_renamed',password:'alice-secret'})).status,401);
+    alice=await login('alice_renamed','a123456');assert.equal((await request('/api/runs',alice)).status,403);
+    assert.equal((await request('/api/auth/password',alice,{currentPassword:'a123456',newPassword:'alice-final-secret'})).status,200);
+    await waitFor(async()=>(await state(bob)).automation.status==='running');
+    const bobWorkerPid=Number(fs.readFileSync(path.join(userDir('bob'),'worker.pid'),'utf8'));
+    assert.equal((await deleteUser(bobId)).status,200);
+    assert.equal((await request('/api/admin/audit/users/'+bobId,admin)).status,404,'deleted user cannot be audited through live workspace');
+    assert.throws(()=>process.kill(bobWorkerPid,0),/ESRCH/,'deleting user stops their active automation worker');
+    assert.equal((await request('/api/state',bob)).status,401);
+    assert.equal((await request('/api/auth/login','',{username:'bob',password:'bob-secret'})).status,401);
+    assert.ok(fs.existsSync(userDir('bob')),'deleted user data is retained for backup');
+    assert.equal((await deleteUser('admin')).status,404,'administrator cannot be removed');
+    await stop();await start();admin=await login('admin','admin-secret');alice=await login('alice_renamed','alice-final-secret');
+    assert.equal((await state(alice)).config.users[0].name,'alice');
+    assert.ok(!(await(await request('/api/users',admin)).json()).users.some(user=>user.id===bobId),'deletion persists through restart');
+    const newBob=(await(await request('/api/users',admin,{username:'bob'})).json()).user;
+    assert.notEqual(newBob.id,bobId,'same name creates new isolated workspace');
+    bob=await login('bob','a123456');await request('/api/auth/password',bob,{currentPassword:'a123456',newPassword:'new-bob-secret'});
+    assert.equal((await state(bob)).config.users.length,0,'new account does not inherit deleted user data');
+    let sharedConfig=(await state(bob)).config;
+    sharedConfig.telegram.useSystem=true;sharedConfig.useSystemAI=true;
+    sharedConfig.users=[{name:'system_only',session:'system_only',sourceIndex:-1,useGlobalCredentials:true,bots:[],checkinSchedules:[]}];
+    assert.equal((await request('/api/config',bob,sharedConfig)).status,200,'system API supports account without own credentials');
+    assert.equal((await adminRequest('/api/admin/profile','PATCH',{username:'bob'})).status,400,'cannot rename administrator to another user');
+    assert.equal((await adminRequest('/api/admin/profile','PATCH',{username:'owner'})).status,200);
+    assert.equal((await request('/api/auth/status',admin)).status,200,'current administrator session remains valid');
+    assert.equal((await request('/api/auth/login','',{username:'admin',password:'admin-secret'})).status,401);
+    await stop();await start();admin=await login('owner','admin-secret');bob=await login('bob','new-bob-secret');
+    const finalState=(await state(bob)).config;
+    assert.equal(finalState.telegram.useSystem,true);assert.equal(finalState.useSystemAI,true);
+    assert.equal(finalState.system.providers[0].name,'System AI');
+    assert.equal((await(await request('/api/auth/status')).json()).adminUsername,'owner','administrator username persists through restart');
     console.log('Multi-user PASS: admin-only creation, salted durable passwords, mandatory change, API gates, duplicate names, independent sessions/config/logs/workers, cross-user stop rejection, restart persistence and browser flow');
   } finally {await browser?.close();await stop();fs.rmSync(root,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
 })().catch(error=>{console.error(error);process.exitCode=1;});

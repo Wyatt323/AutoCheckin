@@ -55,6 +55,24 @@ async function createDatabase({ dataDir, parseConfig, pool: suppliedPool } = {})
       }
       await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb)',['migration:web-users-v1',JSON.stringify({at:new Date().toISOString()})]);
     }
+    const settingsMigrated = await client.query("SELECT key FROM autocheckin_documents WHERE key = 'migration:system-settings-v1'");
+    if (!settingsMigrated.rows.length) {
+      for (const [key,file] of [['system-settings','.system-settings.json'],['admin-profile','.admin-profile.json']]) {
+        const target = path.join(dataDir,file);
+        if (fs.existsSync(target)) await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb) ON CONFLICT(key) DO NOTHING',[key,JSON.stringify(JSON.parse(fs.readFileSync(target,'utf8')))]);
+      }
+      await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb)',['migration:system-settings-v1',JSON.stringify({at:new Date().toISOString()})]);
+    }
+    const notificationsMigrated=await client.query("SELECT key FROM autocheckin_documents WHERE key = 'migration:notifications-v1'");
+    if(!notificationsMigrated.rows.length) {
+      const directories=[['',dataDir]], tenants=path.join(dataDir,'.user-workspaces');
+      if(fs.existsSync(tenants))for(const entry of fs.readdirSync(tenants,{withFileTypes:true}))if(entry.isDirectory() && /^[a-f0-9-]{36}$/.test(entry.name))directories.push(['tenant:'+entry.name+':',path.join(tenants,entry.name)]);
+      for(const [prefix,directory] of directories) {
+        const file=path.join(directory,'.notifications.json');
+        if(fs.existsSync(file))await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb) ON CONFLICT(key) DO NOTHING',[prefix+'notifications',JSON.stringify(JSON.parse(fs.readFileSync(file,'utf8')))]);
+      }
+      await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb)',['migration:notifications-v1',JSON.stringify({at:new Date().toISOString()})]);
+    }
     await client.query('COMMIT');
     if (importedCount !== null) console.log(`旧数据迁移完成：${importedCount} 项；源文件已保留。`);
     for (const row of (await client.query('SELECT key, value FROM autocheckin_documents')).rows) documents.set(row.key, row.value);

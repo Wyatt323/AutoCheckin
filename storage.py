@@ -65,18 +65,35 @@ def connect():
     return psycopg.connect(**options)
 
 
-def read_document(key, path=None, default=None, parser=json.loads):
-    key = os.environ.get('AUTOCHECKIN_DOCUMENT_PREFIX', '') + key
+def read_document(key, path=None, default=None, parser=json.loads, system=False):
+    document_key = key
+    key = ('' if system else os.environ.get('AUTOCHECKIN_DOCUMENT_PREFIX', '')) + key
     if database_enabled():
         with connect() as connection:
             row = connection.execute('SELECT value FROM autocheckin_documents WHERE key = %s', (key,)).fetchone()
-            return row[0] if row else default
-    if path is None:
-        return default
-    try:
-        return parser(Path(path).read_text(encoding='utf-8'))
-    except FileNotFoundError:
-        return default
+            value = row[0] if row else default
+    elif path is None:
+        value = default
+    else:
+        try:
+            value = parser(Path(path).read_text(encoding='utf-8'))
+        except FileNotFoundError:
+            value = default
+    if document_key == 'config' and value and (value.get('telegram', {}).get('use_system') or value.get('ai', {}).get('use_system')):
+        system_dir = os.environ.get('AUTOCHECKIN_SYSTEM_DATA_DIR') or os.environ.get('AUTOCHECKIN_DATA_DIR') or (str(Path(path).parent) if path else '.')
+        settings = read_document('system-settings', Path(system_dir) / '.system-settings.json', default={}, system=True)
+        return apply_system_config(value, settings)
+    return value
+
+
+def apply_system_config(config, settings):
+    from copy import deepcopy
+    config = deepcopy(config)
+    if config.get('telegram', {}).get('use_system') is True:
+        config['telegram'].update(api_id=settings.get('telegram', {}).get('api_id', ''), api_hash=settings.get('telegram', {}).get('api_hash', ''))
+    if config.get('ai', {}).get('use_system') is True:
+        config['ai'] = {**deepcopy(settings.get('ai', {'providers': []})), 'use_system': True}
+    return config
 
 
 def write_document(key, value, path=None):

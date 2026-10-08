@@ -105,7 +105,7 @@ function createScheduler({ root, readConfig, runAccount, isBusy, store = null, n
         const item = state.pending.shift();
         await persist();
         try {
-          await runAccount(item.account, item.bot || null);
+          await runAccount(item.account, item.bot || null, item);
           event(item.bot ? `${item.bot} 独立签到已启动` : '定时签到已启动', 'info', item.account);
         } catch (error) { event(`定时签到启动失败：${error.message}`, 'error', item.account); }
         await persist();

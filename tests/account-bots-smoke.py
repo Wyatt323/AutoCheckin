@@ -19,6 +19,7 @@ def config(users):
         "telegram": {"users": users, "dialog_folder": "legacy-folder"},
         "ai": {"model": "mock", "providers": [{"name": "mock", "base_url": "https://example.com", "api_key": "dummy"}]},
         "bot_groups": {"button": ["@legacy_bot"], "command": []},
+        "bot_notes": {"@legacy_bot": "legacy note"},
     }
 
 
@@ -33,9 +34,11 @@ with tempfile.TemporaryDirectory(dir=TEMP_ROOT, prefix="autocheckin-accounts-") 
     assert len(allinone.load_config()[2]) == 2
     _, _, normalized = allinone.load_config(file)
     assert [user["bots"] for user in normalized] == [["@legacy_bot"], ["@legacy_bot"]]
+    assert normalized[0]["bot_notes"] == {"@legacy_bot": "legacy note"}
 
     users[0]["bot_groups"] = {"button": [], "command": [{"bot": "@first_bot", "command": "/checkin"}]}
     users[0]["dialog_folder"] = "first-folder"
+    users[0]["bot_notes"] = {"@first_bot": "牛逼"}
     users[1]["bot_groups"] = {"button": ["@second_bot"], "command": []}
     file.write_text(json.dumps(config(users)), encoding="utf-8")
     loaded = allinone.load_config(file)
@@ -43,6 +46,8 @@ with tempfile.TemporaryDirectory(dir=TEMP_ROOT, prefix="autocheckin-accounts-") 
     assert first["bots"] == ["@first_bot"]
     assert first["bot_commands"] == {"@first_bot": "/checkin"}
     assert first["dialog_folder"] == "first-folder"
+    assert first["bot_notes"] == {"@first_bot": "牛逼"}
+    assert second["bot_notes"] == {}, "account Bot list must not inherit other Bot remarks"
     assert second["bots"] == ["@second_bot"]
 
     calls = []

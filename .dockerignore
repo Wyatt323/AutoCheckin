@@ -3,6 +3,9 @@
 data
 config.json
 .web-users.json*
+.admin-profile.json*
+.system-settings.json*
+.notifications.json*
 .user-workspaces
 .account-profiles
 .bot-discovery

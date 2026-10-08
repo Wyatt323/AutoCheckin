@@ -3,7 +3,7 @@
 
 from telegram_credentials import resolve_credentials
 from storage import read_document, parse_config_text
-from checkin_logging import account_log, emit_result, install_json_output
+from checkin_logging import account_log, emit_result, emit_bot_result, install_json_output
 import asyncio
 import json
 import random
@@ -112,6 +112,7 @@ def load_config(file_path=None):
             "bot_commands": user_commands,
             "dialog_folder": user.get("dialog_folder", legacy_dialog_folder),
             "bot_schedules": user.get("bot_schedules", {}),
+            "bot_notes": user.get("bot_notes", {}) if has_own_bots else config.get("bot_notes", {}),
         })
 
     return ai_model, ai_providers, normalized_users
@@ -833,9 +834,10 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
             round_no += 1
 
         print("\n====== 📊 签到结果汇总 ======")
+        notes = {str(key).lstrip("@").lower(): str(value).strip() for key, value in user.get("bot_notes", {}).items()}
         for bot in active_bots:
             display_name = await get_bot_display_name(client, bot)
-            print(f"  {display_name} -> {signers[bot].result or '⚠️ 未知'}")
+            emit_bot_result(session_name, bot, display_name, notes.get(str(bot).lstrip("@").lower(), ""), signers[bot].result or "⚠️ 未知")
         return not stopped_by_limit
     finally:
         try:

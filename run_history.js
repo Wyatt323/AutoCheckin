@@ -66,9 +66,10 @@ function createRunHistory(dataRoot, store = null) {
       if (account === '__all__') selected = selected.filter(record => !record.account);
       else if (account) selected = selected.flatMap(record => {
         const lines = record.lines.filter(line => (line.account || record.account) === account);
-        if (record.account !== account && !lines.length) return [];
+        const botResults=record.botResults?.filter(item=>item.account===account);
+        if (record.account !== account && !lines.length && !botResults?.length) return [];
         const state = typeof record.accountStates?.[account] === 'string' ? record.accountStates[account] : record.state;
-        return [{ ...record, accountStates:undefined, account, state, lines }];
+        return [{ ...record, accountStates:undefined, account, state, lines, ...(botResults ? {botResults} : {}) }];
       });
       return { revision, records:selected };
     },

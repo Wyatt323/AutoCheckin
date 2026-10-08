@@ -1,5 +1,8 @@
 const { requestSecurity } = require('./admin_auth');
 const { createUserAuth } = require('./user_auth');
+const { createSystemSettings, applySystemConfig } = require('./system_settings');
+const { createTelegramNotifications } = require('./telegram_notifications');
+const CheckinResults = require('./checkin_results');
 const { validateTime } = require('./schedule_time');
 const http = require('node:http');
 const fs = require('node:fs');
@@ -55,10 +58,11 @@ function parseConfig(raw) {
   return JSON.parse(output);
 }
 
-async function createWorkspace({dataDir, store, prefix = ''}) {
+async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
   const DATA_ROOT = dataDir, CONFIG = path.join(dataDir, 'config.json'), database = store;
-  const workerEnv = {AUTOCHECKIN_DOCUMENT_PREFIX:prefix};
+  const workerEnv = {AUTOCHECKIN_DOCUMENT_PREFIX:prefix,AUTOCHECKIN_SYSTEM_DATA_DIR:path.resolve(process.env.AUTOCHECKIN_DATA_DIR || ROOT)};
   const automation = createAutomation();
+  const notifications = await createTelegramNotifications({dataDir,store});
   let history, profiles, login, scheduler, chatResolver;
   let child = null, runStarting = false, nextRunAt = 0, run, shuttingDown = false;
   fs.mkdirSync(DATA_ROOT,{recursive:true,mode:0o700});
@@ -74,6 +78,7 @@ async function createWorkspace({dataDir, store, prefix = ''}) {
   }
 
   function discoveryKey(account) { return createHash('sha256').update(account).digest('hex'); }
+  const effectiveConfig = () => applySystemConfig(readConfig(),systemSettings.read());
   function readDiscovery(account) {
     try { return database ? database.read(`discovery:${discoveryKey(account)}`) || {} : JSON.parse(fs.readFileSync(path.join(DATA_ROOT, '.bot-discovery', discoveryKey(account) + '.json'), 'utf8')); }
     catch { return {}; }
@@ -104,7 +109,9 @@ async function createWorkspace({dataDir, store, prefix = ''}) {
       return bots;
     };
     return {
-      telegram: { apiId: telegram.api_id || '', hasApiHash: Boolean(credentialText(telegram.api_hash)) },
+      telegram: { apiId: telegram.api_id || '', hasApiHash: Boolean(credentialText(telegram.api_hash)), useSystem:telegram.use_system === true },
+      useSystemAI:ai.use_system === true,
+      system:systemSettings.view(),
       users: (telegram.users || config.users || []).map((user, sourceIndex) => ({
         sourceIndex, name: user.name || '', session: user.session || user.name || '',
         apiId: user.api_id || '', hasApiHash: Boolean(credentialText(user.api_hash)),
@@ -220,6 +227,8 @@ async function createWorkspace({dataDir, store, prefix = ''}) {
       if (rawId && (!/^\d+$/.test(rawId) || !Number.isSafeInteger(Number(rawId)) || Number(rawId) <= 0)) throw new Error('全局 Telegram API ID 无效');
       telegram.api_id = rawId ? Number(rawId) : '';
       telegram.api_hash = credentialText(input.telegram.apiHash) || credentialText(telegram.api_hash);
+      telegram.use_system = input.telegram.useSystem === true;
+      if (telegram.use_system) resolveCredentials(applySystemConfig({telegram},systemSettings.read()),{});
     }
     const seenSessions = new Set();
     const users = input.users.map((item, index) => {
@@ -233,7 +242,7 @@ async function createWorkspace({dataDir, store, prefix = ''}) {
       const apiId = rawId ? Number(rawId) : '';
       const apiHash = item.useGlobalCredentials === true || item.clearApiHash === true ? '' : credentialText(item.apiHash) || credentialText(old.api_hash);
       if (rawId && (!/^\d+$/.test(rawId) || !Number.isSafeInteger(apiId) || apiId <= 0)) throw new Error(`账号 ${name} 的 API ID 无效`);
-      try { resolveCredentials({ telegram }, { api_id: apiId, api_hash: apiHash }); }
+      try { resolveCredentials(applySystemConfig({ telegram },systemSettings.read()), { api_id: apiId, api_hash: apiHash }); }
       catch (error) { throw new Error(`账号 ${name}：${error.message}`); }
       const botItems = Array.isArray(item.bots) ? item.bots : (input.bots || []);
       if (!Array.isArray(botItems) || botItems.length > 500) throw new Error(`账号 ${name} 的 Bot 配置过多或格式不正确`);
@@ -275,7 +284,8 @@ async function createWorkspace({dataDir, store, prefix = ''}) {
     });
     original.telegram = { ...telegram, users };
     delete original.telegram.dialog_folder;
-    original.ai = { ...(original.ai || {}), model: providers.length ? nonempty(input.model, 'AI 模型', 120) : String(input.model || '').trim(), providers };
+    if (input.useSystemAI === true && !systemSettings.read().ai?.providers?.length) throw Error('管理员尚未配置系统 AI 提供商');
+    original.ai = { ...(original.ai || {}), use_system:input.useSystemAI === true, model: providers.length ? nonempty(input.model, 'AI 模型', 120) : String(input.model || '').trim(), providers };
     delete original.ai.api_key;
     delete original.ai.base_url;
     delete original.users;
@@ -309,9 +319,9 @@ async function createWorkspace({dataDir, store, prefix = ''}) {
     return null;
   }
 
-  function addLine(text, stream = 'stdout', account = run.account) {
+  function addLine(text, stream = 'stdout', account = run.account, detail = {}) {
     const clean = text.replace(/\x1b\[[0-9;]*m/g, '').replace(/tg:\/\/login\?token=[^\s]+/gi, 'tg://login?token=[已隐藏]');
-    run.lines.push({ id: (run.lines.at(-1)?.id || 0) + 1, time: new Date().toISOString(), stream, text: clean.slice(0, 2000), runId: run.id, account, trigger: run.trigger });
+    run.lines.push({ id: (run.lines.at(-1)?.id || 0) + 1, time: new Date().toISOString(), stream, text: clean.slice(0, 2000), runId: run.id, account, trigger: run.trigger, ...detail });
     if (run.lines.length > MAX_LINES) run.lines.splice(0, run.lines.length - MAX_LINES);
     history.changed();
   }
@@ -329,6 +339,7 @@ async function createWorkspace({dataDir, store, prefix = ''}) {
     if (bot && selected[0].dialogFolder) throw new Error('当前使用分组轮询，配置列表的独立定时暂不生效');
     run = history.create(account, trigger);
     run.bot = bot;
+    run.botNote = selected[0]?.bots.find(item=>item.name.toLowerCase()===String(bot).toLowerCase())?.note || '';
     try { await history.flush(); }
     catch { run.state='failed'; run.finishedAt=new Date().toISOString(); throw new Error('执行记录无法保存，本次任务未启动'); }
     addLine(`使用 ${python.version} 启动${account ? `账号 ${account} 的` : '批量'}签到`, 'system');
@@ -339,6 +350,15 @@ async function createWorkspace({dataDir, store, prefix = ''}) {
     function output(line, stream) {
       try {
         const event = JSON.parse(line);
+        if(event.type==='bot_result') {
+          if(!accounts.has(event.account) || typeof event.bot!=='string' || !['success','already','timeout','failed','skipped','unknown'].includes(event.status))return;
+          const entry={account:event.account,bot:event.bot.slice(0,100),name:String(event.name || event.bot).slice(0,200),note:String(event.note || '').slice(0,200),status:event.status,result:String(event.result || '').slice(0,200)};
+          run.botResults ||= [];
+          const index=run.botResults.findIndex(item=>item.account===entry.account && CheckinResults.key(item.bot)===CheckinResults.key(entry.bot));
+          if(index>=0)run.botResults[index]=entry;else if(run.botResults.length<2000)run.botResults.push(entry);
+          addLine(CheckinResults.resultLine(entry),entry.status==='failed' || entry.status==='timeout' ? 'stderr' : 'stdout',entry.account,{botResult:entry});
+          return;
+        }
         if (['checkin_log','account_result'].includes(event.type)) {
           const owner = accounts.has(event.account) ? event.account : run.account;
           if (event.type === 'account_result') {
@@ -367,7 +387,7 @@ async function createWorkspace({dataDir, store, prefix = ''}) {
       });
       pipe.on('end', () => { if (buffer) output(buffer, stream); });
     }
-    child.on('error', error => { addLine(error.message, 'stderr'); run.state = 'failed'; run.finishedAt = new Date().toISOString(); child = null; history.changed(true); });
+    child.on('error', error => { addLine(error.message, 'stderr'); run.state = 'failed'; run.finishedAt = new Date().toISOString(); history.changed(true); });
     child.on('close', async code => {
       run.exitCode = code;
       run.finishedAt = new Date().toISOString();
@@ -376,6 +396,9 @@ async function createWorkspace({dataDir, store, prefix = ''}) {
       for (const owner of Object.keys(run.accountStates || {})) if (run.accountStates[owner] === 'running') run.accountStates[owner] = run.state;
       addLine(`任务结束，退出码 ${code}`, 'system');
       history.changed(true);
+      const finishedRun=structuredClone(run);
+      try {await notifications.notifyRun(finishedRun,selected.find(user=>user.session===finishedRun.account)?.name);}
+      catch {console.error('定时签到通知入队失败');}
       child = null;
       nextRunAt = Date.now() + (5 + Math.floor(Math.random() * 11)) * 1000;
       if (database) for (const user of config.users) await database.refresh(`discovery:${discoveryKey(user.session)}`).catch(() => {});
@@ -394,7 +417,10 @@ async function createWorkspace({dataDir, store, prefix = ''}) {
       if (delay) await new Promise(resolve => setTimeout(resolve, delay));
       if (shuttingDown) throw new Error('服务正在停止');
       await automation.stop();
-      try { await startRun(account, trigger, bot); }
+      try {
+        if (shuttingDown) throw new Error('当前用户工作空间已关闭');
+        await startRun(account, trigger, bot);
+      }
       catch (error) { automation.start(); throw error; }
     } finally {
       runStarting = false;
@@ -406,12 +432,54 @@ async function createWorkspace({dataDir, store, prefix = ''}) {
   profiles = require('./account_profiles').createProfileStore(DATA_ROOT, database);
   run = history.latest() || { state:'idle', lines:[] };
   nextRunAt = run.finishedAt ? Date.parse(run.finishedAt) + 5000 : 0;
-  login = createLoginController({ workerEnv, root: ROOT, dataDir: DATA_ROOT, readConfig, pythonCommand, isBusy: () => !!child || runStarting || shuttingDown, stopAutomation: () => automation.stop(), resumeAutomation: () => { if (!shuttingDown) automation.start(); }, onComplete:async account => { if (database) await database.refresh(`profile:${discoveryKey(account)}`); } });
+  login = createLoginController({ workerEnv, root: ROOT, dataDir: DATA_ROOT, readConfig:effectiveConfig, pythonCommand, isBusy: () => !!child || runStarting || shuttingDown, stopAutomation: () => automation.stop(), resumeAutomation: () => { if (!shuttingDown) automation.start(); }, onComplete:async account => { if (database) await database.refresh(`profile:${discoveryKey(account)}`); } });
   automation.configure({ workerEnv, root: ROOT, dataDir: DATA_ROOT, store:database, readConfig, pythonCommand, onEvent:event => history.appendEvent(event), canRun: () => !child && !runStarting && !login.active() && !shuttingDown });
-  scheduler = createScheduler({ root: DATA_ROOT, store:database, readConfig, runAccount: (account, bot) => launchRun(account, 'scheduled', bot), isBusy: () => !!child || runStarting || login.active() || shuttingDown || Date.now() < nextRunAt });
+  scheduler = createScheduler({ root: DATA_ROOT, store:database, readConfig, runAccount: async (account, bot, occurrence) => {
+    try {await launchRun(account, 'scheduled', bot);}
+    catch(error) {
+      if(!shuttingDown) {
+        const time=new Date().toISOString(), name=viewConfig(readConfig()).users.find(user=>user.session===account)?.name;
+        await notifications.notifyRun({id:'startup:'+occurrence.key,account,bot,trigger:'scheduled',state:'startup_failed',startedAt:time,finishedAt:time},name).catch(()=>console.error('定时启动失败通知入队失败'));
+      }
+      throw error;
+    }
+  }, isBusy: () => !!child || runStarting || login.active() || shuttingDown || Date.now() < nextRunAt });
+  for(const record of history.snapshot({category:'checkin'}).records)if(record.trigger==='scheduled' && record.lines.some(line=>line.text==='服务重启，本次任务已中断'))await notifications.notifyRun(record).catch(()=>console.error('中断任务通知入队失败'));
   return {
-    start() { automation.start(); scheduler.start(); },
+    start() { notifications.start(); automation.start(); scheduler.start(); },
+    audit(account = '') {
+      const raw = readConfig(), config = viewConfig(raw);
+      const secrets = [...new Set([raw.telegram?.api_hash,...(raw.telegram?.users || raw.users || []).map(item=>item.api_hash),raw.ai?.api_key,...(raw.ai?.providers || []).map(item=>item.api_key),systemSettings.read().telegram?.api_hash,...(systemSettings.read().ai?.providers || []).map(item=>item.api_key)].filter(value=>typeof value === 'string' && value))].sort((a,b)=>b.length-a.length);
+      const redact = text => notifications.redact(secrets.reduce((value,secret)=>value.split(secret).join('[已隐藏]'),String(text || '')).replace(/tg:\/\/login\?token=[^\s]+/gi,'tg://login?token=[已隐藏]'));
+      const redactResult = item => ({...item,bot:redact(item.bot),name:redact(item.name),note:redact(item.note),result:redact(item.result)});
+      const records = history.snapshot({category:'checkin'}).records;
+      const logs = history.snapshot({account,category:'checkin'});
+      return {
+        logAccounts:[...new Set(records.flatMap(record=>[record.account,...record.lines.map(line=>line.account)]).filter(Boolean))],
+        accounts:config.users.map(user=>({
+          name:user.name, session:user.session, dialogFolder:user.dialogFolder,
+          bots:user.bots.map(bot=>({name:bot.name,mode:bot.mode,command:bot.command,note:bot.note,schedule:bot.schedule})),
+          discoveredBots:user.discoveredBots.map(bot=>({bot:bot.bot,mode:bot.mode,command:bot.command,lastResult:bot.lastResult}))
+        })),
+        revision:logs.revision,
+        records:logs.records.map(record=>({...record,botNote:redact(record.botNote),...(record.botResults ? {botResults:record.botResults.map(redactResult)} : {}),lines:record.lines.map(line=>({...line,text:redact(line.text),...(line.botResult ? {botResult:redactResult(line.botResult)} : {})}))}))
+      };
+    },
+    async refreshSettings() {
+      if (!readConfig().telegram?.use_system || shuttingDown) return true;
+      if (child || runStarting || login.active()) return false;
+      await automation.restart(); return true;
+    },
     async handle(req,res,url,authUser) {
+        if (shuttingDown) return send(res,403,{error:'当前用户工作空间已关闭'});
+        if(url.pathname==='/api/notifications') {
+          if(req.method==='GET')return send(res,200,{notifications:notifications.view()});
+          if(req.method==='PUT')return send(res,200,{notifications:await notifications.update(await bodyJson(req))});
+          return send(res,405,{error:'不支持的请求'});
+        }
+        if(url.pathname==='/api/notifications/test' && req.method==='POST') {
+          await notifications.test();return send(res,202,{ok:true,notifications:notifications.view()});
+        }
         if (req.method === 'POST' && url.pathname === '/api/accounts/bots/discovery/reset') {
           if (child || runStarting || login.active() || shuttingDown) throw new Error('请在任务结束后重新识别');
           const input = await bodyJson(req);
@@ -439,7 +507,7 @@ async function createWorkspace({dataDir, store, prefix = ''}) {
         if (req.method === 'POST' && url.pathname === '/api/accounts/chats/resolve') {
           if (shuttingDown) throw new Error('服务正在停止');
           const input = await bodyJson(req);
-          chatResolver ||= require('./chat_resolver').createChatResolver({workerEnv,root:ROOT, dataDir:DATA_ROOT, readConfig, pythonCommand});
+          chatResolver ||= require('./chat_resolver').createChatResolver({workerEnv,root:ROOT, dataDir:DATA_ROOT, readConfig:effectiveConfig, pythonCommand});
           return send(res, 200, {results:await chatResolver.resolve(input.account, input.peers)});
         }
         if (req.method === 'POST' && url.pathname === '/api/accounts/profile/refresh') {
@@ -500,6 +568,7 @@ async function createWorkspace({dataDir, store, prefix = ''}) {
       await login.shutdown();
       await chatResolver?.shutdown();
       await automation.stop();
+      await notifications.stop();
       await history.flush();
     }
   };
@@ -509,13 +578,14 @@ let database = null, shuttingDown = false;
 async function boot() {
   database = await require('./database').createDatabase({dataDir:DATA_ROOT,parseConfig});
   const auth = await createUserAuth({dataDir:DATA_ROOT,store:database});
+  const systemSettings = await createSystemSettings({dataDir:DATA_ROOT,store:database});
   const workspaces = new Map();
   async function workspaceFor(user) {
     const id = user.id;
     if (!workspaces.has(id)) {
       const prefix = id === 'admin' ? '' : `tenant:${id}:`;
       const dataDir = id === 'admin' ? DATA_ROOT : path.join(DATA_ROOT,'.user-workspaces',id);
-      const pending = createWorkspace({dataDir,store:require('./database').scopedStore(database,prefix),prefix}).then(workspace=>{workspace.start();return workspace;});
+      const pending = createWorkspace({dataDir,store:require('./database').scopedStore(database,prefix),prefix,systemSettings}).then(workspace=>{workspace.start();return workspace;});
       workspaces.set(id,pending);
       pending.catch(()=>{workspaces.delete(id);});
     }
@@ -530,7 +600,7 @@ http.createServer(async (req, res) => {
     if (security.error) return send(res, 403, { error: security.error });
     const url = new URL(req.url, `http://${PUBLIC_HOST}:${PORT}`);
     const user = auth.identity(req);
-    if (req.method === 'GET' && url.pathname === '/api/auth/status') return send(res,200,{authenticated:Boolean(user),configured:auth.configured,adminUsername:process.env.ADMIN_USERNAME || 'admin',user});
+    if (req.method === 'GET' && url.pathname === '/api/auth/status') return send(res,200,{authenticated:Boolean(user),configured:auth.configured,adminUsername:auth.adminUsername(),user});
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
       const result = await auth.login(req,await bodyJson(req),security.secure);
       if (result.cookie) res.setHeader('Set-Cookie',result.cookie);
@@ -553,8 +623,48 @@ http.createServer(async (req, res) => {
       res.writeHead(302,{Location:user.mustChangePassword ? '/password' : '/','Cache-Control':'no-store'}); return res.end();
     }
     if (url.pathname === '/password' && !user) { res.writeHead(302,{Location:'/login'}); return res.end(); }
-    if (url.pathname === '/api/users') {
+    if (url.pathname === '/api/admin/audit/users' || url.pathname.startsWith('/api/admin/audit/users/')) {
+      if (user.role !== 'admin') return send(res,403,{error:'仅管理员可查看后台审计'});
+      if (req.method !== 'GET') return send(res,405,{error:'审计功能仅支持查看'});
+      if (url.pathname === '/api/admin/audit/users') return send(res,200,{users:auth.list()});
+      const match = url.pathname.match(/^\/api\/admin\/audit\/users\/([a-f0-9-]{36})$/);
+      const target = match && auth.list().find(item=>item.id === match[1]);
+      if (!target) return send(res,404,{error:'用户不存在或已删除'});
+      const account = url.searchParams.get('account') || '';
+      if (account.length > 100) return send(res,400,{error:'账号筛选值过长'});
+      const workspace = await workspaceFor(target);
+      if (auth.identity(req)?.role !== 'admin') return send(res,401,{error:'请重新登录管理员账号'});
+      if (!auth.list().some(item=>item.id === target.id)) return send(res,404,{error:'用户不存在或已删除'});
+      return send(res,200,{user:target,...workspace.audit(account)});
+    }
+    if (url.pathname === '/api/admin/profile' || url.pathname === '/api/admin/settings') {
+      if (user.role !== 'admin') return send(res,403,{error:'仅管理员可修改系统设置'});
+      if (url.pathname === '/api/admin/profile' && req.method === 'PATCH') return send(res,200,{user:await auth.updateAdministrator((await bodyJson(req)).username)});
+      if (url.pathname === '/api/admin/settings' && req.method === 'GET') return send(res,200,{settings:systemSettings.view()});
+      if (url.pathname === '/api/admin/settings' && req.method === 'PUT') {
+        const settings = await systemSettings.update(await bodyJson(req));
+        let deferred = 0;
+        for (const pending of workspaces.values()) if (!await (await pending).refreshSettings()) deferred++;
+        return send(res,200,{settings,deferred});
+      }
+      return send(res,405,{error:'不支持的请求'});
+    }
+    if (url.pathname === '/api/users' || url.pathname.startsWith('/api/users/')) {
       if (user.role !== 'admin') return send(res,403,{error:'仅管理员可管理网页用户'});
+      if (url.pathname !== '/api/users') {
+        const match = url.pathname.match(/^\/api\/users\/([a-f0-9-]{36})(?:\/(reset-password))?$/);
+        if (!match) return send(res,404,{error:'用户不存在'});
+        const id = match[1];
+        if (req.method === 'PATCH' && !match[2]) return send(res,200,{user:await auth.update(id,(await bodyJson(req)).username)});
+        if (req.method === 'POST' && match[2]) return send(res,200,{user:await auth.resetPassword(id)});
+        if (req.method === 'DELETE' && !match[2]) {
+          await auth.remove(id);
+          const pending = workspaces.get(id);
+          if (pending) { await (await pending).stop(); workspaces.delete(id); }
+          return send(res,200,{ok:true});
+        }
+        return send(res,405,{error:'不支持的请求'});
+      }
       if (req.method === 'GET') return send(res,200,{users:auth.list()});
       if (req.method === 'POST') {
         const created = await auth.add((await bodyJson(req)).username);
@@ -566,12 +676,13 @@ http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/')) {
       if (url.pathname === '/api/state') res.setHeader('X-Workspace-User',user.username);
       const workspace = await workspaceFor(user);
+      if (auth.identity(req)?.id !== user.id) return send(res,401,{error:'登录状态已失效，请重新登录'});
       return await workspace.handle(req,res,url,user);
     }
     if (req.method !== 'GET') return send(res, 405, { error: '不支持的请求' });
     const file = url.pathname === '/' ? 'index.html' : ['/login','/password'].includes(url.pathname) ? 'auth.html' : url.pathname.slice(1);
-    if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css', 'run-log.js', 'run-log.css', 'ui-controls.js', 'users.js', 'ui-controls.css', 'theme.css', 'favicon.svg'].includes(file)) return send(res, 404, { error: '页面不存在' });
-    const target = path.join(PUBLIC, file);
+    if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css', 'run-log.js', 'checkin-results.js', 'run-log.css', 'ui-controls.js', 'users.js', 'audit.js', 'notifications.js', 'ui-controls.css', 'theme.css', 'favicon.svg'].includes(file)) return send(res, 404, { error: '页面不存在' });
+    const target = file==='checkin-results.js' ? path.join(ROOT,'checkin_results.js') : path.join(PUBLIC, file);
     res.writeHead(200, { 'Content-Type': types[path.extname(file)], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     fs.createReadStream(target).pipe(res);
   } catch (error) {
