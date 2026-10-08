@@ -160,7 +160,7 @@ function updateSystemChoices() {
   $('#global-api-status').textContent = useAPI ? (config.system?.telegram?.hasApiHash ? '使用管理员提供的系统 API，保存后生效' : '管理员尚未配置系统 API') : ($('#global-api-id').value && (config.telegram?.hasApiHash || $('#global-api-hash').value) ? '个人 API 凭据已配置' : '个人 API 凭据未完整配置（账号独立凭据仍可使用）');
   const useAI = $('#use-system-ai').checked;
   $('#view-ai .settings-panel').hidden = useAI;
-  $('#view-ai .section-heading').hidden = useAI;
+  $('#view-ai .page-heading').hidden = useAI;
   $('#provider-list').hidden = useAI;
   $('#add-provider').hidden = useAI;
 }

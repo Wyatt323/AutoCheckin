@@ -38,7 +38,7 @@ const path = require('node:path');
       if (url.pathname.startsWith('/api/')) return json({ login:{ active:false, state:'idle' }, runs:[], revision:0 });
       const file = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
       if (!/^[\w.-]+$/.test(file)) return route.abort();
-      const target = path.join(__dirname, '../public', file);
+      const target = file === 'checkin-results.js' ? path.join(__dirname, '../checkin_results.js') : path.join(__dirname, '../public', file);
       if (!fs.existsSync(target)) return route.abort();
       return route.fulfill({ body:fs.readFileSync(target), contentType:({ '.html':'text/html', '.js':'application/javascript', '.css':'text/css', '.svg':'image/svg+xml' })[path.extname(file)] });
     });
