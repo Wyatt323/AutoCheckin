@@ -114,6 +114,7 @@ const { createRunHistory } = require('../run_history');
       assert.equal(notification.status,200);assert.ok(!(await notification.text()).includes('_notification_token_'));
       tenants.push({user,session,username});
     }
+    await stopServer(); // Avoid the live runtime flushing stale history over test fixtures.
     store=await connectStore();
     for(const {user,username} of tenants) {
       const scoped=scopedStore(store,`tenant:${user.id}:`);
