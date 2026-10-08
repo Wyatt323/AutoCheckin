@@ -342,8 +342,8 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
     run.botNote = selected[0]?.bots.find(item=>item.name.toLowerCase()===String(bot).toLowerCase())?.note || '';
     try { await history.flush(); }
     catch { run.state='failed'; run.finishedAt=new Date().toISOString(); throw new Error('执行记录无法保存，本次任务未启动'); }
-    addLine(`使用 ${python.version} 启动${account ? `账号 ${account} 的` : '批量'}签到`, 'system');
-    child = spawn(python.name, [...python.prefix, '-u', 'allinone.py', ...(account ? ['--account', account] : []), ...(bot ? ['--bot', bot] : [])], {
+    addLine(`使用 ${python.version} 启动${account ? `账号 ${account} 的` : '批量'}${trigger === 'scheduled' ? bot ? ` Bot ${bot} 独立定时` : '定时' : '手动'}签到`, 'system');
+    child = spawn(python.name, [...python.prefix, '-u', 'allinone.py', ...(account ? ['--account', account] : []), ...(bot ? ['--bot', bot] : []), ...(trigger === 'scheduled' ? ['--scheduled'] : [])], {
       cwd: ROOT, env: { ...process.env, ...workerEnv, AUTOCHECKIN_DATA_DIR:DATA_ROOT, AUTOCHECKIN_LOG_JSON:'1', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
     });
     const accounts = new Set(selected.map(user => user.session));

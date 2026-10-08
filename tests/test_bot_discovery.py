@@ -103,12 +103,58 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         async def execute(signer,bot):
             called.append(bot); signer.result='🎉 签到成功'; return True
         with patch.object(allinone,'TelegramClient',return_value=Client()), patch.object(allinone,'install_handlers'), patch.object(allinone,'get_account_bots',AsyncMock(return_value=['@first_bot','@own_bot','@last_bot'])), patch.object(allinone,'run_signer_once',execute), patch.object(allinone,'get_bot_display_name',AsyncMock(return_value='Bot')), patch.object(allinone,'mark_all_read',AsyncMock()), patch.object(allinone.asyncio,'sleep',AsyncMock()) as sleep, patch.object(allinone.random,'randint',return_value=10) as randint:
-            with contextlib.redirect_stdout(io.StringIO()): await allinone.run_user(user,'',[],[],{})
+            with contextlib.redirect_stdout(io.StringIO()): await allinone.run_user(user,'',[],[],{},scheduled=True)
             self.assertEqual(called,['@first_bot','@last_bot'])
             randint.assert_called_once_with(5,15); sleep.assert_awaited_once_with(10)
             called.clear(); sleep.reset_mock()
-            with contextlib.redirect_stdout(io.StringIO()): await allinone.run_user(user,'',[],[],{},only_bot='@own_bot')
+            with contextlib.redirect_stdout(io.StringIO()): await allinone.run_user(user,'',[],[],{},only_bot='@own_bot',scheduled=True)
             self.assertEqual(called,['@own_bot']); sleep.assert_not_awaited()
+            called.clear(); sleep.reset_mock(); randint.reset_mock()
+            with contextlib.redirect_stdout(io.StringIO()): await allinone.run_user(user,'',[],[],{})
+            self.assertEqual(called,['@first_bot','@own_bot','@last_bot'],'manual runs include independently scheduled Bots')
+            self.assertEqual(randint.call_count,2)
+            self.assertEqual(sleep.await_count,2)
+
+    async def test_single_independent_bot_manual_and_automatic_selection(self):
+        client=types.SimpleNamespace(connect=AsyncMock(),disconnect=AsyncMock(),is_user_authorized=AsyncMock(return_value=True))
+        user={'name':'xiaolata','session':'xiaolata','api_id':1,'api_hash':'offline',
+              'bot_schedules':{'@OWN_bot':{'enabled':True,'time':'00:30'}},'bot_notes':{'@own_bot':'备注'}}
+        executed=[]
+        async def execute(signer,bot):
+            executed.append(bot);signer.result='🎉 签到成功';return True
+        with patch.object(allinone,'TelegramClient',return_value=client), patch.object(allinone,'install_handlers'), patch.object(allinone,'get_account_bots',AsyncMock(return_value=['@own_bot'])), patch.object(allinone,'run_signer_once',execute), patch.object(allinone,'get_bot_display_name',AsyncMock(return_value='own_bot')), patch.object(allinone,'mark_all_read',AsyncMock()), patch.object(allinone,'emit_bot_result') as result:
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                completed=await allinone.run_user(user,'',[],['@own_bot'],{})
+            self.assertTrue(completed);self.assertEqual(executed,['@own_bot'])
+            self.assertIn('当前账号可签到 1 个Bot',output.getvalue())
+            result.assert_called_once_with('xiaolata','@own_bot','own_bot','备注','🎉 签到成功')
+            executed.clear();result.reset_mock()
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                completed=await allinone.run_user(user,'',[],['@own_bot'],{},scheduled=True)
+            self.assertTrue(completed);self.assertEqual(executed,[]);result.assert_not_called()
+            self.assertIn('每天 00:30，北京时间',output.getvalue())
+            self.assertIn('本次未发送签到消息',output.getvalue())
+            with contextlib.redirect_stdout(io.StringIO()):
+                completed=await allinone.run_user(user,'',[],['@own_bot'],{},only_bot='OWN_bot',scheduled=True)
+            self.assertTrue(completed);self.assertEqual(executed,['@own_bot'])
+            executed.clear()
+            with contextlib.redirect_stdout(io.StringIO()):
+                completed=await allinone.run_user(user,'',[],['@own_bot'],{},only_bot='@missing_bot',scheduled=True)
+            self.assertFalse(completed,'missing independent target must not report a successful run')
+            self.assertEqual(executed,[])
+        self.assertEqual(client.disconnect.await_count,4)
+
+    async def test_main_propagates_trigger_for_account_batch_and_independent_bot(self):
+        user={'name':'Offline','session':'one','bots':['@own_bot'],'bot_commands':{},'dialog_folder':None}
+        with patch.object(allinone,'load_config',return_value=('',[],[user])), patch.object(allinone,'build_ai_clients',return_value=[]), patch.object(allinone,'run_user',AsyncMock(return_value=True)) as run, patch.object(allinone,'emit_result'), contextlib.redirect_stdout(io.StringIO()):
+            await allinone.main('one')
+            self.assertEqual(run.await_args.kwargs,{'scheduled':False})
+            await allinone.main()
+            self.assertEqual(run.await_args.kwargs,{'scheduled':False})
+            await allinone.main('one',scheduled=True)
+            self.assertEqual(run.await_args.kwargs,{'scheduled':True})
+            await allinone.main('one','@own_bot',scheduled=True)
+            self.assertEqual(run.await_args.kwargs,{'only_bot':'@own_bot','scheduled':True})
 
 
 if __name__=='__main__': unittest.main()

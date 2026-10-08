@@ -21,6 +21,15 @@ const { createScheduler } = require('../checkin_scheduler');
     fail = false; await pgScheduler.tick(); await pgScheduler.tick();
     assert.equal(runs.length,prior+2);
     await createScheduler({...options,store}).tick(); assert.equal(runs.length,prior+2);
+    let secondsNow=new Date('2027-01-03T01:30:26Z');
+    const secondsRuns=[], secondsUser={session:'seconds',bot_schedules:{'@seconds_bot':{enabled:true,time:'09:30:27'}}};
+    const secondsOptions={root,readConfig:()=>({telegram:{users:[secondsUser]}}),now:()=>secondsNow,isBusy:()=>false,runAccount:async(account,bot)=>secondsRuns.push([account,bot])};
+    let secondsScheduler=createScheduler(secondsOptions);
+    await secondsScheduler.tick();assert.equal(secondsRuns.length,0,'seconds target must not run early');
+    secondsNow=new Date('2027-01-03T01:30:27Z');await secondsScheduler.tick();
+    assert.deepEqual(secondsRuns,[['seconds','@seconds_bot']]);
+    secondsScheduler=createScheduler(secondsOptions);await secondsScheduler.tick();assert.equal(secondsRuns.length,1,'seconds schedule deduplicates after restart');
+    secondsNow=new Date('2027-01-04T01:30:27Z');await secondsScheduler.tick();assert.equal(secondsRuns.length,2,'seconds schedule repeats next day');
     console.log('Bot schedules PASS: independent target, disabled, folder precedence, durable claim, restart de-duplication');
   } finally {fs.rmSync(root,{recursive:true,force:true});}
 })().catch(error => {console.error(error);process.exitCode=1;});

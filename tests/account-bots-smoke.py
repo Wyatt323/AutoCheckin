@@ -52,7 +52,7 @@ with tempfile.TemporaryDirectory(dir=TEMP_ROOT, prefix="autocheckin-accounts-") 
 
     calls = []
 
-    async def fake_run_user(user, model, clients, bots, commands, folder):
+    async def fake_run_user(user, model, clients, bots, commands, folder, scheduled=False):
         calls.append((user["name"], bots, folder))
         return user["name"] != "first"
 

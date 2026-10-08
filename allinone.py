@@ -757,7 +757,7 @@ async def login_by_qr(client):
             return
 
 
-async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder=None, only_bot=None):
+async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder=None, only_bot=None, scheduled=False):
     session_name = user["session"]
     user_name = user["name"]
     api_id = user["api_id"]
@@ -779,18 +779,31 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
             except FloodWaitError as e:
                 print(f"❌ Telegram 暂时禁止登录，还需等待 {e.seconds} 秒（约 {e.seconds / 3600:.1f} 小时）")
                 return False
-        account_bots = await get_account_bots(client, bots, dialog_folder)
-        if only_bot is not None:
-            account_bots = [bot for bot in account_bots if bot.lower() == only_bot.lower()]
-        elif not dialog_folder:
-            # Independent schedules own these bots, including during manual batch runs.
-            independent = {bot.lower() for bot, rule in user.get('bot_schedules', {}).items() if rule.get('enabled')}
-            account_bots = [bot for bot in account_bots if bot.lower() not in independent]
-        signers.update({bot: BotSigner(client, ai_clients, ai_model, bot, bot_commands.get(bot)) for bot in account_bots})
         print(f"\n====== 👤 开始用户 {user_name} ({session_name}) ======")
+        mode = "Bot 独立定时" if scheduled and only_bot else "账号整体定时" if scheduled else "手动签到"
+        print(f"执行方式：{mode}" + (f" · {only_bot}" if only_bot else ""))
+        account_bots = await get_account_bots(client, bots, dialog_folder)
+        independent_skipped = []
+        if only_bot is not None:
+            account_bots = [bot for bot in account_bots if bot.lstrip('@').lower() == only_bot.lstrip('@').lower()]
+        elif scheduled and not dialog_folder:
+            # Only automatic account-wide runs exclude independently scheduled bots.
+            independent = {bot.lstrip('@').lower(): rule for bot, rule in user.get('bot_schedules', {}).items() if rule.get('enabled')}
+            independent_skipped = [bot for bot in account_bots if bot.lstrip('@').lower() in independent]
+            for bot in independent_skipped:
+                time = independent[bot.lstrip('@').lower()].get('time', '未设置')
+                print(f"⏱ {bot} 已启用独立定时（每天 {time}，北京时间），跳过账号整体计划；手动签到仍可执行")
+            account_bots = [bot for bot in account_bots if bot not in independent_skipped]
+        signers.update({bot: BotSigner(client, ai_clients, ai_model, bot, bot_commands.get(bot)) for bot in account_bots})
         print(f"配置 {len(bots)} 个Bot，当前账号可签到 {len(account_bots)} 个Bot")
         if not account_bots:
-            print("⏭️ 当前账号没有可签到的Bot，跳过本用户")
+            if only_bot:
+                print(f"❌ 指定 Bot {only_bot} 不在当前账号可签到列表中，本次未执行签到")
+                return False
+            if independent_skipped:
+                print("⏭️ 本次账号整体计划没有可执行的 Bot，独立定时 Bot 将在各自的时间执行；本次未发送签到消息")
+            else:
+                print("⏭️ 当前账号没有可签到的Bot，跳过本用户")
             return True
 
         active_bots = account_bots
@@ -847,7 +860,7 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
         print(f"🛑 用户 {user_name} 结束")
 
 
-async def main(account=None, bot=None):
+async def main(account=None, bot=None, scheduled=False):
     ai_model, ai_providers, users = load_config()
     if account is not None:
         users = [user for user in users if user['session'] == account]
@@ -876,9 +889,9 @@ async def main(account=None, bot=None):
                     await asyncio.sleep(delay)
                 previous_executed = True
                 if bot is None:
-                    completed = await run_user(user, ai_model, ai_clients, bots, user["bot_commands"], user["dialog_folder"])
+                    completed = await run_user(user, ai_model, ai_clients, bots, user["bot_commands"], user["dialog_folder"], scheduled=scheduled)
                 else:
-                    completed = await run_user(user, ai_model, ai_clients, bots, user["bot_commands"], user["dialog_folder"], only_bot=bot)
+                    completed = await run_user(user, ai_model, ai_clients, bots, user["bot_commands"], user["dialog_folder"], only_bot=bot, scheduled=scheduled)
                 if not completed:
                     failed_any = True
                     print(f"⚠️ 用户 {user['name']} 有未完成的 Bot，继续处理下一个账号")
@@ -896,7 +909,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='AutoCheckin Telegram 签到')
     parser.add_argument('--account', help='仅运行指定 Session 的账号')
     parser.add_argument('--bot', help='仅运行指定 Bot，必须同时指定 --account')
+    parser.add_argument('--scheduled', action='store_true', help='定时任务执行：账号整体计划跳过独立定时 Bot，手动执行默认包含所有 Bot')
     args = parser.parse_args()
     if args.bot and not args.account:
         parser.error('--bot requires --account')
-    sys.exit(0 if asyncio.run(main(args.account, args.bot)) else 1)
+    sys.exit(0 if asyncio.run(main(args.account, args.bot, scheduled=args.scheduled)) else 1)
