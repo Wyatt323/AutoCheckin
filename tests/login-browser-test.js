@@ -17,7 +17,7 @@ const {spawn}=require('node:child_process');
     const base=`http://127.0.0.1:${port}`;
     server=spawn(process.execPath,[path.join(root,'server.js')],{env:{...process.env,PORT:String(port),AUTOCHECKIN_DATA_DIR:root},stdio:'ignore'});
     for(let i=0;i<50;i++){try {if((await fetch(base+'/api/state')).ok) break;}catch{} await new Promise(r=>setTimeout(r,100));}
-    browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+    browser=await chromium.launch({headless:true,args:['--no-sandbox'],executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined});
     const page=await browser.newPage(); const errors=[]; page.on('pageerror',e=>errors.push(e.message));
     page.route('**/*',route=>route.request().url().startsWith(base)?route.continue():route.abort());
     await authenticatePage(page, base); await page.goto(base+'/#accounts'); await page.locator('[data-login-account="0"]').click();

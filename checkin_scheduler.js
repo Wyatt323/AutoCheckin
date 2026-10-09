@@ -6,7 +6,7 @@ function beijingParts(date) {
   return new Date(date.getTime() + 8 * 3600000).toISOString().slice(0, 16);
 }
 
-function createScheduler({ root, readConfig, runAccount, isBusy, store = null, now = () => new Date(), rng = Math.random, intervalMs = 1000 }) {
+function createScheduler({ root, readConfig, runAccount, isBusy, store = null, now = () => new Date(), rng = Math.random, intervalMs = 1000, parallelAccounts = false }) {
   const file = path.join(root, '.checkin-schedule-state.json');
   let state = { claimed: {}, pending: [], events: [], planned: {} };
   let saved;
@@ -101,9 +101,18 @@ function createScheduler({ root, readConfig, runAccount, isBusy, store = null, n
       for (const key of Object.keys(state.claimed)) if (!valid.has(key) && !queuedKeys.has(key)) delete state.claimed[key];
       for (const key of Object.keys(state.planned)) if (!valid.has(key)) delete state.planned[key];
       await persist();
-      if (!isBusy() && state.pending.length) {
-        const item = state.pending.shift();
+      for (let started = 0; started < (parallelAccounts ? users.length : 1); started++) {
+        const index = state.pending.findIndex(item => !isBusy(item.account));
+        if (index < 0) break;
+        const [item] = state.pending.splice(index, 1);
         await persist();
+        // A manual run/login can reserve the workspace while dequeue is committed.
+        // Restore the occurrence instead of treating contention as a startup failure.
+        if (isBusy(item.account)) {
+          state.pending.splice(index, 0, item);
+          await persist();
+          continue;
+        }
         try {
           await runAccount(item.account, item.bot || null, item);
           event(item.bot ? `${item.bot} 独立签到已启动` : '定时签到已启动', 'info', item.account);

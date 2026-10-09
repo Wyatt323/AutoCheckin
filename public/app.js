@@ -7,6 +7,18 @@ document.querySelector('#admin-logout')?.addEventListener('click', async () => {
   } catch (error) { toast(error.message, true); }
 });
 let currentRun = null;
+let activeRunRecords = [];
+let busyRunAccounts = new Set();
+const startingAccounts = new Set();
+function receiveRunState(data) {
+  currentRun = data.run;
+  activeRunRecords = data.activeRuns || (['running','stopping'].includes(currentRun?.state) ? [currentRun] : []);
+  busyRunAccounts = new Set(data.busyAccounts || activeRunRecords.flatMap(run => run.accounts || (run.account ? [run.account] : (config?.users || []).map(user => user.session))));
+}
+function runBusy(account = null) {
+  if (!account) return startingAccounts.size > 0 || busyRunAccounts.size > 0 || activeRunRecords.some(run => ['running','stopping'].includes(run.state));
+  return startingAccounts.has('*') || startingAccounts.has(account) || busyRunAccounts.has(account);
+}
 let pythonVersion = null;
 let currentView = 'overview';
 let openModeIndex = null;
@@ -24,6 +36,7 @@ const $$ = selector => [...document.querySelectorAll(selector)];
 function lineIcon(name) {
   const paths = {
     dashboard:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+    features:'<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><path d="M17.5 14v7M14 17.5h7"/>',
     account:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
     bot:'<rect x="4" y="7" width="16" height="14" rx="4"/><path d="M12 7V3M8 13h.01M16 13h.01M9 17h6M1 12v4M23 12v4"/>',
     ai:'<path d="m12 3 2.6 6.4L21 12l-6.4 2.6L12 21l-2.6-6.4L3 12l6.4-2.6L12 3Z"/>',
@@ -80,7 +93,7 @@ function navigate(view, keepAccount = false, logAccount = null) {
   if (view === 'activity' && typeof setRunLogScope === 'function') setRunLogScope(logAccount);
   $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
   $$('.view').forEach(item => item.classList.toggle('active', item.id === `view-${view}`));
-  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', ai:'AI 管理', activity:'运行日志', users:'用户管理', audit:'后台审计',notifications:'TG 通知' })[view];
+  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', features:'功能中心', ai:'AI 管理', activity:'运行日志', users:'用户管理', audit:'后台审计',notifications:'TG 通知' })[view];
   window.location.hash = view === 'activity' && logAccount ? `activity?account=${encodeURIComponent(logAccount)}` : view;
   schedulePeerLookup();
   if (view === 'activity') renderRun();
@@ -262,8 +275,9 @@ function accountCheckinStatus(user) {
   let text = enabled ? `账号定时已启用 · ${enabled} 个任务` : '账号定时已关闭';
   if (independent) text += ` · ${independent} 个 Bot 独立定时已启用`;
   if (savedCheckinSettings.get(user.session) !== checkinSettingsSignature(user)) text += '（未保存，保存后生效）';
-  if (['running', 'stopping'].includes(currentRun?.state) && (currentRun.account === user.session || currentRun.accountStates?.[user.session] === 'running')) {
-    text += currentRun.state === 'stopping' ? ' · 当前签到正在停止' : ' · 当前签到运行中';
+  const active = activeRunRecords.find(run => (run.accounts || [run.account]).includes(user.session));
+  if (runBusy(user.session)) {
+    text += active?.state === 'stopping' ? ' · 当前签到正在停止' : active?.state === 'running' ? ' · 当前签到运行中' : ' · 正在准备签到';
   }
   const event = checkinSchedulerState?.events?.filter(item => item.account === user.session).at(-1);
   return {
@@ -513,32 +527,41 @@ async function saveConfig() {
   } catch (error) { toast(error.message, true); }
   finally {
     savingConfig = false;
-    $$('.save-btn').forEach(button => { button.disabled = ['running','stopping'].includes(currentRun?.state) || (typeof loginState !== 'undefined' && loginState?.active); });
+    $$('.save-btn').forEach(button => { button.disabled = runBusy() || (typeof loginState !== 'undefined' && loginState?.active); });
   }
 }
 
 async function startRun(account = null) {
-  if (startingRun) return;
+  if (runBusy(account)) return;
+  startingAccounts.add(account || '*');
   startingRun = true;
-  $$('#hero-run,#account-run,[data-run-account]').forEach(button => { button.disabled = true; });
+  renderRun();
   toast('正在准备签到…');
   try {
     const data = await api('/api/run', { method:'POST', body:JSON.stringify(account ? { account } : {}) });
     currentRun = data.run;
+    activeRunRecords.push(data.run);
+    for (const session of data.run.accounts || (account ? [account] : config.users.map(user => user.session))) busyRunAccounts.add(session);
     openRunLog(data.run);
     toast(account ? `${account} 的签到任务已启动` : '签到任务已启动');
     await poll();
   } catch (error) { toast(error.message, true); }
-  finally { startingRun = false; renderRun(); }
+  finally { startingAccounts.delete(account || '*'); startingRun = startingAccounts.size > 0; renderRun(); }
 }
 
 function renderRun() {
   if (!currentRun) return;
-  const state = currentRun.state;
   const summary = CheckinResults.summarize(currentRun,currentRun.account);
-  $('#stat-status').textContent = summary.label || statusText[summary.state] || summary.state;
+  $('#stat-status').textContent = runBusy() ? `${busyRunAccounts.size || startingAccounts.size} 个账号签到中` : summary.label || statusText[summary.state] || summary.state;
   $('#stat-last').textContent = currentRun.startedAt ? `启动于 ${formatDate(currentRun.startedAt)}` : '尚无运行记录';
-  $$('#hero-run,#account-run,[data-run-account]').forEach(button => { button.disabled = startingRun || ['running','stopping'].includes(state) || (typeof loginState !== 'undefined' && loginState?.active); });
+  const loggingIn = (typeof loginState !== 'undefined' && loginState?.active) || (typeof profileStarting !== 'undefined' && profileStarting);
+  $$('#hero-run,#account-run,[data-run-account]').forEach(button => {
+    const account = button.dataset.runAccount !== undefined ? config?.users[Number(button.dataset.runAccount)]?.session : button.id === 'account-run' ? config?.users[selectedAccountIndex]?.session : null;
+    button.disabled = runBusy(account) || loggingIn || savingConfig;
+  });
+  $$('.save-btn,#restart-automation,[data-login-account],[data-profile-account]').forEach(button => {
+    button.disabled = runBusy() || loggingIn || (button.classList.contains('save-btn') && savingConfig) || (button.dataset.profileAccount !== undefined && !config?.users[Number(button.dataset.profileAccount)]?.sessionReady);
+  });
   const lines = currentRun.lines || [];
   if (typeof refreshRunLogs === 'function') refreshRunLogs();
   const latest = $('#latest-activity');
@@ -550,7 +573,7 @@ async function poll() {
   pollPending = true;
   try {
     const data = await api('/api/state?config=0');
-    currentRun = data.run;
+    receiveRunState(data);
     automationState = data.automation;
     checkinSchedulerState = data.checkinScheduler;
     pythonVersion = data.python;
@@ -751,7 +774,7 @@ $('#today').textContent = new Date().toLocaleDateString('zh-CN', { year:'numeric
     const data = await api('/api/state');
     config = data.config;
     rememberSavedCheckinSettings();
-    currentRun = data.run;
+    receiveRunState(data);
     automationState = data.automation;
     checkinSchedulerState = data.checkinScheduler;
     pythonVersion = data.python;
@@ -760,7 +783,7 @@ $('#today').textContent = new Date().toLocaleDateString('zh-CN', { year:'numeric
     renderRun();
     renderAutomationState();
     const [hash, query] = location.hash.slice(1).split('?');
-    if (['overview','bots','accounts','ai','automation','activity','users','audit','notifications'].includes(hash)) navigate(hash, false, hash === 'activity' ? new URLSearchParams(query).get('account') : null);
+    if (['overview','bots','accounts','features','ai','automation','activity','users','audit','notifications'].includes(hash)) navigate(hash, false, hash === 'activity' ? new URLSearchParams(query).get('account') : null);
     if (!pythonVersion) toast('未检测到 Python，配置可编辑，运行需安装 Python 环境', true);
     const statePollTimer = setInterval(() => { if (!document.hidden) poll(); }, 2000);
     document.addEventListener('visibilitychange', () => {

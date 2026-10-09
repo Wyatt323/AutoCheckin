@@ -11,7 +11,7 @@ import re
 import os
 import sys
 import io
-import contextlib
+import threading
 import datetime
 from pathlib import Path
 from telethon import TelegramClient, events, functions
@@ -24,6 +24,7 @@ except ImportError:
     qrcode = None
 
 ocr = None
+ocr_lock = threading.RLock()
 
 from PIL import Image, ImageFilter, ImageEnhance
 
@@ -159,10 +160,11 @@ def preprocess_captcha_variants(file_path):
 
 def get_ocr():
     global ocr
-    if ocr is None:
-        with open(os.devnull, 'w') as devnull, contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+    with ocr_lock:
+        if ocr is None:
             import ddddocr
-            ocr = ddddocr.DdddOcr()
+            # Never redirect process-wide stdout/stderr from an OCR worker thread.
+            ocr = ddddocr.DdddOcr(show_ad=False)
     return ocr
 
 
@@ -171,7 +173,8 @@ def recognize_captcha(file_path):
     candidates = []
     for img_bytes in preprocess_captcha_variants(file_path):
         try:
-            code = normalize_captcha_code(classifier.classification(img_bytes))
+            with ocr_lock:
+                code = normalize_captcha_code(classifier.classification(img_bytes))
         except Exception:
             continue
         if len(code) == CAPTCHA_LENGTH:
@@ -860,7 +863,7 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
         print(f"🛑 用户 {user_name} 结束")
 
 
-async def main(account=None, bot=None, scheduled=False):
+async def main(account=None, bot=None, scheduled=False, parallel=False):
     ai_model, ai_providers, users = load_config()
     if account is not None:
         users = [user for user in users if user['session'] == account]
@@ -873,33 +876,42 @@ async def main(account=None, bot=None, scheduled=False):
     print("====== 🤖 开始批量签到 ======")
     print(f"共 {len(users)} 个用户, {sum(len(user['bots']) for user in users)} 个账号-Bot 配置")
 
-    previous_executed = False
-    failed_any = False
-    for user in users:
+    async def execute_user(user):
         with account_log(user["session"]):
             try:
                 bots = user["bots"]
                 if not bots and not user['dialog_folder']:
                     print(f"⏭️ 用户 {user['name']} 没有配置 Bot，跳过")
                     emit_result(user["session"], True)
-                    continue
-                if previous_executed:
-                    delay = random.randint(BOT_INTERVAL_MIN, BOT_INTERVAL_MAX)
-                    print(f'⏳ 等待 {delay}s 后处理下一个账号的 Bot...')
-                    await asyncio.sleep(delay)
-                previous_executed = True
+                    return True
                 if bot is None:
                     completed = await run_user(user, ai_model, ai_clients, bots, user["bot_commands"], user["dialog_folder"], scheduled=scheduled)
                 else:
                     completed = await run_user(user, ai_model, ai_clients, bots, user["bot_commands"], user["dialog_folder"], only_bot=bot, scheduled=scheduled)
                 if not completed:
-                    failed_any = True
                     print(f"⚠️ 用户 {user['name']} 有未完成的 Bot，继续处理下一个账号")
                 emit_result(user["session"], completed)
+                return completed
             except Exception as error:
                 print(f"账号执行失败：{error}")
                 emit_result(user["session"], False)
-                raise
+                if not parallel:
+                    raise
+                return False
+
+    if parallel:
+        print("不同账号并行签到；每个账号内部的 Bot 依次执行")
+        return all(await asyncio.gather(*(execute_user(user) for user in users)))
+    previous_executed = False
+    failed_any = False
+    for user in users:
+        if previous_executed and (user['bots'] or user['dialog_folder']):
+            delay = random.randint(BOT_INTERVAL_MIN, BOT_INTERVAL_MAX)
+            print(f'⏳ 等待 {delay}s 后处理下一个账号的 Bot...')
+            await asyncio.sleep(delay)
+        previous_executed = previous_executed or bool(user['bots'] or user['dialog_folder'])
+        if not await execute_user(user):
+            failed_any = True
     return not failed_any
 
 
@@ -910,7 +922,8 @@ if __name__ == '__main__':
     parser.add_argument('--account', help='仅运行指定 Session 的账号')
     parser.add_argument('--bot', help='仅运行指定 Bot，必须同时指定 --account')
     parser.add_argument('--scheduled', action='store_true', help='定时任务执行：账号整体计划跳过独立定时 Bot，手动执行默认包含所有 Bot')
+    parser.add_argument('--parallel', action='store_true', help='并行执行不同账号；每个账号内部的 Bot 仍依次签到')
     args = parser.parse_args()
     if args.bot and not args.account:
         parser.error('--bot requires --account')
-    sys.exit(0 if asyncio.run(main(args.account, args.bot, scheduled=args.scheduled)) else 1)
+    sys.exit(0 if asyncio.run(main(args.account, args.bot, scheduled=args.scheduled, parallel=args.parallel)) else 1)

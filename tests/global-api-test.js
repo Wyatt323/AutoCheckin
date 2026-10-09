@@ -33,7 +33,7 @@ const {resolveCredentials}=require('../telegram_credentials');
   // Legacy callers omitting the new section do not erase globals.
   c=await state();delete c.telegram;assert.equal((await save(c)).status,200);assert.equal(read().telegram.api_hash,'global-secret');
   if(process.env.PLAYWRIGHT_MODULE){
-   const {chromium}=require(process.env.PLAYWRIGHT_MODULE);browser=await chromium.launch({headless:true,args:['--no-sandbox']});const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.route('**/*',route=>route.request().url().startsWith(base)?route.continue():route.abort());
+   const {chromium}=require(process.env.PLAYWRIGHT_MODULE);browser=await chromium.launch({headless:true,args:['--no-sandbox'],executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined});const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.route('**/*',route=>route.request().url().startsWith(base)?route.continue():route.abort());
    await authenticatePage(page, base); await page.goto(base+'/#accounts');await page.locator('#global-api-id').waitFor();
    const clickSave=async selector=>{const response=page.waitForResponse(r=>r.url()===base+'/api/config'&&r.request().method()==='POST');await page.locator(selector).first().click();const res=await response;assert.equal(res.status(),200);await page.waitForTimeout(100);};
    await page.fill('#global-api-id','999');await page.fill('#global-api-hash','browser-secret');await clickSave('.global-telegram .save-btn');assert.equal(read().telegram.api_hash,'browser-secret');assert.equal(await page.inputValue('#global-api-hash'),'');

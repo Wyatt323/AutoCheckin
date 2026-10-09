@@ -64,7 +64,12 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
   const automation = createAutomation();
   const notifications = await createTelegramNotifications({dataDir,store});
   let history, profiles, login, scheduler, chatResolver;
-  let child = null, runStarting = false, nextRunAt = 0, run, shuttingDown = false;
+  const activeRuns = new Map(), reservedAccounts = new Set(), nextRunAt = new Map(), launches = new Set();
+  const shutdownController = new AbortController();
+  let latestRun, shuttingDown = false, editingConfig = false;
+  const busy = () => reservedAccounts.size > 0 || editingConfig;
+  const accountBusy = account => shuttingDown || editingConfig || login.active() || (account ? reservedAccounts.has(account) : busy());
+  const publicRun = record => ({ ...record, lines:record.lines.slice(-150) });
   fs.mkdirSync(DATA_ROOT,{recursive:true,mode:0o700});
   if (prefix && !(database ? database.read('config') : fs.existsSync(CONFIG))) {
     const empty = {telegram:{users:[]},ai:{providers:[]},automations:{schedules:[],forwards:[]}};
@@ -319,7 +324,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
     return null;
   }
 
-  function addLine(text, stream = 'stdout', account = run.account, detail = {}) {
+  function appendLine(run, text, stream = 'stdout', account = run.account, detail = {}) {
     const clean = text.replace(/\x1b\[[0-9;]*m/g, '').replace(/tg:\/\/login\?token=[^\s]+/gi, 'tg://login?token=[已隐藏]');
     run.lines.push({ id: (run.lines.at(-1)?.id || 0) + 1, time: new Date().toISOString(), stream, text: clean.slice(0, 2000), runId: run.id, account, trigger: run.trigger, ...detail });
     if (run.lines.length > MAX_LINES) run.lines.splice(0, run.lines.length - MAX_LINES);
@@ -327,7 +332,6 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
   }
 
   async function startRun(account = null, trigger = 'manual', bot = null) {
-    if (child) throw new Error('签到任务正在运行');
     const python = pythonCommand();
     if (!python) throw new Error('未找到 Python。安装 Python 及脚本依赖后，重新启动服务。');
     const config = viewConfig(readConfig());
@@ -337,16 +341,28 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
     if (selected.some(user => (user.bots.length || user.dialogFolder) && !user.sessionReady)) throw new Error('有配置签到的账号缺少 Session 文件，请先登录 Telegram。');
     if (bot && (!account || !selected[0].bots.some(item => item.name.toLowerCase() === bot.toLowerCase()))) throw new Error('独立签到 Bot 不在此账号配置中');
     if (bot && selected[0].dialogFolder) throw new Error('当前使用分组轮询，配置列表的独立定时暂不生效');
-    run = history.create(account, trigger);
+    const run = history.create(account, trigger);
+    latestRun = run;
+    const addLine = (...args) => appendLine(run, ...args);
+    run.accounts = selected.map(user => user.session);
+    run.accountStates = Object.fromEntries(run.accounts.map(session => [session, 'running']));
     run.bot = bot;
     run.botNote = selected[0]?.bots.find(item=>item.name.toLowerCase()===String(bot).toLowerCase())?.note || '';
-    try { await history.flush(); }
-    catch { run.state='failed'; run.finishedAt=new Date().toISOString(); throw new Error('执行记录无法保存，本次任务未启动'); }
+    try { await history.flush(); if (shuttingDown) throw new Error('服务正在停止'); }
+    catch {
+      run.state='failed'; run.finishedAt=new Date().toISOString();
+      for (const session of run.accounts) run.accountStates[session]='failed';
+      history.changed(true);
+      throw new Error('执行记录无法保存或服务已停止，本次任务未启动');
+    }
     addLine(`使用 ${python.version} 启动${account ? `账号 ${account} 的` : '批量'}${trigger === 'scheduled' ? bot ? ` Bot ${bot} 独立定时` : '定时' : '手动'}签到`, 'system');
-    child = spawn(python.name, [...python.prefix, '-u', 'allinone.py', ...(account ? ['--account', account] : []), ...(bot ? ['--bot', bot] : []), ...(trigger === 'scheduled' ? ['--scheduled'] : [])], {
+    const child = spawn(python.name, [...python.prefix, '-u', 'allinone.py', ...(account ? ['--account', account] : ['--parallel']), ...(bot ? ['--bot', bot] : []), ...(trigger === 'scheduled' ? ['--scheduled'] : [])], {
       cwd: ROOT, env: { ...process.env, ...workerEnv, AUTOCHECKIN_DATA_DIR:DATA_ROOT, AUTOCHECKIN_LOG_JSON:'1', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
     });
     const accounts = new Set(selected.map(user => user.session));
+    let finished;
+    const completion = new Promise(resolve => { finished = resolve; });
+    activeRuns.set(run.id, { run, child, accounts, completion });
     function output(line, stream) {
       try {
         const event = JSON.parse(line);
@@ -397,44 +413,68 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
       addLine(`任务结束，退出码 ${code}`, 'system');
       history.changed(true);
       const finishedRun=structuredClone(run);
-      try {await notifications.notifyRun(finishedRun,selected.find(user=>user.session===finishedRun.account)?.name);}
-      catch {console.error('定时签到通知入队失败');}
-      child = null;
-      nextRunAt = Date.now() + (5 + Math.floor(Math.random() * 11)) * 1000;
-      if (database) for (const user of config.users) await database.refresh(`discovery:${discoveryKey(user.session)}`).catch(() => {});
-      if (!shuttingDown) {
-        if (scheduler.getState().queued) scheduler.tick().finally(() => { if (!child && !shuttingDown) automation.start(); });
-        else automation.start();
+      try {
+        try {await notifications.notifyRun(finishedRun,selected.find(user=>user.session===finishedRun.account)?.name);}
+        catch {console.error('定时签到通知入队失败');}
+        if (database) for (const user of selected) await database.refresh(`discovery:${discoveryKey(user.session)}`).catch(() => {});
+      } finally {
+        activeRuns.delete(run.id);
+        for (const session of accounts) {
+          nextRunAt.set(session, Date.now() + (5 + Math.floor(Math.random() * 11)) * 1000);
+          reservedAccounts.delete(session);
+        }
+        finished();
+        if (!shuttingDown) {
+          if (scheduler.getState().queued) scheduler.tick();
+          automation.start();
+        }
       }
     });
+    return run;
   }
 
-  async function launchRun(account = null, trigger = 'manual', bot = null) {
-    if (child || runStarting || login.active()) throw new Error('签到或登录任务正在运行');
-    runStarting = true;
+  async function reserveAndLaunch(account = null, trigger = 'manual', bot = null) {
+    if (shuttingDown || editingConfig || login.active()) throw new Error('配置保存、服务停止或登录任务正在运行');
+    const users = viewConfig(readConfig()).users;
+    const accounts = (account ? users.filter(user => user.session === account) : users).map(user => user.session);
+    if (!accounts.length) throw new Error(`找不到账号 ${account || ''}`);
+    if (accounts.some(session => reservedAccounts.has(session))) throw new Error('所选账号的签到任务正在运行');
+    // Reserve every selected Session synchronously, before any disk/database await.
+    for (const session of accounts) reservedAccounts.add(session);
+    let started = false;
     try {
-      const delay = Math.max(0, nextRunAt - Date.now());
-      if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+      const delay = Math.max(0, ...accounts.map(session => (nextRunAt.get(session) || 0) - Date.now()));
+      if (delay) await require('node:timers/promises').setTimeout(delay, null, {signal:shutdownController.signal});
       if (shuttingDown) throw new Error('服务正在停止');
       await automation.stop();
-      try {
-        if (shuttingDown) throw new Error('当前用户工作空间已关闭');
-        await startRun(account, trigger, bot);
-      }
-      catch (error) { automation.start(); throw error; }
+      if (shuttingDown) throw new Error('当前用户工作空间已关闭');
+      const record = await startRun(account, trigger, bot);
+      started = true;
+      return record;
     } finally {
-      runStarting = false;
-      if (!child && !shuttingDown) automation.start();
+      if (!started) for (const session of accounts) reservedAccounts.delete(session);
+      if (!shuttingDown) automation.start();
     }
+  }
+
+  function launchRun(account = null, trigger = 'manual', bot = null) {
+    const operation = reserveAndLaunch(account, trigger, bot);
+    launches.add(operation);
+    operation.finally(() => launches.delete(operation)).catch(() => {});
+    return operation;
   }
 
   history = require('./run_history').createRunHistory(DATA_ROOT, database);
   profiles = require('./account_profiles').createProfileStore(DATA_ROOT, database);
-  run = history.latest() || { state:'idle', lines:[] };
-  nextRunAt = run.finishedAt ? Date.parse(run.finishedAt) + 5000 : 0;
-  login = createLoginController({ workerEnv, root: ROOT, dataDir: DATA_ROOT, readConfig:effectiveConfig, pythonCommand, isBusy: () => !!child || runStarting || shuttingDown, stopAutomation: () => automation.stop(), resumeAutomation: () => { if (!shuttingDown) automation.start(); }, onComplete:async account => { if (database) await database.refresh(`profile:${discoveryKey(account)}`); } });
-  automation.configure({ workerEnv, root: ROOT, dataDir: DATA_ROOT, store:database, readConfig, pythonCommand, onEvent:event => history.appendEvent(event), canRun: () => !child && !runStarting && !login.active() && !shuttingDown });
-  scheduler = createScheduler({ root: DATA_ROOT, store:database, readConfig, runAccount: async (account, bot, occurrence) => {
+  latestRun = history.latest() || { state:'idle', lines:[] };
+  for (const record of history.snapshot({category:'checkin'}).records) {
+    for (const session of record.accounts || (record.account ? [record.account] : Object.keys(record.accountStates || {}))) {
+      if (record.finishedAt) nextRunAt.set(session, Math.max(nextRunAt.get(session) || 0, Date.parse(record.finishedAt) + 5000));
+    }
+  }
+  login = createLoginController({ workerEnv, root: ROOT, dataDir: DATA_ROOT, readConfig:effectiveConfig, pythonCommand, isBusy: () => busy() || shuttingDown, stopAutomation: () => automation.stop(), resumeAutomation: () => { if (!shuttingDown) automation.start(); }, onComplete:async account => { if (database) await database.refresh(`profile:${discoveryKey(account)}`); } });
+  automation.configure({ workerEnv, root: ROOT, dataDir: DATA_ROOT, store:database, readConfig, pythonCommand, onEvent:event => history.appendEvent(event), canRun: () => !busy() && !login.active() && !shuttingDown });
+  scheduler = createScheduler({ root: DATA_ROOT, store:database, readConfig, parallelAccounts:true, runAccount: async (account, bot, occurrence) => {
     try {await launchRun(account, 'scheduled', bot);}
     catch(error) {
       if(!shuttingDown) {
@@ -443,7 +483,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
       }
       throw error;
     }
-  }, isBusy: () => !!child || runStarting || login.active() || shuttingDown || Date.now() < nextRunAt });
+  }, isBusy: account => accountBusy(account) || (account && Date.now() < (nextRunAt.get(account) || 0)) });
   for(const record of history.snapshot({category:'checkin'}).records)if(record.trigger==='scheduled' && record.lines.some(line=>line.text==='服务重启，本次任务已中断'))await notifications.notifyRun(record).catch(()=>console.error('中断任务通知入队失败'));
   return {
     start() { notifications.start(); automation.start(); scheduler.start(); },
@@ -467,7 +507,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
     },
     async refreshSettings() {
       if (!readConfig().telegram?.use_system || shuttingDown) return true;
-      if (child || runStarting || login.active()) return false;
+      if (busy() || login.active()) return false;
       await automation.restart(); return true;
     },
     async handle(req,res,url,authUser) {
@@ -481,7 +521,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
           await notifications.test();return send(res,202,{ok:true,notifications:notifications.view()});
         }
         if (req.method === 'POST' && url.pathname === '/api/accounts/bots/discovery/reset') {
-          if (child || runStarting || login.active() || shuttingDown) throw new Error('请在任务结束后重新识别');
+          if (busy() || login.active() || shuttingDown) throw new Error('请在任务结束后重新识别');
           const input = await bodyJson(req);
           const user = viewConfig(readConfig()).users.find(user => user.session === input.account);
           if (!user) throw new Error('账号不存在');
@@ -524,31 +564,35 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
         }
         if (req.method === 'GET' && url.pathname === '/api/runs') return send(res, 200, history.snapshot({account:url.searchParams.get('account') || '', category:url.searchParams.get('category') || ''}));
         if (req.method === 'GET' && url.pathname === '/api/state') {
-          const state = { user: authUser, run: { ...run, lines: run.lines.slice(-150) }, automation: automation.getState(), checkinScheduler: scheduler.getState(), python: pythonCommand()?.version || null };
+          const state = { user: authUser, run:publicRun(latestRun), activeRuns:[...activeRuns.values()].map(job => publicRun(job.run)), busyAccounts:[...reservedAccounts], automation: automation.getState(), checkinScheduler: scheduler.getState(), python: pythonCommand()?.version || null };
           // Routine polling needs status only; initial load and explicit refresh keep the full response.
           if (url.searchParams.get('config') !== '0') state.config = viewConfig(readConfig());
           return send(res, 200, state);
         }
         if (req.method === 'POST' && url.pathname === '/api/config') {
           const input = await bodyJson(req);
-          if (child || runStarting || login.active() || shuttingDown) throw new Error('运行或登录期间不能修改配置');
-          const config = await saveConfig(input);
-          await automation.restart();
-          return send(res, 200, { config, automation: automation.getState(), checkinScheduler: scheduler.getState() });
+          if (busy() || login.active() || shuttingDown) throw new Error('运行或登录期间不能修改配置');
+          editingConfig = true;
+          try {
+            const config = await saveConfig(input);
+            await automation.restart();
+            return send(res, 200, { config, automation: automation.getState(), checkinScheduler: scheduler.getState() });
+          } finally { editingConfig = false; if (!shuttingDown) automation.start(); }
         }
         if (req.method === 'POST' && url.pathname === '/api/run') {
           const input = await bodyJson(req);
           const account = input.account == null ? null : nonempty(input.account, '签到账号', 100);
-          await launchRun(account, 'manual', input.bot ? nonempty(input.bot, '签到 Bot', 100) : null);
-          return send(res, 200, { ok: true, run: { ...run } });
+          const record = await launchRun(account, 'manual', input.bot ? nonempty(input.bot, '签到 Bot', 100) : null);
+          return send(res, 200, { ok: true, run: { ...record } });
         }
-        if (req.method === 'POST' && url.pathname === '/api/automation/restart') { if (child || runStarting || login.active() || shuttingDown) throw new Error('运行或登录期间不能重启自动化'); await automation.restart(); return send(res, 200, { automation: automation.getState() }); }
+        if (req.method === 'POST' && url.pathname === '/api/automation/restart') { if (busy() || login.active() || shuttingDown) throw new Error('运行或登录期间不能重启自动化'); await automation.restart(); return send(res, 200, { automation: automation.getState() }); }
         if (req.method === 'POST' && url.pathname === '/api/stop') {
           const input = await bodyJson(req);
-          if (input.id && input.id !== run.id) throw new Error('此任务已结束，不能停止其他任务');
-          if (!child) throw new Error('当前没有运行中的任务');
+          const job = input.id ? activeRuns.get(input.id) : activeRuns.size === 1 ? activeRuns.values().next().value : null;
+          if (!job || !['running','stopping'].includes(job.run.state)) throw new Error(activeRuns.size > 1 && !input.id ? '多个任务正在运行，请指定要停止的任务' : '此任务已结束或不属于当前用户');
+          const {run, child} = job;
           run.state = 'stopping';
-          addLine('正在停止任务…', 'system');
+          appendLine(run, '正在停止任务…', 'system');
           child.kill();
           return send(res, 200, { ok: true });
         }
@@ -556,15 +600,18 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
     },
     async stop() {
       shuttingDown = true;
+      shutdownController.abort();
       scheduler.stop();
-      if (child) {
-        const worker = child;
-        await new Promise(resolve => {
+      await Promise.allSettled([...launches]);
+      await Promise.all([...activeRuns.values()].map(async job => {
+        const worker = job.child;
+        if (worker.exitCode === null && worker.signalCode === null) await new Promise(resolve => {
           const timeout = setTimeout(()=>{worker.kill('SIGKILL');},3000);
           worker.once('close',()=>{clearTimeout(timeout);resolve();});
           worker.kill();
         });
-      }
+        await job.completion;
+      }));
       await login.shutdown();
       await chatResolver?.shutdown();
       await automation.stop();

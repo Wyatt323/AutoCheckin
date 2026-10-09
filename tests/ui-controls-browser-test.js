@@ -4,7 +4,7 @@ const path = require('node:path');
 (async () => {
   if (!process.env.PLAYWRIGHT_MODULE) { console.log('UI controls browser test skipped: set PLAYWRIGHT_MODULE'); return; }
   const { chromium } = require(process.env.PLAYWRIGHT_MODULE);
-  const browser = await chromium.launch({ headless:true, args:['--no-sandbox'] });
+  const browser = await chromium.launch({ headless:true, args:['--no-sandbox'], executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined });
   try {
     const page = await browser.newPage({ viewport:{ width:390, height:780 } });
     const errors = [];

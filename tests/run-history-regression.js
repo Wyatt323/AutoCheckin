@@ -51,6 +51,13 @@ try {
   for(let i=0;i<MAX_EVENTS+1;i++) restored.appendEvent({account:'alpha',category:'forward',message:`event ${i}`});
   restored.flush();
   assert.equal(restored.snapshot({category:'forward'}).records.length, MAX_EVENTS);
+  const held = restored.create('held', 'manual');
+  for (let i = 0; i < MAX_RUNS + 3; i++) {
+    const item = restored.create('fast', 'manual'); item.state = 'completed'; restored.changed();
+  }
+  restored.flush();
+  assert.ok(restored.find(held.id), 'long-running concurrent task remains addressable after many newer runs');
+  assert.ok(JSON.parse(fs.readFileSync(path.join(root,'logs/run-history.json'),'utf8')).records.some(item => item.id === held.id));
   fs.writeFileSync(path.join(root, 'logs/run-history.json'), 'broken');
   assert.equal(createRunHistory(root).snapshot().records.length, 0);
   console.log('Run history/filter regression PASS: timezone, inclusive seconds, account/status, reset, bounded persistence, interrupted recovery, corrupt file');

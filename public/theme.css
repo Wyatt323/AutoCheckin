@@ -134,6 +134,14 @@ button:disabled:hover { transform: none; }
 .latest-line time { color: var(--muted); }
 .page-heading { align-items: center; margin: 8px 0 27px; }
 .page-heading h1 { font-size: 32px; }
+.feature-center-empty { display:flex; align-items:center; flex-direction:column; padding:52px 24px; text-align:center; background:linear-gradient(135deg,#fff 60%,#f1effb); }
+.feature-center-symbol { display:grid; place-items:center; width:80px; height:80px; margin-bottom:24px; border:3px solid var(--ink); border-radius:22px; background:var(--lilac); box-shadow:4px 5px 0 var(--ink); }
+.feature-center-symbol .line-icon { width:40px; height:40px; }
+.feature-center-badge { padding:5px 12px; border:2px solid var(--ink); border-radius:20px; background:var(--green-soft); font-size:12px; font-weight:700; }
+.feature-center-empty h2 { margin:18px 0 10px; color:var(--ink); font-size:25px; }
+.feature-center-empty p { max-width:460px; margin:0 0 24px; color:var(--muted); font-size:13px; line-height:1.8; }
+.feature-center-empty .outline-btn span { margin-left:10px; }
+@media(max-width:600px) { .feature-center-empty { padding:36px 20px; } .feature-center-empty h2 { font-size:21px; } }
 .count-pill { border: 1.5px solid var(--ink); color: var(--ink); background: var(--green-soft); font-size: 11px; padding: 4px 10px; }
 .table-wrap { padding-bottom: 4px; scrollbar-width: thin; scrollbar-color: #97a5b1 transparent; }
 .table-wrap { border: 1px solid var(--line); border-radius: 16px; background:#fff; }

@@ -6,7 +6,7 @@ const vm = require('node:vm'), fs = require('node:fs'), assert = require('node:a
     return elements.get(id);
   };
   let resolveRefresh, refreshed = 0;
-  const context = vm.createContext({ document: { createElement:()=>element('#login-dialog'), body:{append(){}}, addEventListener(){} }, window:{addEventListener(){}}, $:element, $$:()=>[], config:{users:[{session:'one'}]}, currentRun:null, api: url => url === '/api/state' ? new Promise(r=>{resolveRefresh=r;}) : new Promise(()=>{}), readEditors(){}, renderConfig(){refreshed++;}, toast(){}, setInterval(){return 1;}, clearInterval(){} });
+  const context = vm.createContext({ document: { createElement:()=>element('#login-dialog'), body:{append(){}}, addEventListener(){} }, window:{addEventListener(){}}, $:element, $$:()=>[], config:{users:[{session:'one'}]}, currentRun:null, runBusy:()=>false, renderRun(){}, api: url => url === '/api/state' ? new Promise(r=>{resolveRefresh=r;}) : new Promise(()=>{}), readEditors(){}, renderConfig(){refreshed++;}, toast(){}, setInterval(){return 1;}, clearInterval(){} });
   vm.runInContext(fs.readFileSync(require.resolve('../public/login.js'),'utf8'),context);
   const render = state => vm.runInContext(`renderLogin(${JSON.stringify(state)})`,context);
   render({id:'old',state:'qr',active:true,account:'one'});

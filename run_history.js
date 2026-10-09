@@ -7,7 +7,12 @@ function createRunHistory(dataRoot, store = null) {
   const file = path.join(dataRoot, 'logs', 'run-history.json');
   let records = [], events = [], revision = 0, timer = null;
   function trim() {
-    records = records.slice(-MAX_RUNS);
+    // Keep every active task addressable while newer accounts finish/restart.
+    const active = records.filter(record => ['running','stopping'].includes(record.state));
+    const count = Math.max(0, MAX_RUNS - active.length);
+    const completed = count ? records.filter(record => !['running','stopping'].includes(record.state)).slice(-count) : [];
+    const retained = new Set([...active, ...completed]);
+    records = records.filter(record => retained.has(record));
     events = events.slice(-MAX_EVENTS);
     let remaining = MAX_LINES;
     for (let i = records.length - 1; i >= 0; i--) {

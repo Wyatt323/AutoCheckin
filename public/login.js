@@ -15,8 +15,8 @@ document.body.append(loginDialog);
 function renderLogin(state) {
   const previous = loginState;
   loginState = state;
-  $$('.save-btn,#hero-run,#account-run,#restart-automation,[data-run-account],[data-login-account],[data-profile-account]').forEach(button => {
-    button.disabled = state.active || (typeof startingRun !== 'undefined' && startingRun) || ['running','stopping'].includes(currentRun?.state) || (button.classList.contains('save-btn') && typeof savingConfig !== 'undefined' && savingConfig) || (button.dataset.profileAccount !== undefined && !config?.users[Number(button.dataset.profileAccount)]?.sessionReady);
+  $$('.save-btn,#restart-automation,[data-login-account],[data-profile-account]').forEach(button => {
+    button.disabled = state.active || runBusy() || (button.classList.contains('save-btn') && typeof savingConfig !== 'undefined' && savingConfig) || (button.dataset.profileAccount !== undefined && !config?.users[Number(button.dataset.profileAccount)]?.sessionReady);
     if (button.dataset.profileAccount !== undefined) {
       const syncing = state.active && state.mode === 'profile' && config?.users[Number(button.dataset.profileAccount)]?.session === state.account;
       const label = button.querySelector('span');
@@ -24,6 +24,7 @@ function renderLogin(state) {
       else button.textContent = syncing ? '↻ 正在同步' : '↻ 同步 TG 资料';
     }
   });
+  renderRun();
   if (state.state === 'idle' || dismissedLoginId === state.id) return;
   if ((!loginDialog.open || loginDialog.classList?.contains('ui-dialog-closing')) && state.active && state.mode !== 'profile') loginDialog.showModal();
   $('#login-account').textContent = state.account || '';
@@ -64,16 +65,17 @@ function renderLogin(state) {
   }
 }
 async function syncAccountProfile(user, manual = false) {
-  if (profileStarting || loginState?.active || savingConfig || ['running','stopping'].includes(currentRun?.state)) return;
+  if (profileStarting || loginState?.active || savingConfig || runBusy()) return;
   if (user.sourceIndex < 0 || !user.sessionReady) { if (manual) toast('请先保存账号并登录 Telegram', true); return; }
   profileStarting = true;
+  renderRun();
   attemptedProfiles.add(user.session);
   try {
     const state = (await api('/api/accounts/profile/refresh', { method:'POST', body:JSON.stringify({ account:user.session }) })).login;
     if (manual) manualProfiles.add(state.id);
     renderLogin(state);
   } catch (error) { if (manual) toast(error.message, true); }
-  finally { profileStarting = false; }
+  finally { profileStarting = false; renderRun(); }
 }
 function queueAccountProfiles() {
   if (typeof currentView === 'undefined' || currentView !== 'accounts' || refreshingLoginId || profileStarting || loginState?.active || savingConfig) return;

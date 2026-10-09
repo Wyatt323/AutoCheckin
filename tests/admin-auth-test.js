@@ -65,7 +65,7 @@ const { createAdminAuth, requestSecurity } = require('../admin_auth');
     assert.equal((await fetch(base + '/api/state', { headers: { Cookie: session } })).status, 401);
     if (process.env.PLAYWRIGHT_MODULE) {
       const { chromium } = require(process.env.PLAYWRIGHT_MODULE);
-      browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+      browser = await chromium.launch({ headless: true, args: ['--no-sandbox'], executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined });
       const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); const errors = []; page.on('pageerror', e => errors.push(e.message));
       await page.route('**/*', route => route.request().url().startsWith(base) ? route.continue() : route.abort());
       await page.goto(base); await page.waitForURL('**/login');
