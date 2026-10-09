@@ -80,7 +80,7 @@ function navigate(view, keepAccount = false, logAccount = null) {
   if (view === 'activity' && typeof setRunLogScope === 'function') setRunLogScope(logAccount);
   $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
   $$('.view').forEach(item => item.classList.toggle('active', item.id === `view-${view}`));
-  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', ai:'AI 配置', activity:'运行日志', users:'用户管理', audit:'后台审计',notifications:'TG 通知' })[view];
+  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', ai:'AI 管理', activity:'运行日志', users:'用户管理', audit:'后台审计',notifications:'TG 通知' })[view];
   window.location.hash = view === 'activity' && logAccount ? `activity?account=${encodeURIComponent(logAccount)}` : view;
   schedulePeerLookup();
   if (view === 'activity') renderRun();

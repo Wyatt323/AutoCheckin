@@ -29,11 +29,11 @@
       <nav class="nav" aria-label="主导航">
         <button class="nav-item active" data-view="overview"><span class="nav-icon" data-icon="dashboard">◫</span> 总览</button>
         <button class="nav-item" data-view="accounts"><span class="nav-icon" data-icon="account">♙</span> 账号管理</button>
-        <button class="nav-item" data-view="ai"><span class="nav-icon" data-icon="ai">✧</span> AI 配置</button>
-        <button class="nav-item" data-view="activity"><span class="nav-icon" data-icon="log">☷</span> 运行日志</button>
+        <button class="nav-item" data-view="ai"><span class="nav-icon" data-icon="ai">✧</span> AI 管理</button>
         <button class="nav-item" data-view="notifications"><span class="nav-icon" data-icon="message">✉</span> TG 通知</button>
         <button class="nav-item" id="nav-users" data-view="users" hidden><span class="nav-icon" data-icon="account">♙</span> 用户管理</button>
         <button class="nav-item" id="nav-audit" data-view="audit" hidden><span class="nav-icon" data-icon="log">☷</span> 后台审计</button>
+        <button class="nav-item" data-view="activity"><span class="nav-icon" data-icon="log">☷</span> 运行日志</button>
       </nav>
       <div class="top-actions"><span id="web-user-name"></span><a class="text-link" id="web-password-link" href="/password" hidden>修改密码</a><span class="connection" role="status"><span class="live-dot"></span> <span id="connection-label">本地连接</span></span><button class="outline-btn" id="admin-logout" type="button">退出登录</button><div class="avatar" aria-label="AutoCheckin 工作空间">AC</div></div>
     </header>
@@ -58,7 +58,7 @@
             <div class="bottom-save"><button class="primary-btn save-btn">保存此账号配置</button></div>
           </div>
         </section>
-        <section class="view" id="view-ai"><div class="page-heading"><div><span class="kicker">AI SETTINGS</span><h1>AI 配置</h1><p>诗词验证码会依次尝试下方 AI 服务。普通图片验证码由本地 OCR 处理。</p></div><button class="primary-btn" id="add-provider">＋ 添加服务</button></div><label class="system-choice panel"><input id="use-system-ai" type="checkbox"><span><strong>使用系统全局 AI 提供商</strong><small id="system-ai-summary"></small></span></label><div class="panel settings-panel"><div class="panel-head"><div><h3>通用设置</h3><p>用于所有账号的签到任务。</p></div></div><div class="field-grid"><label class="field"><span>我的 AI 模型名称</span><input id="model-input" placeholder="例如 gpt-4o-mini"></label></div></div><div class="section-heading compact"><div><h2>服务列表</h2><p>按列表顺序尝试，前一个不可用时自动切换。</p></div></div><div id="provider-list" class="provider-list"></div><div class="bottom-save"><button class="primary-btn save-btn">保存配置</button></div></section>
+        <section class="view" id="view-ai"><div class="page-heading"><div><span class="kicker">AI SETTINGS</span><h1>AI 管理</h1><p>诗词验证码会依次尝试下方 AI 服务。普通图片验证码由本地 OCR 处理。</p></div><button class="primary-btn" id="add-provider">＋ 添加服务</button></div><label class="system-choice panel"><input id="use-system-ai" type="checkbox"><span><strong>使用系统全局 AI 提供商</strong><small id="system-ai-summary"></small></span></label><div class="panel settings-panel"><div class="panel-head"><div><h3>通用设置</h3><p>用于所有账号的签到任务。</p></div></div><div class="field-grid"><label class="field"><span>我的 AI 模型名称</span><input id="model-input" placeholder="例如 gpt-4o-mini"></label></div></div><div class="section-heading compact"><div><h2>服务列表</h2><p>按列表顺序尝试，前一个不可用时自动切换。</p></div></div><div id="provider-list" class="provider-list"></div><div class="bottom-save"><button class="primary-btn save-btn">保存配置</button></div></section>
         <section class="view" id="view-notifications">
           <div class="page-heading"><div><span class="kicker">TELEGRAM NOTIFICATIONS</span><h1>TG 通知</h1><p>定时签到任务结束后，通过通知 Bot 推送运行结果。</p></div></div>
           <section class="panel global-telegram"><div class="panel-head"><div><h2>通知设置</h2><p>账号定时、Bot 独立定时结束后推送汇总；显示 Bot 备注，优先列出未完成项目。</p></div></div>
