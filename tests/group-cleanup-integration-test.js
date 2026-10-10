@@ -6,7 +6,7 @@ const {spawn}=require('node:child_process');
   const tempBase=path.resolve(process.env.AUTOCHECKIN_TEST_TMPDIR || os.tmpdir());
   const root=fs.mkdtempSync(path.join(tempBase,'group-cleanup-'));
   let server,browser;
-  const stop=async()=>{if(server){const done=new Promise(resolve=>server.once('close',resolve));server.kill();await done;server=null;}};
+  const stop=async(signal='SIGTERM')=>{if(server){const done=new Promise(resolve=>server.once('close',resolve));server.kill(signal);await done;server=null;}};
   try {
     for(const file of ['server.js','cleanup.js','user_auth.js','system_settings.js','telegram_notifications.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'])fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
     fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
@@ -126,7 +126,7 @@ for _ in range(900):
     }
     // A restart interrupts an unconfirmed run and cannot resume destructive work.
     const response=await request('/api/features/zero-speakers/run',admin,{ruleId:'cleanup_admin_001'});assert.equal(response.status,202);const interrupted=await awaitPrompt(admin);
-    await stop();await start();admin=await login('admin','offline-admin-secret');
+    await stop('SIGKILL');await start();admin=await login('admin','offline-admin-secret');
     const restored=(await runs(admin)).find(run=>run.id===interrupted.id);assert.equal(restored.state,'failed');assert.ok(restored.lines.some(line=>line.text.includes('服务重启')));
     assert.equal((await state(admin)).busyAccounts.length,0);assert.equal((await state(admin)).config.plugins.zeroSpeakers[0].id,'cleanup_admin_001');
     assert.equal((await request('/api/features/zero-speakers/report?id='+interrupted.id,admin)).status,200);
