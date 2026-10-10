@@ -79,7 +79,7 @@ function paintFeaturePeerNames() {
     badge.hidden = !value;
     badge.className = `peer-name ${entry?.status === 'ok' ? 'resolved' : entry?.status === 'error' ? 'unavailable' : 'loading'}`;
     badge.textContent = entry?.status === 'ok' ? entry.title : entry?.message || waiting;
-    badge.title = entry?.status === 'ok' ? `${entry.title} · ID ${entry.id}` : '使用规则的执行账号查询';
+    badge.title = entry?.status === 'ok' ? `${entry.title} · ID ${entry.id}` : entry?.message || waiting;
   });
 }
 

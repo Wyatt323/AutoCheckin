@@ -15,6 +15,7 @@ from pathlib import Path
 from storage import read_document, parse_config_text
 from telegram_credentials import resolve_credentials
 
+CHAT_INPUT_ERROR = '输入错误或账号未加入'
 
 def normalize_peer(value):
     if not isinstance(value, str) or not 1 <= len(value.strip()) <= 120:
@@ -58,7 +59,7 @@ def cached_numeric_peer(session_file, peer_id):
 
 
 async def resolve_chats(account, values, data_dir, *, client_factory=None):
-    from telethon import TelegramClient, utils
+    from telethon import TelegramClient, errors, utils
     if not isinstance(account, str) or not re.fullmatch(r'[\w.-]+', account) or account in ('.', '..'):
         raise ValueError('invalid account')
     if not isinstance(values, list) or not 1 <= len(values) <= 4:
@@ -74,6 +75,12 @@ async def resolve_chats(account, values, data_dir, *, client_factory=None):
         device_model='AutoCheckin', receive_updates=False, flood_sleep_threshold=0,
         connection_retries=1, request_retries=0, timeout=8)
     dialogs = None
+    async def find_dialog(reference):
+        nonlocal dialogs
+        if dialogs is None:
+            dialogs = await asyncio.wait_for(client.get_dialogs(limit=None), 12)
+        return next((dialog.entity for dialog in dialogs
+                     if utils.get_peer_id(dialog.entity) == reference), None)
     results = []
     try:
         await asyncio.wait_for(client.connect(), 10)
@@ -83,18 +90,20 @@ async def resolve_chats(account, values, data_dir, *, client_factory=None):
             try:
                 reference = normalize_peer(value)
             except ValueError:
-                results.append({'value':value, 'status':'error', 'message':'请填写有效的 ID 或公开用户名'})
+                results.append({'value':value, 'status':'error', 'message':CHAT_INPUT_ERROR})
                 continue
             try:
                 peer = cached_numeric_peer(session_file, reference) if isinstance(reference, int) else reference
                 try:
                     entity = await asyncio.wait_for(client.get_entity(peer), 8)
-                except ValueError:
+                except (ValueError, errors.ChannelInvalidError, errors.ChannelPrivateError, errors.PeerIdInvalidError):
                     if not isinstance(reference, int):
                         raise
-                    if dialogs is None:
-                        dialogs = await asyncio.wait_for(client.get_dialogs(limit=1000), 12)
-                    entity = next(dialog.entity for dialog in dialogs if utils.get_peer_id(dialog.entity) == reference)
+                    entity = await find_dialog(reference)
+                    if entity is None:
+                        results.append({'value':value, 'status':'error', 'code':'numeric_peer_not_found',
+                                        'message':CHAT_INPUT_ERROR})
+                        continue
                 title = getattr(entity, 'title', None)
                 if not title:
                     results.append({'value':value, 'status':'error', 'message':'此会话不是群组或频道'})
@@ -102,8 +111,17 @@ async def resolve_chats(account, values, data_dir, *, client_factory=None):
                 results.append({'value':value, 'status':'ok', 'id':str(utils.get_peer_id(entity)),
                                 'title':str(title)[:200], 'type':'channel' if getattr(entity, 'broadcast', False) else 'group'})
             except Exception as error:
-                message = '查询触发限流，请稍后重试' if getattr(error, 'seconds', None) else '无法获取，请检查 ID、用户名及账号权限'
-                results.append({'value':value, 'status':'error', 'message':message})
+                if getattr(error, 'seconds', None):
+                    code, message = 'rate_limit', '查询触发限流，请稍后重试'
+                elif isinstance(error, asyncio.TimeoutError):
+                    code, message = 'timeout', '名称查询超时，请稍后重试'
+                elif isinstance(error, (errors.ChannelPrivateError, errors.ChatAdminRequiredError)):
+                    code, message = 'access_denied', CHAT_INPUT_ERROR
+                elif isinstance(error, (errors.UsernameInvalidError, errors.UsernameNotOccupiedError)):
+                    code, message = 'invalid_username', CHAT_INPUT_ERROR
+                else:
+                    code, message = 'lookup_failed', CHAT_INPUT_ERROR
+                results.append({'value':value, 'status':'error', 'code':code, 'message':message})
         return results
     finally:
         await asyncio.wait_for(client.disconnect(), 5)

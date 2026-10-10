@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import chat_lookup
-from telethon import types
+from telethon import errors, types
 from network_guard import install_network_guard
 install_network_guard()
 
@@ -30,13 +30,19 @@ class Client:
         self.references.append(reference)
         if reference=='@user_person': return types.User(id=123,first_name='Person')
         if reference=='@denied_group': raise ValueError('offline permission error with secret')
+        if reference=='@private_group': raise errors.ChannelPrivateError(request=None)
+        if reference=='@missing_name': raise errors.UsernameNotOccupiedError(request=None)
+        if reference=='@slow_channel': raise asyncio.TimeoutError('offline secret')
         if isinstance(reference,int): raise ValueError('not cached')
         if isinstance(reference,types.InputPeerChannel):
+            if reference.access_hash == 999: raise errors.ChannelInvalidError(request=None)
             return types.Channel(id=reference.channel_id,title='测试频道',photo=types.ChatPhotoEmpty(),date=datetime.datetime.now(),broadcast=True)
         return types.Chat(id=987,title='测试群组',photo=types.ChatPhotoEmpty(),participants_count=1,date=datetime.datetime.now(),version=1)
     async def get_dialogs(self, limit):
         self.dialog_reads+=1
-        return [SimpleNamespace(entity=types.Chat(id=987,title='未缓存群组',photo=types.ChatPhotoEmpty(),participants_count=1,date=datetime.datetime.now(),version=1))]
+        self.dialog_limit=limit
+        return [SimpleNamespace(entity=types.Chat(id=987,title='未缓存群组',photo=types.ChatPhotoEmpty(),participants_count=1,date=datetime.datetime.now(),version=1)),
+                SimpleNamespace(entity=types.Channel(id=123,title='刷新后的频道',photo=types.ChatPhotoEmpty(),date=datetime.datetime.now(),broadcast=True))]
 
 
 class LookupTests(unittest.IsolatedAsyncioTestCase):
@@ -81,6 +87,23 @@ class LookupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[3]['message'],'此会话不是群组或频道')
     async def test_unauthorized_never_logs_in(self):
         with self.assertRaises(ValueError): await self.lookup(['@group_name'],authorized=False)
+    async def test_missing_numeric_id_explains_account_access(self):
+        results,client=await self.lookup(['-1003703389565','-1003703389566'])
+        self.assertEqual([r['code'] for r in results],['numeric_peer_not_found']*2)
+        self.assertTrue(all(r['message']=='输入错误或账号未加入' for r in results))
+        self.assertEqual(client.dialog_reads,1,'one dialog refresh is shared across numeric references')
+        self.assertIsNone(client.dialog_limit,'name resolution must also search dialogs beyond the first 1000')
+    async def test_stale_access_hash_refreshes_dialogs(self):
+        with closing(sqlite3.connect(self.file)) as db:
+            db.execute('UPDATE entities SET hash = 999')
+            db.commit()
+        results,client=await self.lookup(['-1000000000123'])
+        self.assertEqual(results[0]['title'],'刷新后的频道')
+        self.assertEqual(client.dialog_reads,1)
+    async def test_safe_permission_username_timeout_errors(self):
+        results,_=await self.lookup(['@private_group','@missing_name','@slow_channel'])
+        self.assertEqual([r['code'] for r in results],['access_denied','invalid_username','timeout'])
+        self.assertNotIn('secret',json.dumps(results))
     def test_reference_validation(self):
         self.assertEqual(chat_lookup.normalize_peer('group_name'),'@group_name')
         self.assertEqual(chat_lookup.normalize_peer(' -123 '),-123)

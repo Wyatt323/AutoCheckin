@@ -2,6 +2,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { resolveCredentials } = require('./telegram_credentials');
+const chatInputError = '输入错误或账号未加入';
+const lookupErrors = {
+  numeric_peer_not_found:chatInputError,
+  access_denied:chatInputError,
+  invalid_username:chatInputError,
+  timeout:'名称查询超时，请稍后重试',
+  rate_limit:'查询触发限流，请稍后重试'
+};
 
 function createChatResolver({ workerEnv = {},root, dataDir, readConfig, pythonCommand, spawnWorker=spawn, timeoutMs=45000, stopGraceMs=2000}) {
   const cache = new Map(), pending = new Map(), jobs = new Map();
@@ -34,7 +42,7 @@ function createChatResolver({ workerEnv = {},root, dataDir, readConfig, pythonCo
             const result = workerResults.find(result => result?.value === value);
             const safe = result?.status === 'ok' && typeof result.title === 'string' && typeof result.id === 'string' && /^-?\d+$/.test(result.id) && ['channel','group'].includes(result.type)
               ? {status:'ok', title:result.title.slice(0,200), id:result.id, type:result.type}
-              : {status:'error', message:result?.message === '此会话不是群组或频道' ? result.message : result?.message === '查询触发限流，请稍后重试' ? result.message : '无法获取，请检查 ID、用户名及账号权限'};
+              : {status:'error', message:Object.hasOwn(lookupErrors,result?.code) ? lookupErrors[result.code] : result?.message === '此会话不是群组或频道' ? result.message : result?.message === '查询触发限流，请稍后重试' ? result.message : chatInputError};
             const entry = {result:safe, expires:Date.now()+(safe.status==='ok'?600000:30000)};
             cache.set(key(value), entry);
             resolved.set(value, entry);
@@ -46,7 +54,7 @@ function createChatResolver({ workerEnv = {},root, dataDir, readConfig, pythonCo
       }
       for (const [value, entry] of await operation) results.set(value, entry);
     }
-    return peers.map(value => ({value, ...(valid(value) ? results.get(value).result : {status:'error',message:'请填写有效的 ID、用户名或公开 t.me 链接'})}));
+    return peers.map(value => ({value, ...(valid(value) ? results.get(value).result : {status:'error',message:chatInputError})}));
   }
   function runWorker(python, account, peers) {
     return new Promise((resolve, reject) => {

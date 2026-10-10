@@ -24,6 +24,14 @@ const {createChatResolver}=require('../chat_resolver');
     assert.equal(calls,4,'simultaneous identical requests share one worker');
     assert.ok(lastArgs.includes(path.join(root,'chat_lookup.py')));
     await resolver.shutdown();await assert.rejects(resolver.resolve('one',['@test_channel']));
+    const diagnostic=createChatResolver({...opts,spawnWorker:(_name,args)=>{
+      const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();child.kill=()=>{};
+      queueMicrotask(()=>{child.stdout.write(JSON.stringify({results:JSON.parse(args.at(-1)).map((value,index)=>({value,status:'error',code:['numeric_peer_not_found','access_denied','invalid_username','__proto__'][index],message:'secret raw Telegram exception'}))}));child.emit('close',0);});return child;
+    }});
+    const messages=await diagnostic.resolve('one',['-1003703389565','@private_group','@missing_name','@unknown_error']);
+    assert.ok(messages.every(result=>result.message==='输入错误或账号未加入'));
+    assert.ok(messages.every(result=>!result.message.includes('secret')),'only approved diagnostics may reach the browser');
+    await diagnostic.shutdown();
     const workers=[];
     const slowOptions={...opts, stopGraceMs:5, spawnWorker:()=>{
       const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();child.signals=[];
