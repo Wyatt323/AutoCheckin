@@ -307,7 +307,7 @@ function renderAutomation() {
   const forwards = config.automations.forwards.map((item, index) => ({ item, index })).filter(entry => entry.item.account === account);
   $('#schedule-list').innerHTML = schedules.length ? schedules.map(({ item, index }) => `
     <article class="automation-card" data-auto-kind="schedules" data-index="${index}"><div class="automation-card-head"><div class="automation-card-symbol">◷</div><div><strong>定时消息 ${index + 1}</strong><small>${item.repeat === 'once' ? '指定时间发送一次' : '每天定时发送'}</small></div><div class="automation-card-actions"><label class="auto-switch"><input type="checkbox" data-field="enabled" ${item.enabled !== false ? 'checked' : ''}><i></i>启用</label><button class="delete-btn" data-delete="schedule" data-index="${index}">删除</button></div></div>
-    <div class="auto-field-grid"><div class="auto-field"><span>发送频率</span>${autoSelect('schedules', index, 'repeat', item.repeat === 'once' ? '发送一次' : '每天发送')}</div>${scheduleTimeFields(item, 'message')}<label class="auto-field wide"><span>目标群组 / 频道</span><input data-field="target" value="${escapeHtml(item.target || '')}" placeholder="@群组用户名 或 -100..." maxlength="120"></label><label class="auto-field wide"><span>消息内容</span><textarea data-field="message" maxlength="4000" placeholder="输入要定时发送的消息">${escapeHtml(item.message || '')}</textarea><small>仅发送纯文本；一次性任务过期超过 5 分钟后不会补发。</small></label></div></article>`).join('') : '<div class="automation-empty">当前账号还没有定时消息。添加规则后，保存即可启用。</div>';
+    <div class="auto-field-grid"><div class="auto-field"><span>发送频率</span>${autoSelect('schedules', index, 'repeat', item.repeat === 'once' ? '发送一次' : '每天发送')}</div>${scheduleTimeFields(item, 'message')}${peerField('target', '目标群组 / 频道', item.target)}<label class="auto-field wide"><span>消息内容</span><textarea data-field="message" maxlength="4000" placeholder="输入要定时发送的消息">${escapeHtml(item.message || '')}</textarea><small>仅发送纯文本；一次性任务过期超过 5 分钟后不会补发。</small></label></div></article>`).join('') : '<div class="automation-empty">当前账号还没有定时消息。添加规则后，保存即可启用。</div>';
   renderPlannedTimes();
   $('#forward-list').innerHTML = forwards.length ? forwards.map(({ item, index }) => `
     <article class="automation-card" data-auto-kind="forwards" data-index="${index}"><div class="automation-card-head"><div class="automation-card-symbol">↗</div><div><strong>转发规则 ${index + 1}</strong><small>来源有新消息时自动转发</small></div><div class="automation-card-actions"><label class="auto-switch"><input type="checkbox" data-field="enabled" ${item.enabled !== false ? 'checked' : ''}><i></i>启用</label><button class="delete-btn" data-delete="forward" data-index="${index}">删除</button></div></div>
@@ -321,8 +321,8 @@ function peerField(field, label, value) {
 let peerLookupTimer = null, peerLookupRunning = false;
 const peerNames = new Map();
 const peerKey = (account, value) => JSON.stringify([account, value.trim().toLowerCase()]);
-const peerLookupVisible = () => !document.hidden && currentView === 'accounts' && selectedAccountIndex !== null && accountSection === 'forwards';
-function peerFields() { return [...document.querySelectorAll('#forward-list .peer-input-row input')]; }
+const peerLookupVisible = () => !document.hidden && currentView === 'accounts' && selectedAccountIndex !== null && ['forwards','messages'].includes(accountSection);
+function peerFields() { return [...document.querySelectorAll(`${accountSection === 'messages' ? '#schedule-list' : '#forward-list'} .peer-input-row input`)]; }
 function paintPeerNames() {
   const account = config?.users[selectedAccountIndex]?.session;
   for (const input of peerFields()) {
@@ -330,20 +330,20 @@ function paintPeerNames() {
     const entry = peerNames.get(peerKey(account, value));
     badge.hidden = !value;
     badge.className = `peer-name ${entry?.status === 'ok' ? 'resolved' : entry?.status === 'error' ? 'unavailable' : 'loading'}`;
-    badge.textContent = entry?.status === 'ok' ? entry.title : entry?.message || '等待查询…';
+    badge.textContent = entry?.status === 'ok' ? entry.title : entry?.message || (config?.users[selectedAccountIndex]?.sessionReady ? '等待查询…' : '请先登录此账号');
     badge.title = entry?.status === 'ok' ? `${entry.type === 'channel' ? '频道' : '群组'}：${entry.title} · ID ${entry.id}` : entry?.message || '使用当前账号查询会话名称';
   }
 }
-function schedulePeerLookup() {
+function schedulePeerLookup(delay = 250) {
   clearTimeout(peerLookupTimer);
   if (!peerLookupVisible()) return;
   paintPeerNames();
-  peerLookupTimer = setTimeout(resolvePeerNames, 650);
+  peerLookupTimer = setTimeout(resolvePeerNames, delay);
 }
 async function resolvePeerNames() {
   if (peerLookupRunning || !peerLookupVisible()) return;
   const account = config?.users[selectedAccountIndex]?.session;
-  if (!account) return;
+  if (!account || !config?.users[selectedAccountIndex]?.sessionReady) return;
   const peers = [...new Set(peerFields().map(input => input.value.trim()).filter(Boolean))].filter(value => {
     const entry = peerNames.get(peerKey(account, value));
     return !entry || entry.expires <= Date.now();
@@ -367,11 +367,8 @@ async function resolvePeerNames() {
     schedulePeerLookup();
   }
 }
-document.addEventListener('input', event => {
-  if (event.target.matches('#forward-list .peer-input-row input')) schedulePeerLookup();
-});
-document.addEventListener('focusout', event => {
-  if (event.target.matches('#forward-list .peer-input-row input')) schedulePeerLookup();
+for (const type of ['input','paste','change','focusout']) document.addEventListener(type, event => {
+  if (event.target.matches('#forward-list .peer-input-row input, #schedule-list .peer-input-row input')) schedulePeerLookup(type === 'input' ? 250 : 0);
 });
 
 function closeAutoSelect() {

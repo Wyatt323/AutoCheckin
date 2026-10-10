@@ -94,6 +94,11 @@ const {createHash} = require('node:crypto');
       await first.locator('select[data-feature-field="account"]').selectOption('second');
       await first.locator('[data-feature-source]').first().locator('..').locator('[data-feature-peer-name]').filter({hasText:'second:@source_one'}).waitFor();
       await first.locator('[data-feature-add-source]').click();await first.locator('[data-feature-source]').last().fill('@third_source');
+      await first.locator('[data-feature-source]').last().locator('..').locator('[data-feature-peer-name]').filter({hasText:'second:@third_source'}).waitFor();
+      assert.equal(await first.locator('[data-feature-source]').last().evaluate(input => input === document.activeElement),true,'source name resolves while the input retains focus, without saving');
+      await first.locator('[data-feature-field="target"]').fill('-100987654321');
+      await first.locator('[data-feature-field="target"]').locator('..').locator('[data-feature-peer-name]').filter({hasText:'second:-100987654321'}).waitFor();
+      await first.locator('[data-feature-field="target"]').fill('@destination');
       await first.locator('[data-feature-keyword]').fill('通知');await first.locator('[data-feature-add-keyword]').click();await first.locator('[data-feature-keyword]').last().fill('[重要]');
       await first.locator('.feature-pin-switch').click();
       await page.waitForTimeout(2200);assert.equal(await first.locator('[data-feature-source]').last().inputValue(),'@third_source','polling preserves drafts');
@@ -110,6 +115,13 @@ const {createHash} = require('node:crypto');
       await page.locator('[data-feature-rule]').last().locator('[data-feature-remove]').click();await page.getByRole('dialog',{name:'删除插件规则'}).getByRole('button',{name:'删除规则'}).click();
       await page.locator('#forward-pin-editor .save-btn').click();await page.locator('#toast').filter({hasText:'配置已保存'}).waitFor();
       assert.equal((await state(admin)).config.automations.forwardPins.length,1);
+      await page.evaluate(() => openAccount(0,'messages'));
+      await page.locator('#add-schedule').click();
+      const messageTarget=page.locator('#schedule-list [data-field="target"]').last();
+      await messageTarget.fill('@message_group');
+      await messageTarget.locator('..').locator('[data-peer-name]').filter({hasText:'first:@message_group'}).waitFor();
+      assert.equal(await messageTarget.evaluate(input => input === document.activeElement),true,'scheduled-message target name resolves without blur or saving');
+      await page.evaluate(() => navigate('features'));
       for(const width of [1440,1024,390,320]) {await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`plugin fits ${width}px`);}
       if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR) {
         await page.locator('[data-feature-rule]').first().locator('[data-feature-peer-name]').first().filter({hasText:'second:@source_one'}).waitFor();

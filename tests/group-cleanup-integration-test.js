@@ -94,13 +94,18 @@ for _ in range(900):
       await page.context().addCookies([{name:'ac_session',value:admin.slice(admin.indexOf('=')+1),url:base,httpOnly:true,sameSite:'Strict'}]);
       await page.route('**/*',route=>{
         if(!route.request().url().startsWith(base))return route.abort();
-        if(new URL(route.request().url()).pathname==='/api/accounts/chats/resolve') {const {peers}=route.request().postDataJSON();return route.fulfill({contentType:'application/json',body:JSON.stringify({results:peers.map(value=>({value,status:'ok',title:'测试交流群',id:'-100123',type:'group'}))})});}
+        if(new URL(route.request().url()).pathname==='/api/accounts/chats/resolve') {const {peers}=route.request().postDataJSON();return route.fulfill({contentType:'application/json',body:JSON.stringify({results:peers.map(value=>({value,status:'ok',title:'测试交流群 '+value,id:'-100123',type:'group'}))})});}
         return route.continue();
       });
       await page.goto(base+'/#features');assert.equal(await page.locator('.feature-plugin-card').count(),2);
       await page.locator('#open-zero-speakers').click();const card=page.locator('[data-cleanup-rule="cleanup_admin_001"]');
       await card.locator('[data-feature-peer-name]').filter({hasText:'测试交流群'}).waitFor();
       assert.equal(await card.locator('.ui-select-trigger').count(),1);
+      const groupInput=card.locator('[data-cleanup-field="group"]'),originalGroup=await groupInput.inputValue();
+      await groupInput.fill('-100987654321');
+      await card.locator('[data-feature-peer-name]').filter({hasText:'测试交流群 -100987654321'}).waitFor();
+      assert.equal(await groupInput.evaluate(input => input === document.activeElement),true,'cleanup group ID resolves while typing, without saving');
+      await groupInput.fill(originalGroup);
       await card.locator('[data-cleanup-field="name"]').fill('测试成员清理');await page.waitForTimeout(2200);
       assert.equal(await card.locator('[data-cleanup-field="name"]').inputValue(),'测试成员清理');
       await card.locator('[data-cleanup-run]').click();await card.locator('[data-cleanup-runtime]').filter({hasText:'等待执行账号'}).waitFor();

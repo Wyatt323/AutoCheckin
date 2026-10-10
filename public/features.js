@@ -74,18 +74,20 @@ function paintFeaturePeerNames() {
     const rule = peerRule(input), value = input.value.trim();
     const badge = input.parentElement.querySelector('[data-feature-peer-name]');
     const entry = peerNames.get(peerKey(rule?.account, value));
-    badge.hidden = !value || !rule?.account;
+    const user = config.users.find(user => user.session === rule?.account);
+    const waiting = !rule?.account ? '请先选择执行账号' : !user?.sessionReady ? '请先登录此账号' : runBusy(rule.account) ? '任务结束后自动查询' : '等待查询…';
+    badge.hidden = !value;
     badge.className = `peer-name ${entry?.status === 'ok' ? 'resolved' : entry?.status === 'error' ? 'unavailable' : 'loading'}`;
-    badge.textContent = entry?.status === 'ok' ? entry.title : entry?.message || '等待查询…';
+    badge.textContent = entry?.status === 'ok' ? entry.title : entry?.message || waiting;
     badge.title = entry?.status === 'ok' ? `${entry.title} · ID ${entry.id}` : '使用规则的执行账号查询';
   });
 }
 
-function scheduleFeatureLookup() {
+function scheduleFeatureLookup(delay = 250) {
   clearTimeout(featureLookupTimer);
   if (!featureVisible()) return;
   paintFeaturePeerNames();
-  featureLookupTimer = setTimeout(resolveFeaturePeers, 650);
+  featureLookupTimer = setTimeout(resolveFeaturePeers, delay);
 }
 
 async function resolveFeaturePeers() {
@@ -161,9 +163,14 @@ $('#forward-pin-rules').addEventListener('click',async event => {
   } else return;
   renderFeatureCenter();
 });
-$('#forward-pin-rules').addEventListener('input',scheduleFeatureLookup);
-$('#forward-pin-rules').addEventListener('change',() => {readFeatureEditors();scheduleFeatureLookup();});
-document.addEventListener('visibilitychange',scheduleFeatureLookup);
+function onFeaturePeerInput(event) {
+  if (event.target.matches('[data-feature-peer]')) scheduleFeatureLookup(event.type === 'input' ? 250 : 0);
+}
+$('#forward-pin-rules').addEventListener('input',onFeaturePeerInput);
+$('#forward-pin-rules').addEventListener('paste',onFeaturePeerInput);
+$('#forward-pin-rules').addEventListener('focusout',onFeaturePeerInput);
+$('#forward-pin-rules').addEventListener('change',() => {readFeatureEditors();scheduleFeatureLookup(0);});
+document.addEventListener('visibilitychange',() => scheduleFeatureLookup(0));
 window.addEventListener('pagehide',() => clearTimeout(featureLookupTimer),{once:true});
 
 function cleanupAccountSelect(rule) {
@@ -202,8 +209,10 @@ $('#add-zero-speakers').addEventListener('click',()=>{
   config.plugins.zeroSpeakers.push({id:crypto.randomUUID(),name:'',account:(config.users.find(user=>user.sessionReady) || config.users[0]).session,group:''});
   renderFeatureCenter();$('#zero-speakers-rules [data-cleanup-rule]:last-child input')?.focus();
 });
-$('#zero-speakers-rules').addEventListener('input',scheduleFeatureLookup);
-$('#zero-speakers-rules').addEventListener('change',()=>{readFeatureEditors();scheduleFeatureLookup();renderCleanupStatus();});
+$('#zero-speakers-rules').addEventListener('input',onFeaturePeerInput);
+$('#zero-speakers-rules').addEventListener('paste',onFeaturePeerInput);
+$('#zero-speakers-rules').addEventListener('focusout',onFeaturePeerInput);
+$('#zero-speakers-rules').addEventListener('change',()=>{readFeatureEditors();scheduleFeatureLookup(0);renderCleanupStatus();});
 $('#zero-speakers-rules').addEventListener('click',async event=>{
   const button=event.target.closest('button'),card=event.target.closest('[data-cleanup-rule]');if(!button || !card)return;
   const id=card.dataset.cleanupRule;
