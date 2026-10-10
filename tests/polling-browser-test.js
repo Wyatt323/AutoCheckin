@@ -14,7 +14,7 @@ const path = require('node:path');
     const config = {
       telegram:{ apiId:'', hasApiHash:false }, model:'', providers:[],
       users:['first', 'second'].map((session, sourceIndex) => ({
-        name:session, session, sourceIndex, apiId:'', hasApiHash:false, sessionReady:false,
+        name:session, session, sourceIndex, apiId:'', hasApiHash:false, sessionReady:true,
         dialogFolder:'', bots:[], checkinSchedules:[], discoveredBots:[]
       })),
       automations:{ schedules:[], forwards:['first', 'second'].map(account => ({
