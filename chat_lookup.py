@@ -14,6 +14,7 @@ from pathlib import Path
 
 from storage import read_document, parse_config_text
 from telegram_credentials import resolve_credentials
+from outgoing_proxy import telegram_proxy_kwargs, install_network_guard
 
 CHAT_INPUT_ERROR = '输入错误或账号未加入'
 
@@ -73,7 +74,7 @@ async def resolve_chats(account, values, data_dir, *, client_factory=None):
     api_id, api_hash = resolve_credentials(config, user)
     client = (client_factory or TelegramClient)(authorization_snapshot(session_file), api_id, api_hash,
         device_model='AutoCheckin', receive_updates=False, flood_sleep_threshold=0,
-        connection_retries=1, request_retries=0, timeout=8)
+        connection_retries=1, request_retries=0, timeout=8, **telegram_proxy_kwargs())
     dialogs = None
     async def find_dialog(reference):
         nonlocal dialogs
@@ -129,6 +130,7 @@ async def resolve_chats(account, values, data_dir, *, client_factory=None):
 
 async def main():
     try:
+        install_network_guard()
         results = await asyncio.wait_for(resolve_chats(sys.argv[1], json.loads(sys.argv[2]),
             os.environ.get('AUTOCHECKIN_DATA_DIR') or Path(__file__).resolve().parent), 40)
         print(json.dumps({'results':results}, ensure_ascii=False), flush=True)

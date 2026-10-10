@@ -58,17 +58,17 @@ function parseConfig(raw) {
   return JSON.parse(output);
 }
 
-async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
+async function createWorkspace({dataDir, store, prefix = '', systemSettings, outgoingNetwork, networkChanging = () => false}) {
   const DATA_ROOT = dataDir, CONFIG = path.join(dataDir, 'config.json'), database = store;
   const workerEnv = {AUTOCHECKIN_DOCUMENT_PREFIX:prefix,AUTOCHECKIN_SYSTEM_DATA_DIR:path.resolve(process.env.AUTOCHECKIN_DATA_DIR || ROOT)};
   const automation = createAutomation();
-  const notifications = await createTelegramNotifications({dataDir,store});
+  const notifications = await createTelegramNotifications({dataDir,store,fetchImpl:outgoingNetwork.fetch});
   let history, profiles, login, scheduler, chatResolver, cleanup;
   const activeRuns = new Map(), reservedAccounts = new Set(), nextRunAt = new Map(), launches = new Set();
   const shutdownController = new AbortController();
   let latestRun, shuttingDown = false, editingConfig = false;
-  const busy = () => reservedAccounts.size > 0 || editingConfig;
-  const accountBusy = account => shuttingDown || editingConfig || login.active() || (account ? reservedAccounts.has(account) : busy());
+  const busy = () => reservedAccounts.size > 0 || editingConfig || networkChanging();
+  const accountBusy = account => shuttingDown || editingConfig || networkChanging() || login.active() || (account ? reservedAccounts.has(account) : busy());
   const publicRun = record => ({ ...record, lines:record.lines.slice(-150) });
   fs.mkdirSync(DATA_ROOT,{recursive:true,mode:0o700});
   if (prefix && !(database ? database.read('config') : fs.existsSync(CONFIG))) {
@@ -522,6 +522,9 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
   for(const record of history.snapshot({category:'checkin'}).records)if(record.trigger==='scheduled' && record.lines.some(line=>line.text==='服务重启，本次任务已中断'))await notifications.notifyRun(record).catch(()=>console.error('中断任务通知入队失败'));
   return {
     start() { notifications.start(); automation.start(); scheduler.start(); },
+    canChangeNetwork:() => reservedAccounts.size === 0 && !editingConfig && !login.active() && !shuttingDown,
+    async pauseNetwork() {await automation.stop();await chatResolver?.shutdown();chatResolver=null;},
+    resumeNetwork() {if (!shuttingDown) automation.start();},
     audit(account = '') {
       const raw = readConfig(), config = viewConfig(raw);
       const secrets = [...new Set([raw.telegram?.api_hash,...(raw.telegram?.users || raw.users || []).map(item=>item.api_hash),raw.ai?.api_key,...(raw.ai?.providers || []).map(item=>item.api_key),systemSettings.read().telegram?.api_hash,...(systemSettings.read().ai?.providers || []).map(item=>item.api_key)].filter(value=>typeof value === 'string' && value))].sort((a,b)=>b.length-a.length);
@@ -682,13 +685,22 @@ async function boot() {
   database = await require('./database').createDatabase({dataDir:DATA_ROOT,parseConfig});
   const auth = await createUserAuth({dataDir:DATA_ROOT,store:database});
   const systemSettings = await createSystemSettings({dataDir:DATA_ROOT,store:database});
+  let changingNetwork = false;
+  // PostgreSQL is the persistence service used to load the proxy itself. Only
+  // this explicit service endpoint is exempt from the Internet egress policy.
+  const databaseAddress=process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL) : null;
+  const databaseEndpoints=database ? [{host:databaseAddress?.hostname || process.env.PGHOST || 'localhost',port:Number(databaseAddress?.port || process.env.PGPORT || 5432)}] : [];
+  const outgoingNetwork = require('./outgoing_proxy').installOutgoingNetwork(()=>{
+    if (changingNetwork) throw Error('出口代理配置正在更新，请稍后重试');
+    return systemSettings.read().proxy;
+  },{databaseEndpoints});
   const workspaces = new Map();
   async function workspaceFor(user) {
     const id = user.id;
     if (!workspaces.has(id)) {
       const prefix = id === 'admin' ? '' : `tenant:${id}:`;
       const dataDir = id === 'admin' ? DATA_ROOT : path.join(DATA_ROOT,'.user-workspaces',id);
-      const pending = createWorkspace({dataDir,store:require('./database').scopedStore(database,prefix),prefix,systemSettings}).then(workspace=>{workspace.start();return workspace;});
+      const pending = createWorkspace({dataDir,store:require('./database').scopedStore(database,prefix),prefix,systemSettings,outgoingNetwork,networkChanging:()=>changingNetwork}).then(workspace=>{workspace.start();return workspace;});
       workspaces.set(id,pending);
       pending.catch(()=>{workspaces.delete(id);});
     }
@@ -739,6 +751,25 @@ http.createServer(async (req, res) => {
       if (auth.identity(req)?.role !== 'admin') return send(res,401,{error:'请重新登录管理员账号'});
       if (!auth.list().some(item=>item.id === target.id)) return send(res,404,{error:'用户不存在或已删除'});
       return send(res,200,{user:target,...workspace.audit(account)});
+    }
+    if (changingNetwork && req.method !== 'GET' && url.pathname.startsWith('/api/')) return send(res,409,{error:'正在更新出口代理，请稍后重试'});
+    if (url.pathname === '/api/admin/proxy') {
+      if (user.role !== 'admin') return send(res,403,{error:'仅管理员可设置系统出口代理'});
+      if (req.method === 'GET') return send(res,200,{proxy:systemSettings.proxyView()});
+      if (req.method !== 'PUT') return send(res,405,{error:'不支持的请求'});
+      const input=await bodyJson(req);
+      require('./outgoing_proxy').normalizeProxy(input,systemSettings.read().proxy);
+      if (changingNetwork) return send(res,409,{error:'正在更新出口代理，请稍后重试'});
+      changingNetwork=true;
+      let active=[];
+      try {
+        active=await Promise.all([...workspaces.values()]);
+        if (active.some(workspace=>!workspace.canChangeNetwork())) throw Error('签到、登录或功能插件任务运行期间不能修改出口代理，请等待任务结束');
+        await Promise.all(active.map(workspace=>workspace.pauseNetwork()));
+        outgoingNetwork.reset();
+        const proxy=await systemSettings.updateProxy(input);
+        return send(res,200,{proxy});
+      } finally {changingNetwork=false;for (const workspace of active) workspace.resumeNetwork();}
     }
     if (url.pathname === '/api/admin/profile' || url.pathname === '/api/admin/settings') {
       if (user.role !== 'admin') return send(res,403,{error:'仅管理员可修改系统设置'});
@@ -796,6 +827,7 @@ http.createServer(async (req, res) => {
     if (shuttingDown) return;
     shuttingDown = true;
     const deadline = setTimeout(()=>process.exit(1),10000); deadline.unref();
+    outgoingNetwork.close();
     await Promise.all([...workspaces.values()].map(async pending=>(await pending).stop()));
     if (database) await database.close();
     process.exit(0);

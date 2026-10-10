@@ -7,7 +7,7 @@ const {scopedStore} = require('../database');
 (async()=>{
   const root = fs.mkdtempSync(path.join(os.tmpdir(),'multi-user-'));
   let server, browser;
-  const baseFiles = ['server.js','user_auth.js','system_settings.js','telegram_notifications.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'];
+  const baseFiles = ['server.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'];
   const stop = async()=>{if(server){const done=new Promise(resolve=>server.once('close',resolve));server.kill();await done;server=null;}};
   try {
     // Exercise the same registry and prefix wrapper used with PostgreSQL.

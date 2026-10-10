@@ -5,7 +5,7 @@ const {spawn}=require('node:child_process');
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'notification-server-'));let server,browser;
   const stop=async()=>{if(server){const done=new Promise(resolve=>server.once('close',resolve));server.kill();await done;server=null;}};
   try {
-    for(const file of ['server.js','database.js','admin_auth.js','user_auth.js','system_settings.js','telegram_notifications.js','checkin_results.js','automation.js','login.js','schedule_time.js','run_history.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js'])fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
+    for(const file of ['server.js','database.js','admin_auth.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','checkin_results.js','automation.js','login.js','schedule_time.js','run_history.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js'])fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
     fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
     fs.appendFileSync(path.join(root,'telegram_notifications.js'),"\nmodule.exports.createTelegramNotifications = options => createTelegramNotifications({...options, fetchImpl:async(url,request)=>{const file=path.join(options.dataDir,'sent.json');const messages=fs.existsSync(file)?JSON.parse(fs.readFileSync(file)):[];messages.push(JSON.parse(request.body));fs.writeFileSync(file,JSON.stringify(messages));return {ok:true,status:200,json:async()=>({ok:true})};}});\n");
     const now=new Date(Date.now()+28800000).toISOString().slice(0,16),token='123456:offline_notification_token_123456';

@@ -496,6 +496,10 @@ dialog::backdrop, #login-dialog::backdrop, #run-log-dialog::backdrop { backgroun
 .audit-log-text { margin-top:6px; white-space:pre-wrap; overflow-wrap:anywhere; }
 .audit-log-entry.stderr .audit-log-text { color:#ffacae; }
 #web-user-edit-error { color:#af3545; }
+.proxy-enable { margin-bottom:24px; }
+.proxy-clear-password { margin-top:20px; }
+.proxy-help { color:var(--muted); font-size:12px; line-height:1.8; margin-top:18px; }
+#proxy-error { color:#af3545; font-size:13px; margin-top:16px; }
 .feature-catalog { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:28px; }
 .feature-plugin-card { padding:28px; max-width:560px; }
 .feature-plugin-heading,.feature-plugin-footer,.feature-plugin-runtime,.feature-field-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; }

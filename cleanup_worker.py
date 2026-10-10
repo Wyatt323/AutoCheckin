@@ -15,6 +15,7 @@ from xml.sax.saxutils import escape
 
 from storage import read_document, write_document, parse_config_text
 from telegram_credentials import resolve_credentials
+from outgoing_proxy import telegram_proxy_kwargs, install_network_guard
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get('AUTOCHECKIN_DATA_DIR') or ROOT)
@@ -259,7 +260,7 @@ async def main(job_id):
     if not account:
         raise ValueError('任务账号不存在')
     api_id,api_hash = resolve_credentials(config,account)
-    client = TelegramClient(str(DATA_DIR/job['account']),api_id,api_hash,device_model='AutoCheckin')
+    client = TelegramClient(str(DATA_DIR/job['account']),api_id,api_hash,device_model='AutoCheckin',**telegram_proxy_kwargs())
     save = lambda state:write_document('cleanup-job:'+job_id,state,job_path)
     try:
         await client.connect()
@@ -298,6 +299,7 @@ if __name__ == '__main__':
             pass
         return await task
     try:
+        install_network_guard()
         sys.exit(asyncio.run(run()))
     except (KeyboardInterrupt,asyncio.CancelledError):
         emit('清理任务已中断；不会自动继续移出成员。')

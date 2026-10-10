@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Dedicated, bounded QR authorization worker; JSON only, no check-in imports."""
 from telegram_credentials import resolve_credentials
+from outgoing_proxy import telegram_proxy_kwargs, install_network_guard
 import asyncio
 import base64
 import io
@@ -47,7 +48,7 @@ async def login(account, data_dir, *, client_factory=None, password_reader=read_
     users = config.get("telegram", {}).get("users", config.get("users", []))
     user = next(u for u in users if (u.get("session") or u.get("name")) == account)
     api_id, api_hash = resolve_credentials(config, user)
-    client = (client_factory or TelegramClient)(str(Path(data_dir) / account), api_id, api_hash, device_model="AutoCheckin Web")
+    client = (client_factory or TelegramClient)(str(Path(data_dir) / account), api_id, api_hash, device_model="AutoCheckin Web", **telegram_proxy_kwargs())
     try:
         await asyncio.wait_for(client.connect(), 30)
         if not await client.is_user_authorized():
@@ -102,6 +103,7 @@ async def main():
         except NotImplementedError:
             signal.signal(sig, lambda *_: loop.call_soon_threadsafe(task.cancel))
     try:
+        install_network_guard()
         return await asyncio.wait_for(login(sys.argv[1], os.environ.get("AUTOCHECKIN_DATA_DIR") or Path(__file__).resolve().parent, profile_only='--profile-only' in sys.argv[2:]), 480)
     except asyncio.CancelledError:
         return 0

@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from telegram_credentials import resolve_credentials
+from outgoing_proxy import telegram_proxy_kwargs, ai_http_client, install_network_guard
 from storage import read_document, parse_config_text
 from checkin_logging import account_log, emit_result, emit_bot_result, install_json_output
 import asyncio
@@ -127,7 +128,9 @@ def build_ai_clients(ai_providers):
         api_key = provider.get("api_key")
         base_url = provider.get("base_url")
         if api_key and base_url:
-            clients.append((provider["name"], OpenAI(api_key=api_key, base_url=base_url, timeout=30, max_retries=1)))
+            transport = ai_http_client()
+            clients.append((provider["name"], OpenAI(api_key=api_key, base_url=base_url, timeout=30, max_retries=1,
+                                                    **({'http_client': transport} if transport else {}))))
     return clients
 
 
@@ -770,6 +773,7 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
         api_id,
         api_hash,
         device_model="AutoCheckin",
+        **telegram_proxy_kwargs(),
     )
     signers = {}
     install_handlers(client, signers)
@@ -926,4 +930,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.bot and not args.account:
         parser.error('--bot requires --account')
+    install_network_guard()
     sys.exit(0 if asyncio.run(main(args.account, args.bot, scheduled=args.scheduled, parallel=args.parallel)) else 1)

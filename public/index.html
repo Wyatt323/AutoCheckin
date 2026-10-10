@@ -95,6 +95,21 @@
         </section>
         <section class="view" id="view-users">
           <div class="page-heading"><div><span class="kicker">WORKSPACE USERS</span><h1>用户管理</h1><p>仅管理员可创建用户。每位用户拥有独立的 Telegram 账号、任务配置和运行日志。</p></div></div>
+          <section class="panel global-telegram admin-settings proxy-settings"><div class="panel-head"><div><h2>系统出口代理</h2><p>整个项目统一通过此代理上网，覆盖所有用户和功能插件。代理不可用时停止联网，不会回退直连。</p></div><span class="count-pill" id="proxy-status">未启用</span></div>
+            <form id="proxy-settings-form">
+              <label class="auto-switch proxy-enable"><input id="proxy-enabled" type="checkbox"><i></i><span>启用出口代理</span></label>
+              <div class="field-grid">
+                <label class="field"><span>代理协议</span><select id="proxy-type" aria-label="代理协议"><option value="http">HTTP</option><option value="https">HTTPS · TLS 加密代理</option><option value="socks5">SOCKS5 · 代理解析域名</option></select></label>
+                <label class="field"><span>代理地址</span><input id="proxy-host" maxlength="253" autocomplete="off" placeholder="例如 proxy.example.com 或 192.168.1.10"></label>
+                <label class="field"><span>端口</span><input id="proxy-port" type="number" min="1" max="65535" placeholder="例如 7890"></label>
+                <label class="field"><span>用户名 · 可选</span><input id="proxy-username" maxlength="255" autocomplete="off" placeholder="无需认证时留空"></label>
+                <label class="field"><span>密码 · 可选</span><input id="proxy-password" type="password" maxlength="255" autocomplete="new-password" placeholder="填写代理密码"></label>
+              </div>
+              <label class="auto-switch proxy-clear-password"><input id="proxy-clear-password" type="checkbox"><i></i><span>清除已保存的代理密码</span></label>
+              <p class="proxy-help">密码保存后不回显，留空保留原值。保存会重新连接监听任务；签到、登录或清理任务运行期间需等待结束。Docker 中访问电脑上的代理，请使用 host.docker.internal；访问其他容器可用服务名。</p>
+              <div class="bottom-save"><button class="primary-btn" type="submit">保存出口代理</button></div><p id="proxy-error" role="alert" hidden></p>
+            </form>
+          </section>
           <section class="panel global-telegram admin-settings"><div class="panel-head"><div><h2>管理员账号</h2><p>修改后使用新用户名登录，密码继续使用部署时设置的管理员密码。</p></div></div><form id="admin-profile-form" class="web-user-create"><label class="field"><span>管理员用户名</span><input id="admin-username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9_][A-Za-z0-9_.-]{2,31}" autocomplete="username"></label><button class="primary-btn" type="submit">保存用户名</button></form></section>
           <section class="panel global-telegram admin-settings"><div class="panel-head"><div><h2>系统全局服务</h2><p>用户可自行选择使用这些服务。系统密钥保存后不回显；输入留空保留原值。</p></div></div><form id="system-settings-form"><h3>Telegram API</h3><div class="field-grid"><label class="field"><span>系统 API ID</span><input id="system-api-id" inputmode="numeric" placeholder="数字 ID"></label><label class="field"><span>系统 API Hash</span><input id="system-api-hash" type="password" autocomplete="new-password" placeholder="填写 API Hash"></label></div><div class="system-section-heading"><h3>AI 提供商</h3><button id="system-add-provider" class="outline-btn" type="button">＋ 添加提供商</button></div><label class="field"><span>系统 AI 模型</span><input id="system-model" placeholder="例如 gpt-4o-mini"></label><div id="system-provider-list"></div><div class="bottom-save"><button class="primary-btn" type="submit">保存系统服务</button></div></form></section>
           <section class="panel global-telegram"><div class="panel-head"><div><h2>添加网页用户</h2><p>初始密码为 a123456，首次登录必须修改密码。</p></div></div><form id="web-user-create" class="web-user-create"><label class="field"><span>用户名</span><input id="web-new-username" name="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9_][A-Za-z0-9_.-]{2,31}" autocomplete="off" placeholder="3–32 位字母、数字、下划线、点或短横线"></label><button class="primary-btn" type="submit">＋ 添加用户</button></form></section>

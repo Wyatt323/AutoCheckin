@@ -87,8 +87,36 @@ function readSystemProviders() {
   });
 }
 async function loadSystemSettings() {
-  const data = await api('/api/admin/settings'); systemSettings=data.settings; renderSystemSettings();
+  const [data,network] = await Promise.all([api('/api/admin/settings'),api('/api/admin/proxy')]);
+  systemSettings=data.settings;renderSystemSettings();renderProxySettings(network.proxy);
 }
+
+function renderProxySettings(proxy) {
+  document.querySelector('#proxy-enabled').checked=proxy.enabled;
+  document.querySelector('#proxy-type').value=proxy.type;
+  document.querySelector('#proxy-host').value=proxy.host;
+  document.querySelector('#proxy-port').value=proxy.port;
+  document.querySelector('#proxy-username').value=proxy.username;
+  document.querySelector('#proxy-password').value='';
+  document.querySelector('#proxy-password').placeholder=proxy.hasPassword ? '已保存 · 留空保持不变' : '填写代理密码';
+  document.querySelector('#proxy-clear-password').checked=false;
+  document.querySelector('#proxy-status').textContent=proxy.enabled ? proxy.type.toUpperCase()+' · 已启用' : '未启用';
+  document.querySelector('#proxy-error').hidden=true;
+  UIControls.refresh();
+}
+document.querySelector('#proxy-settings-form').addEventListener('submit',async event=>{
+  event.preventDefault();const button=event.target.querySelector('[type="submit"]');button.disabled=true;
+  const errorElement=document.querySelector('#proxy-error');errorElement.hidden=true;
+  try {
+    const input={enabled:document.querySelector('#proxy-enabled').checked,type:document.querySelector('#proxy-type').value,
+      host:document.querySelector('#proxy-host').value.trim(),port:document.querySelector('#proxy-port').value,
+      username:document.querySelector('#proxy-username').value,password:document.querySelector('#proxy-password').value,
+      clearPassword:document.querySelector('#proxy-clear-password').checked};
+    const data=await api('/api/admin/proxy',{method:'PUT',body:JSON.stringify(input)});
+    renderProxySettings(data.proxy);toast(data.proxy.enabled ? '出口代理已保存并启用，监听任务已重新连接' : '出口代理已关闭');
+  } catch(error) {errorElement.textContent=error.message;errorElement.hidden=false;}
+  finally {button.disabled=false;}
+});
 document.querySelector('#system-add-provider').addEventListener('click',()=>{
   readSystemProviders(); systemSettings.providers.push({sourceIndex:-1,name:'',baseUrl:'',apiKey:''});renderSystemProviders();
 });

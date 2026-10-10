@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
+const {normalizeProxy,proxyView} = require('./outgoing_proxy');
 
 function applySystemConfig(config, settings = {}) {
   const result = structuredClone(config);
@@ -32,7 +33,7 @@ async function createSystemSettings({dataDir, store}) {
       });
       const model = String(input.model || '').trim();
       if ((providers.length && !model) || model.length > 120 || hash.length > 4096) throw Error('AI 模型或 API Hash 格式不正确');
-      const next = {telegram:{api_id:rawId ? Number(rawId) : '',api_hash:hash},ai:{model,providers}};
+      const next = {...settings,telegram:{api_id:rawId ? Number(rawId) : '',api_hash:hash},ai:{model,providers}};
       if (store) await store.write('system-settings',next);
       else { fs.writeFileSync(file+'.tmp',JSON.stringify(next),{mode:0o600});fs.renameSync(file+'.tmp',file); }
       settings = next;
@@ -41,6 +42,16 @@ async function createSystemSettings({dataDir, store}) {
     queue = pending.catch(()=>{});
     return pending;
   }
-  return {read:()=>structuredClone(settings),view,update};
+  function updateProxy(input) {
+    const pending=queue.then(async()=>{
+      const next={...settings,proxy:normalizeProxy(input,settings.proxy)};
+      if (store) await store.write('system-settings',next);
+      else {fs.writeFileSync(file+'.tmp',JSON.stringify(next),{mode:0o600});fs.renameSync(file+'.tmp',file);}
+      settings=next;
+      return proxyView(settings.proxy);
+    });
+    queue=pending.catch(()=>{});return pending;
+  }
+  return {read:()=>structuredClone(settings),view,update,updateProxy,proxyView:()=>proxyView(settings.proxy)};
 }
 module.exports = {createSystemSettings,applySystemConfig};

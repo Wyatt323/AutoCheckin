@@ -22,7 +22,7 @@ async function main() {
     fs.copyFileSync(path.join(__dirname, '..', 'server.js'), path.join(directory, 'server.js'));
     fs.copyFileSync(path.join(__dirname, '..', 'login.js'), path.join(directory, 'login.js'));
     fs.copyFileSync(path.join(__dirname, '..', 'automation.js'), path.join(directory, 'automation.js'));
-    for (const file of ['database.js', 'account_profiles.js', 'admin_auth.js','user_auth.js','system_settings.js','telegram_notifications.js','checkin_results.js', 'schedule_time.js', 'run_history.js', 'checkin_scheduler.js']) fs.copyFileSync(path.join(__dirname, '..', file), path.join(directory, file));
+    for (const file of ['database.js', 'account_profiles.js', 'admin_auth.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','checkin_results.js', 'schedule_time.js', 'run_history.js', 'checkin_scheduler.js']) fs.copyFileSync(path.join(__dirname, '..', file), path.join(directory, file));
     fs.writeFileSync(path.join(directory, 'config.json'), JSON.stringify({
       telegram: { users: [{ name: 'test', session: 'test', api_id: 123, api_hash: 'secret-hash' }, { name: 'second', session: 'second', api_id: 456, api_hash: 'second-hash' }] },
       ai: { model: 'test-model', providers: [{ name: 'primary', base_url: 'https://example.com/v1', api_key: 'secret-key' }] },

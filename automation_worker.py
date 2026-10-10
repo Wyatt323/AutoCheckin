@@ -2,6 +2,7 @@
 """Long-running Telegram scheduler and new-message forwarder."""
 
 from telegram_credentials import resolve_credentials
+from outgoing_proxy import telegram_proxy_kwargs, install_network_guard
 from storage import read_document, write_document, database_enabled, parse_config_text
 import asyncio
 import datetime as dt
@@ -192,7 +193,7 @@ async def main():
                 account_error(session, f"账号 {session} 不存在，跳过其规则")
                 continue
             api_id, api_hash = resolve_credentials(config, user)
-            client = TelegramClient(str(DATA_DIR / session), api_id, api_hash, device_model="AutoCheckin")
+            client = TelegramClient(str(DATA_DIR / session), api_id, api_hash, device_model="AutoCheckin", **telegram_proxy_kwargs())
             connected_clients.append(client)
             try:
                 await client.connect()
@@ -340,6 +341,7 @@ async def main():
 
 if __name__ == "__main__":
     try:
+        install_network_guard()
         sys.exit(asyncio.run(main()))
     except KeyboardInterrupt:
         pass
