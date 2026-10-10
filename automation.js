@@ -31,7 +31,7 @@ function createAutomation() {
 
   function enabledRules(config) {
     const rules = config.automations || {};
-    return [...(rules.schedules || []), ...(rules.forwards || [])].filter(rule => rule.enabled !== false);
+    return [...(rules.schedules || []), ...(rules.forwards || []), ...(rules.forwardPins || [])].filter(rule => rule.enabled !== false);
   }
 
   function start() {

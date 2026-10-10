@@ -14,6 +14,7 @@ function receiveRunState(data) {
   currentRun = data.run;
   activeRunRecords = data.activeRuns || (['running','stopping'].includes(currentRun?.state) ? [currentRun] : []);
   busyRunAccounts = new Set(data.busyAccounts || activeRunRecords.flatMap(run => run.accounts || (run.account ? [run.account] : (config?.users || []).map(user => user.session))));
+  if (typeof renderCleanupStatus === 'function') renderCleanupStatus(data.cleanupRuns || []);
 }
 function runBusy(account = null) {
   if (!account) return startingAccounts.size > 0 || busyRunAccounts.size > 0 || activeRunRecords.some(run => ['running','stopping'].includes(run.state));
@@ -54,7 +55,7 @@ function lineIcon(name) {
 document.querySelectorAll('[data-icon]').forEach(element => { element.innerHTML = lineIcon(element.dataset.icon); });
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]);
 const formatDate = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '—';
-const statusText = { idle:'待运行', running:'运行中', stopping:'正在停止', completed:'已完成', partial:'部分成功', failed:'运行失败', stopped:'已停止' };
+const statusText = { idle:'待运行', running:'运行中', stopping:'正在停止', completed:'已完成', partial:'部分成功', failed:'运行失败', stopped:'已停止', cancelled:'已取消' };
 
 function toast(message, error = false) {
   const el = $('#toast');
@@ -99,6 +100,7 @@ function navigate(view, keepAccount = false, logAccount = null) {
   if (view === 'activity') renderRun();
   if (view === 'audit' && typeof loadAuditUsers === 'function') loadAuditUsers();
   if (view === 'notifications' && typeof loadNotificationSettings === 'function') loadNotificationSettings();
+  if (view === 'features' && typeof renderFeatureCenter === 'function') renderFeatureCenter();
 }
 
 function openAccount(index, section = 'settings') {
@@ -237,6 +239,7 @@ function renderConfig() {
   updateSystemChoices();
   renderAutomation();
   renderCheckinStatus();
+  if (typeof renderFeatureCenter === 'function') renderFeatureCenter();
 }
 
 function renderCheckinStatus() {
@@ -266,6 +269,7 @@ function checkinSettingsSignature(user) {
 
 function rememberSavedCheckinSettings() {
   savedCheckinSettings = new Map(config.users.map(user => [user.session, checkinSettingsSignature(user)]));
+  if(typeof rememberSavedCleanupSettings === 'function')rememberSavedCleanupSettings();
 }
 
 function accountCheckinStatus(user) {
@@ -277,7 +281,8 @@ function accountCheckinStatus(user) {
   if (savedCheckinSettings.get(user.session) !== checkinSettingsSignature(user)) text += '（未保存，保存后生效）';
   const active = activeRunRecords.find(run => (run.accounts || [run.account]).includes(user.session));
   if (runBusy(user.session)) {
-    text += active?.state === 'stopping' ? ' · 当前签到正在停止' : active?.state === 'running' ? ' · 当前签到运行中' : ' · 正在准备签到';
+    const cleanupActive = typeof cleanupRuns !== 'undefined' && cleanupRuns.some(run=>run.account===user.session && ['running','stopping'].includes(run.state));
+    text += cleanupActive ? ' · 群成员清理任务运行中' : active?.state === 'stopping' ? ' · 当前签到正在停止' : active?.state === 'running' ? ' · 当前签到运行中' : ' · 正在准备签到';
   }
   const event = checkinSchedulerState?.events?.filter(item => item.account === user.session).at(-1);
   return {
@@ -416,6 +421,7 @@ function chooseAutoOption(value) {
 
 function renderAutomationState() {
   if (!automationState) return;
+  if (typeof renderFeatureStatus === 'function') renderFeatureStatus();
   const names = { idle:'未启用', starting:'正在启动', running:'运行中', paused:'已暂停', failed:'运行失败', unavailable:'环境未就绪' };
   $('#automation-title').textContent = names[automationState.status] || automationState.status;
   $('#automation-detail').textContent = automationState.message || '';
@@ -472,6 +478,7 @@ function chooseMode(mode) {
 }
 
 function readEditors() {
+  if (typeof readFeatureEditors === 'function') readFeatureEditors();
   config.telegram ||= {};
   config.telegram.useSystem = $('#use-system-api').checked;
   config.useSystemAI = $('#use-system-ai').checked;
@@ -486,7 +493,8 @@ function readEditors() {
     item.botSource = card.querySelector('[data-bot-source]')?.value || (item.dialogFolder ? 'folder' : 'configured');
     item.dialogFolder = card.querySelector('[data-dialog-folder]')?.value || '';
     if (item.session !== previousSession) {
-      for (const kind of ['schedules', 'forwards']) config.automations[kind].forEach(rule => { if (rule.account === previousSession) rule.account = item.session; });
+      for (const kind of ['schedules', 'forwards', 'forwardPins']) (config.automations[kind] || []).forEach(rule => { if (rule.account === previousSession) rule.account = item.session; });
+      (config.plugins?.zeroSpeakers || []).forEach(rule=>{if(rule.account===previousSession)rule.account=item.session;});
     }
     card.querySelectorAll('.account-bot-table tr[data-bot-index]').forEach(row => {
       const bot = item.bots[Number(row.dataset.botIndex)];
@@ -523,8 +531,9 @@ async function saveConfig() {
     renderConfig();
     renderAutomationState();
     renderCheckinStatus();
-    toast('配置已保存，下次运行时生效');
-  } catch (error) { toast(error.message, true); }
+    toast(currentView === 'features' ? '配置已保存' : '配置已保存，下次运行时生效');
+    return true;
+  } catch (error) { toast(error.message, true); return false; }
   finally {
     savingConfig = false;
     $$('.save-btn').forEach(button => { button.disabled = runBusy() || (typeof loginState !== 'undefined' && loginState?.active); });
@@ -552,7 +561,8 @@ async function startRun(account = null) {
 function renderRun() {
   if (!currentRun) return;
   const summary = CheckinResults.summarize(currentRun,currentRun.account);
-  $('#stat-status').textContent = runBusy() ? `${busyRunAccounts.size || startingAccounts.size} 个账号签到中` : summary.label || statusText[summary.state] || summary.state;
+  const cleanupBusy = typeof cleanupRuns !== 'undefined' && cleanupRuns.some(run=>['running','stopping'].includes(run.state));
+  $('#stat-status').textContent = runBusy() ? `${busyRunAccounts.size || startingAccounts.size} 个账号${cleanupBusy ? '任务运行中' : '签到中'}` : summary.label || statusText[summary.state] || summary.state;
   $('#stat-last').textContent = currentRun.startedAt ? `启动于 ${formatDate(currentRun.startedAt)}` : '尚无运行记录';
   const loggingIn = (typeof loginState !== 'undefined' && loginState?.active) || (typeof profileStarting !== 'undefined' && profileStarting);
   $$('#hero-run,#account-run,[data-run-account]').forEach(button => {
@@ -628,6 +638,8 @@ document.addEventListener('click', event => {
         const session = config.users[Number(del.dataset.index)].session;
         config.automations.schedules = config.automations.schedules.filter(item => item.account !== session);
         config.automations.forwards = config.automations.forwards.filter(item => item.account !== session);
+        config.automations.forwardPins = (config.automations.forwardPins || []).filter(item => item.account !== session);
+        if(config.plugins)config.plugins.zeroSpeakers=(config.plugins.zeroSpeakers || []).filter(item=>item.account!==session);
         selectedAccountIndex = null;
       }
       config[field].splice(Number(del.dataset.index), 1);

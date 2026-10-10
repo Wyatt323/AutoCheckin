@@ -73,6 +73,18 @@ async function createDatabase({ dataDir, parseConfig, pool: suppliedPool } = {})
       }
       await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb)',['migration:notifications-v1',JSON.stringify({at:new Date().toISOString()})]);
     }
+    const cleanupMigrated=await client.query("SELECT key FROM autocheckin_documents WHERE key = 'migration:cleanup-jobs-v1'");
+    if(!cleanupMigrated.rows.length) {
+      const directories=[['',dataDir]], tenants=path.join(dataDir,'.user-workspaces');
+      if(fs.existsSync(tenants))for(const entry of fs.readdirSync(tenants,{withFileTypes:true}))if(entry.isDirectory() && /^[a-f0-9-]{36}$/.test(entry.name))directories.push(['tenant:'+entry.name+':',path.join(tenants,entry.name)]);
+      for(const [prefix,directory] of directories) {
+        const jobs=path.join(directory,'.cleanup-jobs');
+        if(fs.existsSync(jobs))for(const file of fs.readdirSync(jobs).filter(file=>/^[a-f0-9-]{36}\.json$/.test(file))) {
+          await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb) ON CONFLICT(key) DO NOTHING',[prefix+'cleanup-job:'+file.slice(0,-5),fs.readFileSync(path.join(jobs,file),'utf8')]);
+        }
+      }
+      await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb)',['migration:cleanup-jobs-v1',JSON.stringify({at:new Date().toISOString()})]);
+    }
     await client.query('COMMIT');
     if (importedCount !== null) console.log(`旧数据迁移完成：${importedCount} 项；源文件已保留。`);
     for (const row of (await client.query('SELECT key, value FROM autocheckin_documents')).rows) documents.set(row.key, row.value);

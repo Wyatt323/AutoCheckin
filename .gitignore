@@ -6,6 +6,7 @@ config.json
 .user-workspaces/
 .account-profiles/
 .bot-discovery/
+.cleanup-jobs/
 node_modules/
 data/
 *.session

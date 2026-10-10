@@ -63,7 +63,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
   const workerEnv = {AUTOCHECKIN_DOCUMENT_PREFIX:prefix,AUTOCHECKIN_SYSTEM_DATA_DIR:path.resolve(process.env.AUTOCHECKIN_DATA_DIR || ROOT)};
   const automation = createAutomation();
   const notifications = await createTelegramNotifications({dataDir,store});
-  let history, profiles, login, scheduler, chatResolver;
+  let history, profiles, login, scheduler, chatResolver, cleanup;
   const activeRuns = new Map(), reservedAccounts = new Set(), nextRunAt = new Map(), launches = new Set();
   const shutdownController = new AbortController();
   let latestRun, shuttingDown = false, editingConfig = false;
@@ -132,8 +132,10 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
       })),
       automations: {
         schedules: Array.isArray(config.automations?.schedules) ? config.automations.schedules : [],
-        forwards: Array.isArray(config.automations?.forwards) ? config.automations.forwards : []
+        forwards: Array.isArray(config.automations?.forwards) ? config.automations.forwards : [],
+        forwardPins: Array.isArray(config.automations?.forwardPins) ? config.automations.forwardPins : []
       },
+      plugins: {zeroSpeakers:Array.isArray(config.plugins?.zeroSpeakers) ? config.plugins.zeroSpeakers : []},
       model: ai.model || '',
       providers: (ai.providers || [{ name: 'default', api_key: ai.api_key, base_url: ai.base_url }]).map((provider, sourceIndex) => ({
         sourceIndex, name: provider.name || '', baseUrl: provider.base_url || '', hasApiKey: Boolean(provider.api_key)
@@ -158,7 +160,8 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
   function validateAutomations(input, users) {
     const schedules = input?.schedules || [];
     const forwards = input?.forwards || [];
-    if (!Array.isArray(schedules) || !Array.isArray(forwards) || schedules.length > 100 || forwards.length > 100) throw new Error('自动化规则格式不正确或数量过多');
+    const forwardPins = input?.forwardPins || [];
+    if (![schedules, forwards, forwardPins].every(items => Array.isArray(items) && items.length <= 100)) throw new Error('自动化规则格式不正确或数量过多');
     const sessions = new Set(users.map(user => user.session));
     const ids = new Set();
     const idFor = (item, label) => {
@@ -185,11 +188,33 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
       if (source.toLowerCase() === target.toLowerCase()) throw new Error(`${label} 的来源和目标不能相同`);
       return { id: idFor(item, label), enabled: item.enabled !== false, account: accountFor(item, label), source, target };
     });
+    const normalizedForwardPins = forwardPins.map((item, index) => {
+      const label = `监听转发并置顶规则 ${index + 1}`;
+      if (!Array.isArray(item.sources) || !item.sources.length || item.sources.length > 20) throw new Error(`${label} 需要 1–20 个监听来源`);
+      const target = chatRef(item.target, `${label} 目标`);
+      const seen = new Set();
+      const sources = item.sources.map(value => chatRef(value, `${label} 来源`)).filter(value => {
+        const key = value.toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true;
+      });
+      if (sources.some(value => value.toLowerCase() === target.toLowerCase())) throw new Error(`${label} 的来源和目标不能相同`);
+      const keywords = item.keywords ?? [];
+      if (!Array.isArray(keywords) || keywords.length > 50 || keywords.some(value => typeof value !== 'string' || value.length > 100)) throw new Error(`${label} 最多配置 50 个关键词，每个不超过 100 字`);
+      const unique = new Set();
+      const normalizedKeywords = keywords.map(value => value.trim()).filter(value => {
+        const key = value.toLowerCase(); if (!value || unique.has(key)) return false; unique.add(key); return true;
+      });
+      if (item.pinAfterForward !== undefined && typeof item.pinAfterForward !== 'boolean') throw new Error(`${label} 的置顶开关无效`);
+      return {id:idFor(item,label), enabled:item.enabled !== false, name:String(item.name || '').trim().slice(0,80),
+        account:accountFor(item,label), sources,target,keywords:normalizedKeywords,pinAfterForward:item.pinAfterForward === true};
+    });
     const links = new Map();
-    for (const rule of normalizedForwards.filter(rule => rule.enabled)) {
-      const from = `${rule.account}:${rule.source.toLowerCase()}`;
-      const to = `${rule.account}:${rule.target.toLowerCase()}`;
-      links.set(from, [...(links.get(from) || []), to]);
+    for (const rule of [...normalizedForwards, ...normalizedForwardPins].filter(rule => rule.enabled)) {
+      const to = rule.target.toLowerCase();
+      for (const source of rule.sources || [rule.source]) {
+        // Different TG accounts can still create a loop between the same chats.
+        const from = source.toLowerCase();
+        links.set(from, [...(links.get(from) || []), to]);
+      }
     }
     const visiting = new Set();
     const visited = new Set();
@@ -202,7 +227,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
       visited.add(node);
     }
     for (const node of links.keys()) visit(node);
-    return { schedules: normalizedSchedules, forwards: normalizedForwards };
+    return { schedules: normalizedSchedules, forwards: normalizedForwards, forwardPins:normalizedForwardPins };
   }
 
   function validateCheckinSchedules(input, name, botCount) {
@@ -298,6 +323,16 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
     delete original.bot_groups;
     delete original.bot_notes;
     original.automations = validateAutomations(input.automations, users);
+    const cleanupRules = input.plugins?.zeroSpeakers || [];
+    if (!Array.isArray(cleanupRules) || cleanupRules.length > 100) throw new Error('清理0发言群员规则格式不正确或超过 100 条');
+    const cleanupIds = new Set();
+    original.plugins = {...(original.plugins || {}), zeroSpeakers:cleanupRules.map((item,index) => {
+      const label = `清理0发言群员规则 ${index + 1}`, id = String(item.id || '');
+      if (!/^[A-Za-z0-9_-]{8,80}$/.test(id) || cleanupIds.has(id)) throw new Error(`${label} 标识无效或重复`);
+      cleanupIds.add(id);
+      if (!users.some(user => user.session === item.account)) throw new Error(`${label} 的账号不存在`);
+      return {id,name:String(item.name || '').trim().slice(0,80),account:item.account,group:chatRef(item.group,`${label} 群组`)};
+    })};
     const temp = `${CONFIG}.tmp`;
     if (database) await database.write('config', original);
     else {
@@ -466,7 +501,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
 
   history = require('./run_history').createRunHistory(DATA_ROOT, database);
   profiles = require('./account_profiles').createProfileStore(DATA_ROOT, database);
-  latestRun = history.latest() || { state:'idle', lines:[] };
+  latestRun = history.snapshot({category:'checkin'}).records.at(-1) || { state:'idle', lines:[] };
   for (const record of history.snapshot({category:'checkin'}).records) {
     for (const session of record.accounts || (record.account ? [record.account] : Object.keys(record.accountStates || {}))) {
       if (record.finishedAt) nextRunAt.set(session, Math.max(nextRunAt.get(session) || 0, Date.parse(record.finishedAt) + 5000));
@@ -512,6 +547,25 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
     },
     async handle(req,res,url,authUser) {
         if (shuttingDown) return send(res,403,{error:'当前用户工作空间已关闭'});
+        if (url.pathname.startsWith('/api/features/zero-speakers')) {
+          cleanup ||= require('./cleanup').createCleanupController({root:ROOT,dataDir:DATA_ROOT,store:database,workerEnv,history,readConfig,pythonCommand,
+            acquire:account => {
+              if (accountBusy(account)) throw new Error('此账号已有任务运行，或正在保存配置、登录');
+              reservedAccounts.add(account);
+            },
+            pause:() => automation.stop(),
+            release:account => {reservedAccounts.delete(account);if(!shuttingDown){automation.start();if(scheduler.getState().queued)scheduler.tick();}},
+            canStart:() => !shuttingDown});
+          if (url.pathname === '/api/features/zero-speakers' && req.method === 'GET') return send(res,200,{runs:cleanup.view()});
+          if (url.pathname === '/api/features/zero-speakers/run' && req.method === 'POST') return send(res,202,{run:await cleanup.start((await bodyJson(req)).ruleId)});
+          if (url.pathname === '/api/features/zero-speakers/stop' && req.method === 'POST') {await cleanup.stop((await bodyJson(req)).id);return send(res,200,{runs:cleanup.view()});}
+          if (url.pathname === '/api/features/zero-speakers/report' && req.method === 'GET') {
+            const file = cleanup.report(url.searchParams.get('id'));
+            res.writeHead(200,{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':'attachment; filename="zero-speakers.xlsx"','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});
+            return fs.createReadStream(file).pipe(res);
+          }
+          return send(res,404,{error:'插件接口不存在'});
+        }
         if(url.pathname==='/api/notifications') {
           if(req.method==='GET')return send(res,200,{notifications:notifications.view()});
           if(req.method==='PUT')return send(res,200,{notifications:await notifications.update(await bodyJson(req))});
@@ -564,7 +618,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
         }
         if (req.method === 'GET' && url.pathname === '/api/runs') return send(res, 200, history.snapshot({account:url.searchParams.get('account') || '', category:url.searchParams.get('category') || ''}));
         if (req.method === 'GET' && url.pathname === '/api/state') {
-          const state = { user: authUser, run:publicRun(latestRun), activeRuns:[...activeRuns.values()].map(job => publicRun(job.run)), busyAccounts:[...reservedAccounts], automation: automation.getState(), checkinScheduler: scheduler.getState(), python: pythonCommand()?.version || null };
+          const state = { user: authUser, run:publicRun(latestRun), activeRuns:[...activeRuns.values()].map(job => publicRun(job.run)), busyAccounts:[...reservedAccounts], cleanupRuns:cleanup?.view() || history.snapshot({category:'plugin'}).records.filter(run=>run.plugin==='zeroSpeakers').slice(-20).map(publicRun), automation: automation.getState(), checkinScheduler: scheduler.getState(), python: pythonCommand()?.version || null };
           // Routine polling needs status only; initial load and explicit refresh keep the full response.
           if (url.searchParams.get('config') !== '0') state.config = viewConfig(readConfig());
           return send(res, 200, state);
@@ -588,6 +642,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
         if (req.method === 'POST' && url.pathname === '/api/automation/restart') { if (busy() || login.active() || shuttingDown) throw new Error('运行或登录期间不能重启自动化'); await automation.restart(); return send(res, 200, { automation: automation.getState() }); }
         if (req.method === 'POST' && url.pathname === '/api/stop') {
           const input = await bodyJson(req);
+          if (input.id && cleanup && history.find(input.id)?.plugin === 'zeroSpeakers') {await cleanup.stop(input.id);return send(res,200,{ok:true});}
           const job = input.id ? activeRuns.get(input.id) : activeRuns.size === 1 ? activeRuns.values().next().value : null;
           if (!job || !['running','stopping'].includes(job.run.state)) throw new Error(activeRuns.size > 1 && !input.id ? '多个任务正在运行，请指定要停止的任务' : '此任务已结束或不属于当前用户');
           const {run, child} = job;
@@ -602,6 +657,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings}) {
       shuttingDown = true;
       shutdownController.abort();
       scheduler.stop();
+      await cleanup?.shutdown();
       await Promise.allSettled([...launches]);
       await Promise.all([...activeRuns.values()].map(async job => {
         const worker = job.child;
@@ -728,7 +784,7 @@ http.createServer(async (req, res) => {
     }
     if (req.method !== 'GET') return send(res, 405, { error: '不支持的请求' });
     const file = url.pathname === '/' ? 'index.html' : ['/login','/password'].includes(url.pathname) ? 'auth.html' : url.pathname.slice(1);
-    if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css', 'run-log.js', 'checkin-results.js', 'run-log.css', 'ui-controls.js', 'users.js', 'audit.js', 'notifications.js', 'ui-controls.css', 'theme.css', 'favicon.svg'].includes(file)) return send(res, 404, { error: '页面不存在' });
+    if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'features.js', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css', 'run-log.js', 'checkin-results.js', 'run-log.css', 'ui-controls.js', 'users.js', 'audit.js', 'notifications.js', 'ui-controls.css', 'theme.css', 'favicon.svg'].includes(file)) return send(res, 404, { error: '页面不存在' });
     const target = file==='checkin-results.js' ? path.join(ROOT,'checkin_results.js') : path.join(PUBLIC, file);
     res.writeHead(200, { 'Content-Type': types[path.extname(file)], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     fs.createReadStream(target).pipe(res);

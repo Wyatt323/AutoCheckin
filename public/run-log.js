@@ -35,7 +35,7 @@ function filterRunLogs(records, filter, accounts = []) {
   return rows.sort((a,b) => Date.parse(a.time) - Date.parse(b.time));
 }
 function runLogGroupsHtml(rows, accountLabel) {
-  const groups = new Map(), categories = {checkin:'定时任务',message:'定时消息',forward:'监听转发'};
+  const groups = new Map(), categories = {checkin:'定时任务',message:'定时消息',forward:'监听转发',plugin:'功能插件'};
   for (const row of rows) {
     const key = JSON.stringify([row.runId,row.account,row.category]);
     if (!groups.has(key)) groups.set(key,[]);
@@ -52,7 +52,7 @@ function runLogGroupsHtml(rows, accountLabel) {
 if (typeof module !== 'undefined') module.exports = { beijingParts, filterRunLogs };
 if (typeof document !== 'undefined') {
   let runRecords = [], modalRunId = null, lastRevision = -1, polling = false, logScope = null, lastQuery = null;
-  const categories = {checkin:'定时任务', message:'定时消息', forward:'监听转发'};
+  const categories = {checkin:'定时任务', message:'定时消息', forward:'监听转发',plugin:'功能插件'};
   const dialog = document.createElement('dialog');
   dialog.id = 'run-log-dialog';
   dialog.setAttribute('aria-labelledby', 'run-log-title');
@@ -82,7 +82,7 @@ if (typeof document !== 'undefined') {
     select.disabled = Boolean(logScope);
     const user = config?.users.find(user => user.session === logScope);
     $('#log-page-title').textContent = logScope ? `${user?.name || logScope} · 运行日志` : '运行日志';
-    $('#log-page-description').textContent = logScope ? '仅显示当前账号的定时任务、定时消息和监听转发记录。' : '查看全部账号的定时任务、定时消息和监听转发记录。';
+    $('#log-page-description').textContent = logScope ? '仅显示当前账号的签到、消息、转发与功能插件运行记录。' : '查看全部账号的签到、消息、转发与功能插件运行记录。';
     $('#log-back').hidden = !logScope || accountDialog.contains(historyContent);
     $('#log-error').hidden = true;
     // Drop the previous account's result immediately; revision alone is not a scope identity.
@@ -152,8 +152,8 @@ if (typeof document !== 'undefined') {
     if (!dialog.open) return;
     const run = runRecords.find(run => run.id === modalRunId);
     if (!run) { $('#run-log-status').textContent = '此记录已超出保留范围'; $('#run-log-stop').disabled = true; return; }
-    $('#run-log-target').textContent = `${labelFor(run)} · ${run.trigger === 'scheduled' ? '定时执行' : '手动执行'} · ${formatDate(run.startedAt)}`;
-    const summary = LogResults.summarize(run,run.account);
+    $('#run-log-target').textContent = `${labelFor(run)}${run.category==='plugin' ? ' · '+run.name+' · '+run.group : ''} · ${run.trigger === 'scheduled' ? '定时执行' : '手动执行'} · ${formatDate(run.startedAt)}`;
+    const summary = run.category==='plugin' ? {state:run.state,counts:{total:0}} : LogResults.summarize(run,run.account);
     $('#run-log-status').textContent = `${summary.label || statusText[summary.state] || summary.state}${summary.counts.total ? ` · 成功 ${summary.counts.success} / ${summary.counts.total} · 超时 ${summary.counts.timeout} · 失败 ${summary.counts.failed}` : ''}${run.finishedAt ? ` · 结束：${formatDate(run.finishedAt)}` : ''}`;
     $('#run-log-stop').disabled = run.state !== 'running';
     setOutput($('#run-log-output'), run.lines.length ? run.lines.map(line => lineHtml(line)).join('') : '<div class="log-empty">等待任务输出…</div>');
@@ -184,7 +184,7 @@ if (typeof document !== 'undefined') {
   dialog.addEventListener('cancel', event => { event.preventDefault(); dialog.close(); });
   $('#run-log-stop').addEventListener('click', async () => {
     const runId = modalRunId;
-    const accepted = typeof UIControls !== 'undefined' ? await UIControls.confirm({ title:'停止本次签到', message:'确定停止本次签到任务？关闭日志窗口不会停止任务。', confirmText:'停止任务' }) : confirm('确定停止本次签到任务？关闭日志窗口不会停止任务。');
+    const accepted = typeof UIControls !== 'undefined' ? await UIControls.confirm({ title:'停止本次任务', message:'确定停止本次任务？已完成的操作不会撤销，关闭日志窗口不会停止任务。', confirmText:'停止任务' }) : confirm('确定停止本次任务？');
     if (!accepted) return;
     try {
       await api('/api/stop', { method: 'POST', body: JSON.stringify({ id: runId }) });

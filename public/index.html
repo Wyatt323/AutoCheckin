@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/account-dashboard.css">
   <script src="/checkin-results.js" defer></script>
   <script src="/app.js" defer></script>
+  <script src="/features.js" defer></script>
   <script src="/login.js" defer></script>
   <script src="/run-log.js" defer></script>
   <link rel="stylesheet" href="/run-log.css">
@@ -60,13 +61,25 @@
           </div>
         </section>
         <section class="view" id="view-features" aria-labelledby="feature-center-title">
-          <div class="page-heading"><div><span class="kicker">FEATURE CENTER</span><h1 id="feature-center-title">功能中心</h1><p>更多功能与配置入口，将在这里集中开放。</p></div></div>
-          <section class="panel feature-center-empty" aria-labelledby="feature-center-empty-title">
-            <div class="feature-center-symbol" data-icon="features" aria-hidden="true">⊞</div>
-            <span class="feature-center-badge">即将开放</span>
-            <h2 id="feature-center-empty-title">更多功能，准备登场</h2>
-            <p>功能中心已准备就绪。新的功能确定后，会在这里逐步开放配置。</p>
-            <button class="outline-btn" type="button" data-go="accounts">前往账号管理 <span aria-hidden="true">↗</span></button>
+          <div class="page-heading"><div><span class="kicker">FEATURE CENTER</span><h1 id="feature-center-title">功能中心</h1><p>为你的账号添加更多自动化能力，每条规则都独立配置。</p></div></div>
+          <div id="feature-catalog" class="feature-catalog">
+            <article class="panel feature-plugin-card"><div class="feature-plugin-heading"><span class="feature-plugin-icon" data-icon="forward" aria-hidden="true">↗</span><span class="feature-center-badge">消息插件</span></div><h2>监听转发并置顶</h2><p>监听多个群组或频道，筛选关键词，将新消息转发到目标会话，并按需置顶。</p><div class="feature-plugin-tags"><span>多来源监听</span><span>关键词过滤</span><span>可选置顶</span></div><div class="feature-plugin-footer"><small id="forward-pin-count">尚无规则</small><button class="primary-btn" id="open-forward-pin" type="button">配置插件 <span aria-hidden="true">→</span></button></div></article>
+            <article class="panel feature-plugin-card"><div class="feature-plugin-heading"><span class="feature-plugin-icon" data-icon="account" aria-hidden="true">♧</span><span class="feature-center-badge">群管理插件</span></div><h2>清理0发言群员</h2><p>检测群内历史未发言成员，发送 Excel 名单，由执行账号在群内确认是否清理。</p><div class="feature-plugin-tags"><span>Excel 名单</span><span>群内确认</span><span>可再次进群</span></div><div class="feature-plugin-footer"><small id="zero-speakers-count">尚无规则</small><button class="primary-btn" id="open-zero-speakers" type="button">配置插件 <span aria-hidden="true">→</span></button></div></article>
+          </div>
+          <section id="forward-pin-editor" hidden aria-labelledby="forward-pin-title">
+            <button class="account-back" id="close-forward-pin" type="button">← 返回功能列表</button>
+            <div class="page-heading"><div><span class="kicker">LISTEN · FORWARD · PIN</span><h2 id="forward-pin-title">监听转发并置顶</h2><p>每条规则选择一个执行账号，监听一个或多个来源，并转发到指定目标。</p></div><button class="outline-btn" id="add-forward-pin" type="button">＋ 添加规则</button></div>
+            <div class="notice feature-plugin-notice"><span>ⓘ</span><div><p>关键词命中任意一个即可转发，忽略大小写；不填关键词则转发全部新消息，支持文字及媒体说明。</p><p>执行账号需能访问来源并向目标发送消息；开启置顶还需要目标会话的置顶权限。签到或登录期间监听会暂停。</p></div></div>
+            <div class="feature-plugin-runtime"><span id="feature-runtime-status" role="status">读取运行状态…</span><button class="outline-btn" id="feature-forward-logs" type="button">查看转发日志</button></div>
+            <div id="forward-pin-rules" class="automation-list"></div>
+            <div class="bottom-save"><small>保存后自动应用规则，配置与日志仅属于当前用户。</small><button class="primary-btn save-btn" type="button">保存插件规则</button></div>
+          </section>
+          <section id="zero-speakers-editor" hidden aria-labelledby="zero-speakers-title">
+            <button class="account-back" id="close-zero-speakers" type="button">← 返回功能列表</button>
+            <div class="page-heading"><div><span class="kicker">GROUP MEMBER CLEANUP</span><h2 id="zero-speakers-title">清理0发言群员</h2><p>保存规则后手动启动检测，清理操作由执行账号在 Telegram 群内确认。</p></div><button class="outline-btn" id="add-zero-speakers" type="button">＋ 添加规则</button></div>
+            <div class="notice feature-plugin-notice"><span>ⓘ</span><div><p>按执行账号可访问且未删除的群历史判断“0发言”，无法确认不可见或已删除的历史。Excel 会注明检测范围；执行账号和管理员不清理。</p><p>需要群管理员及移除成员权限。报告发出后，由执行账号在同一群发送“是”或“否”，其他成员回复无效；30分钟未确认会自动取消。</p><p>检测与等待确认期间会占用此 TG 账号，消息自动化暂停；其他账号仍可签到。成员移出后解除个人限制，下次进群沿用群原有申请规则。</p></div></div>
+            <div id="zero-speakers-rules" class="automation-list"></div>
+            <div class="bottom-save"><small>配置按用户独立保存；启动检测前自动保存当前配置。</small><button class="primary-btn save-btn" type="button">保存插件规则</button></div>
           </section>
         </section>
         <section class="view" id="view-ai"><div class="page-heading"><div><span class="kicker">AI SETTINGS</span><h1>AI 管理</h1><p>诗词验证码会依次尝试下方 AI 服务。普通图片验证码由本地 OCR 处理。</p></div><button class="primary-btn" id="add-provider">＋ 添加服务</button></div><label class="system-choice panel"><input id="use-system-ai" type="checkbox"><span><strong>使用系统全局 AI 提供商</strong><small id="system-ai-summary"></small></span></label><div class="panel settings-panel"><div class="panel-head"><div><h3>通用设置</h3><p>用于所有账号的签到任务。</p></div></div><div class="field-grid"><label class="field"><span>我的 AI 模型名称</span><input id="model-input" placeholder="例如 gpt-4o-mini"></label></div></div><div class="section-heading compact"><div><h2>服务列表</h2><p>按列表顺序尝试，前一个不可用时自动切换。</p></div></div><div id="provider-list" class="provider-list"></div><div class="bottom-save"><button class="primary-btn save-btn">保存配置</button></div></section>

@@ -195,7 +195,7 @@ class WorkerLifecycleTests(unittest.IsolatedAsyncioTestCase):
             async def disconnect(self):
                 order.append('disconnected')
         config = {'telegram': {'users': [{'name': 'test', 'api_id': 1, 'api_hash': 'dummy'}]}, 'automations': {'schedules': [{'id': 's', 'account': 'test', 'target': '@target', 'message': 'offline', 'repeat': 'daily', 'time': '00:00'}]}}
-        with patch.object(sys.modules['telethon'], 'TelegramClient', Client), patch.object(worker, 'load_config', return_value=config), patch.object(worker, 'load_sent', return_value={}), patch.object(worker, 'occurrence', return_value='due'):
+        with patch.object(sys.modules['telethon'], 'TelegramClient', Client), patch.object(worker, 'load_config', return_value=config), patch.object(worker, 'load_state', return_value={'sent': {}, 'planned': {}, 'claimed': {}}), patch.object(worker, 'save_sent'), patch.object(worker, 'occurrence', return_value='due'):
             task = asyncio.create_task(worker.main())
             try:
                 await asyncio.wait_for(entered.wait(), 1)

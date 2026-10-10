@@ -51,8 +51,8 @@ function createRunHistory(dataRoot, store = null) {
     else if (!timer) { timer = setTimeout(() => Promise.resolve(flush()).catch(() => {}), 250); timer.unref(); }
   }
   return {
-    create(account, trigger) {
-      const record = { id: randomUUID(), category:'checkin', account: account || null, trigger, state: 'running', startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, lines: [] };
+    create(account, trigger, category = 'checkin') {
+      const record = { id: randomUUID(), category, account: account || null, trigger, state: 'running', startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, lines: [] };
       records.push(record); changed(true); return record;
     },
     changed, flush,

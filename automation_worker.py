@@ -98,6 +98,48 @@ def chat_value(value):
     return int(text) if re.fullmatch(r"-?\d+", text) else text
 
 
+def matches_keywords(message, keywords):
+    """Literal, case-insensitive OR matching in message text / media captions."""
+    if not keywords:
+        return True
+    text = message if isinstance(message, str) else getattr(message, 'raw_text', None) or getattr(message, 'message', '')
+    text = str(text or '').casefold()
+    return any(str(keyword).casefold() in text for keyword in keywords if str(keyword).strip())
+
+
+async def forward_message(rule, client, target, message, source):
+    label = f"[{rule['name']}] " if rule.get('name') else ''
+
+    async def retry(operation, stage):
+        while True:
+            try:
+                return await operation()
+            except Exception as error:
+                wait = getattr(error, 'seconds', None)
+                if not isinstance(wait, int) or not 0 < wait <= 3600:
+                    raise
+                emit_rule(rule, 'forward', f"{label}{stage}触发 Telegram 限流，等待 {wait} 秒后重试", 'error', state='running')
+                await asyncio.sleep(wait + 1)
+
+    try:
+        forwarded = await retry(lambda: client.forward_messages(target, message), '转发')
+    except Exception as error:
+        emit_rule(rule, 'forward', f"{label}转发 {source} → {rule['target']} 失败：{error}", 'error')
+        return
+    if rule.get('pinAfterForward') is True:
+        try:
+            pinned = next((item for item in reversed(forwarded) if item is not None), None) if isinstance(forwarded, (list, tuple)) else forwarded
+            if pinned is None:
+                raise ValueError('未返回目标消息，无法置顶')
+            await retry(lambda: client.pin_message(target, pinned, notify=False), '置顶')
+        except Exception as error:
+            emit_rule(rule, 'forward', f"{label}消息已转发 {source} → {rule['target']}，但置顶失败（请检查目标会话的置顶权限）：{error}", 'error')
+            return
+        emit_rule(rule, 'forward', f"{label}已转发并置顶 {source} 的新消息至 {rule['target']}")
+    else:
+        emit_rule(rule, 'forward', f"{label}已转发 {source} 的新消息至 {rule['target']}")
+
+
 def occurrence(rule, now, plan=None):
     """Daily minute legacy: 60s; seconds/random: 10s; once: 300s."""
     value = plan["time"] if rule.get("timeMode") == "random" and plan else rule.get("time")
@@ -124,7 +166,7 @@ async def main():
     config = load_config()
     rules = config.get("automations") or {}
     schedules = [rule for rule in rules.get("schedules", []) if rule.get("enabled", True)]
-    forwards = [rule for rule in rules.get("forwards", []) if rule.get("enabled", True)]
+    forwards = [rule for rule in [*rules.get("forwards", []), *rules.get("forwardPins", [])] if rule.get("enabled", True)]
     required = {rule["account"] for rule in schedules + forwards}
     users = {str(user.get("session") or user["name"]): user for user in config.get("telegram", {}).get("users", [])}
     clients = {}
@@ -176,45 +218,49 @@ async def main():
             client = clients.get(rule["account"])
             if not client:
                 continue
+            source_values = rule.get('sources') or [rule['source']]
+            source_label = '、'.join(source_values)
             try:
-                source = await client.get_input_entity(chat_value(rule["source"]))
                 target = await client.get_input_entity(chat_value(rule["target"]))
             except Exception as error:
-                emit_rule(rule, 'forward', f"转发规则 {rule['source']} → {rule['target']} 无法解析会话：{error}", "error")
+                emit_rule(rule, 'forward', f"转发规则 {source_label} → {rule['target']} 无法解析目标会话：{error}", "error")
+                continue
+            sources = []
+            for value in source_values:
+                try:
+                    source = await client.get_input_entity(chat_value(value))
+                    if source == target:
+                        raise ValueError('来源和目标指向同一会话')
+                    if source not in sources:
+                        sources.append(source)
+                except Exception as error:
+                    emit_rule(rule, 'forward', f"监听来源 {value} 无法启用：{error}", 'error')
+            if not sources:
                 continue
 
             queue = asyncio.Queue(maxsize=500)
 
-            async def forward_loop(*, rule=rule, client=client, target=target, queue=queue):
+            async def forward_loop(*, rule=rule, client=client, target=target, queue=queue, source_label=source_label):
                 while True:
                     message = await queue.get()
                     try:
-                        while True:
-                            try:
-                                await client.forward_messages(target, message)
-                                emit_rule(rule, 'forward', f"已转发 {rule['source']} 的新消息至 {rule['target']}")
-                                break
-                            except Exception as error:
-                                wait = getattr(error, "seconds", None)
-                                if isinstance(wait, int) and 0 < wait <= 3600:
-                                    emit_rule(rule, 'forward', f"转发触发 Telegram 限流，等待 {wait} 秒后重试", "error", state='running')
-                                    await asyncio.sleep(wait + 1)
-                                else:
-                                    emit_rule(rule, 'forward', f"转发 {rule['source']} → {rule['target']} 失败：{error}", "error")
-                                    break
+                        await forward_message(rule, client, target, message, source_label)
                     finally:
                         queue.task_done()
 
-            async def forward_handler(event, *, rule=rule, queue=queue):
+            async def forward_handler(event, *, rule=rule, queue=queue, source_label=source_label):
+                if not matches_keywords(event.message, rule.get('keywords', [])):
+                    return
                 try:
                     queue.put_nowait(event.message)
                 except asyncio.QueueFull:
-                    emit_rule(rule, 'forward', f"转发队列已满，无法处理 {rule['source']} 的新消息", "error")
+                    emit_rule(rule, 'forward', f"转发队列已满，无法处理 {source_label} 的新消息", "error")
 
-            client.add_event_handler(forward_handler, events.NewMessage(chats=source))
+            client.add_event_handler(forward_handler, events.NewMessage(chats=sources if rule.get('sources') else sources[0]))
             forward_tasks.append(asyncio.create_task(forward_loop()))
             active_forwards += 1
-            emit_rule(rule, 'forward', f"开始监听 {rule['source']} → {rule['target']}")
+            matching = f"任意关键词：{'、'.join(rule['keywords'])}" if rule.get('keywords') else '全部新消息'
+            emit_rule(rule, 'forward', f"开始监听 {source_label} → {rule['target']} · {matching}" + (' · 转发后置顶' if rule.get('pinAfterForward') is True else ''))
 
         emit(f"自动化运行中：{len(schedules)} 条定时消息，{active_forwards} 条转发监听", kind="ready")
 

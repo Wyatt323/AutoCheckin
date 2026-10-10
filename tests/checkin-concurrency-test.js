@@ -76,8 +76,10 @@ def execute(account):
     fd=os.open(lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
     try:
         prefix=os.environ.get('AUTOCHECKIN_DOCUMENT_PREFIX','')
-        with (root/'executions.jsonl').open('a') as handle:
-            handle.write(json.dumps(dict(account=account,prefix=prefix,started=time.time()))+'\\n')
+        # Windows append writes from separate handles can overwrite each other.
+        with output_lock:
+            with (root/'executions.jsonl').open('a') as handle:
+                handle.write(json.dumps(dict(account=account,prefix=prefix,started=time.time()))+'\\n')
         emit(dict(type='checkin_log',account=account,text=prefix+' '+account))
         time.sleep(20 if '--bot' in sys.argv else 3)
         emit(dict(type='bot_result',account=account,bot='@offline_bot',status='success',note=prefix,result='success'))
@@ -199,7 +201,8 @@ else:
     assert.deepEqual(batchRecord.accountStates,{shared:'completed',second:'completed'});
     assert.equal(batchRecord.botResults?.length,2,JSON.stringify(batchRecord));
     const batchExecutions=fs.readFileSync(path.join(tenant.directory,'executions.jsonl'),'utf8').trim().split('\n').slice(-2).map(JSON.parse);
-    assert.ok(Math.abs(batchExecutions[0].started-batchExecutions[1].started)<1,'batch worker starts both accounts in parallel');
+    assert.deepEqual(batchExecutions.map(item=>item.account).sort(),['second','shared']);
+    assert.ok(Math.abs(batchExecutions[0].started-batchExecutions[1].started)<1,'batch worker starts both accounts in parallel: '+JSON.stringify(batchExecutions));
     const totals=await Promise.all(tenants.map(t=>records(t.cookie).then(items=>items.length)));
     const executionCounts=tenants.map(t=>fs.readFileSync(path.join(t.directory,'executions.jsonl'),'utf8').trim().split('\n').length);
     await stop(); await start();
