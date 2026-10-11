@@ -89,7 +89,7 @@ async function createTelegramNotifications({dataDir,store=null,fetchImpl=fetch,n
             method:'POST',headers:{'Content-Type':'application/json'},
             body:JSON.stringify({chat_id:settings.chatId,text:job.text,link_preview_options:{is_disabled:true}}),
             signal:activeController.signal,redirect:'error'
-          });
+          },{account:job.account});
           const body=await response.json();
           if(!response.ok || body.ok!==true) {
             const code=Number(body.error_code || response.status);

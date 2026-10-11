@@ -140,7 +140,11 @@ function createProxyFetch(readProxy, {nativeFetch = globalThis.fetch} = {}) {
 // Install once at server startup. HTTP clients share this policy even if a module
 // forgets to request the explicit proxy fetch. Raw TCP clients cannot bypass it.
 function installOutgoingNetwork(readProxy, {databaseEndpoints = []} = {}) {
+  const context=new (require('node:async_hooks').AsyncLocalStorage)();
+  const readDefault=readProxy;
+  readProxy=()=>{const fallback=readDefault();return context.getStore()?.proxy ?? fallback;};
   const network=createProxyFetch(readProxy);
+  network.withProxy=(proxy,callback)=>context.run({proxy},callback);
   const originalFetch=globalThis.fetch, originalConnect=net.Socket.prototype.connect;
   const originalHttp=http.Agent.prototype.createConnection, originalHttps=https.Agent.prototype.createConnection;
   const sockets=new Set(), pending=new Set();

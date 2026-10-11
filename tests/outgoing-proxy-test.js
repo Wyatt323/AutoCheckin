@@ -26,7 +26,7 @@ const context=tls.createSecureContext({key,cert:certificate});
       function data(chunk) {
         buffer=Buffer.concat([buffer,chunk]);
         if (phase==='connect' && buffer.includes('\r\n\r\n')) {
-          const header=buffer.toString();connections.push({type,header});
+          const header=buffer.toString();connections.push({type,header,proxyPort:socket.localPort});
           if (reject) {socket.end('HTTP/1.1 407 Proxy Authentication Required\r\n\r\n');return;}
           socket.write('HTTP/1.1 200 Connection established\r\n\r\n',ready);phase='done';return;
         }
@@ -98,6 +98,12 @@ const context=tls.createSecureContext({key,cert:certificate});
       const persistence=net.connect({host:database.host,port:database.port});
       await new Promise((resolve,reject)=>{persistence.once('connect',resolve);persistence.once('error',reject);});persistence.destroy();
       changing=false;
+      const first=await proxy('http'),second=await proxy('http');
+      const before=connections.length;
+      await Promise.all([globalNetwork.withProxy(first,async()=>{await new Promise(resolve=>setTimeout(resolve,10));return fetch('http://first-account.invalid');}),globalNetwork.withProxy(second,()=>fetch('http://second-account.invalid'))]);
+      const routed=connections.slice(before);
+      assert.equal(routed.find(p=>p.header.includes('first-account.invalid')).proxyPort,first.port);
+      assert.equal(routed.find(p=>p.header.includes('second-account.invalid')).proxyPort,second.port);
       assert.throws(()=>net.connect({host:'127.0.0.1',port:1}),/禁止绕过代理/);
       assert.throws(()=>tls.connect({host:'bypass.invalid',port:443}),/禁止绕过代理/);
       current=await proxy('http',{reject:true});

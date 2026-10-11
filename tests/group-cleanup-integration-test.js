@@ -67,7 +67,8 @@ for _ in range(900):
       const created=await request('/api/users',admin,{username:name});assert.equal(created.status,201);const {user}=await created.json();
       const cookie=await login(name,'a123456');assert.equal((await request('/api/auth/password',cookie,{currentPassword:'a123456',newPassword:name+'-secret'})).status,200);
       const directory=path.join(root,'.user-workspaces',user.id);fs.writeFileSync(path.join(directory,'shared.session'),'fake');
-      const config=(await state(cookie)).config;config.telegram={apiId:'123',apiHash:'offline'};
+      const config=(await state(cookie)).config;assert.equal((await fetch(base+'/api/settings',{method:'PUT',headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({telegram:{apiId:'123',apiHash:'offline'},model:'',providers:[]})})).status,200);
+      config.telegram.useSystem=true;
       config.users=[{name,session:'shared',sourceIndex:-1,useGlobalCredentials:true,bots:[],checkinSchedules:[]}];
       config.plugins.zeroSpeakers=[{id:'cleanup_rule_001',name,account:'shared',group:'@example_group'}];
       assert.equal((await request('/api/config',cookie,config)).status,200);

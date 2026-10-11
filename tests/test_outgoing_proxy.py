@@ -31,6 +31,7 @@ def trusted_context(*args, **kwargs):
     return context
 ssl.create_default_context = trusted_context
 proxy.read_proxy = lambda: json.loads(sys.argv[1])
+proxy.read_settings = lambda: {'proxies':[json.loads(sys.argv[3])]}
 proxy.install_network_guard()
 for action in (lambda: socket.create_connection(('127.0.0.1', 1)),
                lambda: socket.getaddrinfo('bypass.invalid', 80),
@@ -48,6 +49,10 @@ async def run():
     assert b'200 OK' in await reader.read(4096)
     writer.close()
     await writer.wait_closed()
+    reader, writer = await proxy.open_tunnel(json.loads(sys.argv[3]), 'another-account.invalid', 443)
+    writer.write(b'HELLO');await writer.drain()
+    assert await reader.readexactly(5) == b'HELLO'
+    writer.close();await writer.wait_closed()
 asyncio.run(run())
 with proxy.ai_http_client() as client:
     assert client.get('http://ai.invalid').json() == {'ok': True}
@@ -55,7 +60,8 @@ print('worker guard PASS')
 '''
         for kind in ['http', 'https', 'socks5']:
             configured = await self.make_proxy(kind)
-            worker = await asyncio.create_subprocess_exec(sys.executable, '-c', script, json.dumps(configured), str(CERT),
+            second = await self.make_proxy('socks5')
+            worker = await asyncio.create_subprocess_exec(sys.executable, '-c', script, json.dumps(configured), str(CERT), json.dumps(second),
                 cwd=Path(__file__).resolve().parents[1], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
             stdout, stderr = await asyncio.wait_for(worker.communicate(), 20)
             self.assertEqual(worker.returncode, 0, stderr.decode(errors='replace'))
@@ -207,6 +213,27 @@ print('worker guard PASS')
             with self.assertRaisesRegex(ValueError, '代理配置无效'):
                 proxy.telegram_proxy_kwargs()
 
+
+    async def test_account_selection_and_concurrent_ai_tunnels(self):
+        first=await self.make_proxy('http')
+        second=await self.make_proxy('socks5')
+        settings={'proxy':dict(first,enabled=True),'proxies':[dict(first,enabled=True,id='first'),dict(second,enabled=True,id='second')]}
+        with patch.object(proxy,'read_settings',return_value=settings):
+            self.assertEqual(proxy.read_proxy({'proxy_id':'second'})['port'],second['port'])
+            self.assertEqual(proxy.read_proxy()['port'],first['port'])
+            with self.assertRaisesRegex(ValueError,'不存在'):
+                proxy.telegram_proxy_kwargs({'proxy_id':'missing'})
+            async def account_request(identifier, destination):
+                user={'proxy_id':identifier}
+                transport=proxy.telegram_proxy_kwargs(user)['proxy']
+                reader,writer=await proxy.open_tunnel(transport,destination,443)
+                writer.write(b'HELLO');await writer.drain()
+                self.assertEqual(await reader.readexactly(5),b'HELLO')
+                writer.close();await writer.wait_closed()
+                with proxy.ai_http_client(user) as client:
+                    result=await asyncio.to_thread(client.get,'http://'+destination)
+                    self.assertTrue(result.json()['ok'])
+            await asyncio.gather(account_request('first','first-account.invalid'),account_request('second','second-account.invalid'))
 
 if __name__ == '__main__':
     unittest.main()

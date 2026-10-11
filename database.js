@@ -85,6 +85,21 @@ async function createDatabase({ dataDir, parseConfig, pool: suppliedPool } = {})
       }
       await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb)',['migration:cleanup-jobs-v1',JSON.stringify({at:new Date().toISOString()})]);
     }
+    const personalSettingsMigrated=await client.query("SELECT key FROM autocheckin_documents WHERE key = 'migration:personal-settings-v1'");
+    if (!personalSettingsMigrated.rows.length) {
+      const tenants=path.join(dataDir,'.user-workspaces');
+      if(fs.existsSync(tenants))for(const entry of fs.readdirSync(tenants,{withFileTypes:true}))if(entry.isDirectory() && /^[a-f0-9-]{36}$/.test(entry.name)) {
+        const file=path.join(tenants,entry.name,'.system-settings.json');
+        if(fs.existsSync(file))await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb) ON CONFLICT(key) DO NOTHING',['tenant:'+entry.name+':system-settings',fs.readFileSync(file,'utf8')]);
+      }
+      await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb)',['migration:personal-settings-v1',JSON.stringify({at:new Date().toISOString()})]);
+    }
+    const adminPersonalMigrated=await client.query("SELECT key FROM autocheckin_documents WHERE key = 'migration:admin-personal-settings-v1'");
+    if (!adminPersonalMigrated.rows.length) {
+      const file=path.join(dataDir,'.personal-settings.json');
+      if(fs.existsSync(file))await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb) ON CONFLICT(key) DO NOTHING',['personal-settings',fs.readFileSync(file,'utf8')]);
+      await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb)',['migration:admin-personal-settings-v1',JSON.stringify({at:new Date().toISOString()})]);
+    }
     await client.query('COMMIT');
     if (importedCount !== null) console.log(`旧数据迁移完成：${importedCount} 项；源文件已保留。`);
     for (const row of (await client.query('SELECT key, value FROM autocheckin_documents')).rows) documents.set(row.key, row.value);

@@ -2,6 +2,7 @@ config.json
 .web-users.json*
 .admin-profile.json*
 .system-settings.json*
+.personal-settings.json*
 .notifications.json*
 .user-workspaces/
 .account-profiles/

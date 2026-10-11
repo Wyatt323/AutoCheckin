@@ -108,6 +108,7 @@ def load_config(file_path=None):
         normalized_users.append({
             "name": name,
             "session": session,
+            "proxy_id": user.get('proxy_id', ''),
             "api_id": user_api_id,
             "api_hash": user_api_hash,
             "bots": user_bots,
@@ -120,7 +121,7 @@ def load_config(file_path=None):
     return ai_model, ai_providers, normalized_users
 
 
-def build_ai_clients(ai_providers):
+def build_ai_clients(ai_providers, account=None):
     clients = []
     for provider in ai_providers:
         provider = dict(provider)
@@ -128,9 +129,11 @@ def build_ai_clients(ai_providers):
         api_key = provider.get("api_key")
         base_url = provider.get("base_url")
         if api_key and base_url:
-            transport = ai_http_client()
-            clients.append((provider["name"], OpenAI(api_key=api_key, base_url=base_url, timeout=30, max_retries=1,
-                                                    **({'http_client': transport} if transport else {}))))
+            transport = ai_http_client(account)
+            client=OpenAI(api_key=api_key, base_url=base_url, timeout=30, max_retries=1,
+                          **({'http_client': transport} if transport else {}))
+            client._autocheckin_model=provider.get('model')
+            clients.append((provider['name'], client))
     return clients
 
 
@@ -280,7 +283,7 @@ def solve_poem_ai(text, ai_client, ai_model, available_buttons=None):
 def solve_poem_ai_with_fallback(text, ai_clients, ai_model, available_buttons=None):
     for name, ai_client in ai_clients:
         print(f"  🧠 尝试AI中转站: {name}")
-        answers = solve_poem_ai(text, ai_client, ai_model, available_buttons=available_buttons)
+        answers = solve_poem_ai(text, ai_client, getattr(ai_client, '_autocheckin_model', None) or ai_model, available_buttons=available_buttons)
         if answers:
             return answers
     return None
@@ -773,7 +776,7 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
         api_id,
         api_hash,
         device_model="AutoCheckin",
-        **telegram_proxy_kwargs(),
+        **telegram_proxy_kwargs(user),
     )
     signers = {}
     install_handlers(client, signers)
@@ -882,16 +885,19 @@ async def main(account=None, bot=None, scheduled=False, parallel=False):
 
     async def execute_user(user):
         with account_log(user["session"]):
+            account_ai_clients=ai_clients
             try:
+                if user.get('proxy_id'):
+                    account_ai_clients=build_ai_clients(ai_providers, user)
                 bots = user["bots"]
                 if not bots and not user['dialog_folder']:
                     print(f"⏭️ 用户 {user['name']} 没有配置 Bot，跳过")
                     emit_result(user["session"], True)
                     return True
                 if bot is None:
-                    completed = await run_user(user, ai_model, ai_clients, bots, user["bot_commands"], user["dialog_folder"], scheduled=scheduled)
+                    completed = await run_user(user, ai_model, account_ai_clients, bots, user["bot_commands"], user["dialog_folder"], scheduled=scheduled)
                 else:
-                    completed = await run_user(user, ai_model, ai_clients, bots, user["bot_commands"], user["dialog_folder"], only_bot=bot, scheduled=scheduled)
+                    completed = await run_user(user, ai_model, account_ai_clients, bots, user["bot_commands"], user["dialog_folder"], only_bot=bot, scheduled=scheduled)
                 if not completed:
                     print(f"⚠️ 用户 {user['name']} 有未完成的 Bot，继续处理下一个账号")
                 emit_result(user["session"], completed)
@@ -902,6 +908,10 @@ async def main(account=None, bot=None, scheduled=False, parallel=False):
                 if not parallel:
                     raise
                 return False
+            finally:
+                if account_ai_clients is not ai_clients:
+                    for _, client in account_ai_clients:
+                        client.close()
 
     if parallel:
         print("不同账号并行签到；每个账号内部的 Bot 依次执行")

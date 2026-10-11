@@ -1,6 +1,6 @@
 const { requestSecurity } = require('./admin_auth');
 const { createUserAuth } = require('./user_auth');
-const { createSystemSettings, applySystemConfig } = require('./system_settings');
+const { createSystemSettings, createPersonalSettings, applySystemConfig } = require('./system_settings');
 const { createTelegramNotifications } = require('./telegram_notifications');
 const CheckinResults = require('./checkin_results');
 const { validateTime } = require('./schedule_time');
@@ -12,7 +12,7 @@ const { createAutomation } = require('./automation');
 const { createScheduler } = require('./checkin_scheduler');
 const { createLoginController } = require('./login');
 const { resolveCredentials, credentialText } = require('./telegram_credentials');
-const { createHash } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 
 const ROOT = __dirname;
 const DATA_ROOT = path.resolve(process.env.AUTOCHECKIN_DATA_DIR || ROOT);
@@ -58,11 +58,33 @@ function parseConfig(raw) {
   return JSON.parse(output);
 }
 
-async function createWorkspace({dataDir, store, prefix = '', systemSettings, outgoingNetwork, networkChanging = () => false}) {
+function migrateLegacyForwards(config) {
+  const rules=config.automations;
+  if (!rules?.forwards?.length) return false;
+  const pins=rules.forwardPins ||= [];
+  const ids=new Set([...(rules.schedules || []),...pins].map(rule=>rule.id));
+  for (const rule of rules.forwards) {
+    const same=pins.find(pin=>pin.id===rule.id && pin.account===rule.account && pin.target===rule.target && pin.sources?.length===1 && pin.sources[0]===rule.source && !pin.keywords?.length && !pin.pinAfterForward && (pin.enabled!==false)===(rule.enabled!==false));
+    if (same) continue;
+    const id=rule.id && !ids.has(rule.id) ? rule.id : randomUUID();
+    ids.add(id);
+    pins.push({id,name:rule.name || '',enabled:rule.enabled!==false,account:rule.account,sources:[rule.source],target:rule.target,keywords:[],pinAfterForward:false});
+  }
+  rules.forwards=[];
+  return true;
+}
+
+async function createWorkspace({dataDir, store, prefix = '', systemSettings, ownSettings, outgoingNetwork, networkChanging = () => false}) {
   const DATA_ROOT = dataDir, CONFIG = path.join(dataDir, 'config.json'), database = store;
   const workerEnv = {AUTOCHECKIN_DOCUMENT_PREFIX:prefix,AUTOCHECKIN_SYSTEM_DATA_DIR:path.resolve(process.env.AUTOCHECKIN_DATA_DIR || ROOT)};
   const automation = createAutomation();
-  const notifications = await createTelegramNotifications({dataDir,store,fetchImpl:outgoingNetwork.fetch});
+  const notifications = await createTelegramNotifications({dataDir,store,fetchImpl:(url,options,metadata={})=>{
+    const account=(readConfig().telegram?.users || []).find(user=>(user.session || user.name)===metadata.account);
+    const settings=systemSettings.read();
+    const proxy=account?.proxy_id ? settings.proxies.find(p=>p.id===account.proxy_id) : settings.proxy || {enabled:false};
+    if (!proxy) throw Error('账号选择的出口代理已不可用');
+    return outgoingNetwork.withProxy(proxy,()=>outgoingNetwork.fetch(url,options));
+  }});
   let history, profiles, login, scheduler, chatResolver, cleanup;
   const activeRuns = new Map(), reservedAccounts = new Set(), nextRunAt = new Map(), launches = new Set();
   const shutdownController = new AbortController();
@@ -80,6 +102,12 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, out
     if (database) return structuredClone(database.read('config'));
     const raw = fs.readFileSync(CONFIG, 'utf8');
     return parseConfig(raw);
+  }
+  const upgraded=readConfig();
+  if (migrateLegacyForwards(upgraded)) {
+    // Persist before workers start; retain rule IDs and their existing log/state links.
+    if (database) await database.write('config',upgraded);
+    else {fs.writeFileSync(CONFIG+'.tmp',JSON.stringify(upgraded,null,2)+'\n',{encoding:'utf8',mode:0o600});fs.renameSync(CONFIG+'.tmp',CONFIG);}
   }
 
   function discoveryKey(account) { return createHash('sha256').update(account).digest('hex'); }
@@ -114,11 +142,13 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, out
       return bots;
     };
     return {
-      telegram: { apiId: telegram.api_id || '', hasApiHash: Boolean(credentialText(telegram.api_hash)), useSystem:telegram.use_system === true },
-      useSystemAI:ai.use_system === true,
+      telegram: { apiId: telegram.api_id || '', hasApiHash: Boolean(credentialText(telegram.api_hash)), useSystem:Boolean(prefix) || systemSettings.read().overrides?.telegram || telegram.use_system === true },
+      useSystemAI:Boolean(prefix) || systemSettings.read().overrides?.ai || ai.use_system === true,
+      systemProviderId:ai.use_system === false ? '' : ai.system_provider_id || '',
       system:systemSettings.view(),
       users: (telegram.users || config.users || []).map((user, sourceIndex) => ({
         sourceIndex, name: user.name || '', session: user.session || user.name || '',
+        proxyId:user.proxy_id || '',
         apiId: user.api_id || '', hasApiHash: Boolean(credentialText(user.api_hash)),
         useGlobalCredentials: !credentialText(user.api_id) && !credentialText(user.api_hash),
         apiIdSource: credentialText(user.api_id) ? 'account' : 'global',
@@ -161,7 +191,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, out
     const schedules = input?.schedules || [];
     const forwards = input?.forwards || [];
     const forwardPins = input?.forwardPins || [];
-    if (![schedules, forwards, forwardPins].every(items => Array.isArray(items) && items.length <= 100)) throw new Error('自动化规则格式不正确或数量过多');
+    if (![schedules, forwards, forwardPins].every(items => Array.isArray(items)) || schedules.length>100 || forwards.length>100 || forwards.length+forwardPins.length>200) throw new Error('自动化规则格式不正确或数量过多');
     const sessions = new Set(users.map(user => user.session));
     const ids = new Set();
     const idFor = (item, label) => {
@@ -227,7 +257,9 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, out
       visited.add(node);
     }
     for (const node of links.keys()) visit(node);
-    return { schedules: normalizedSchedules, forwards: normalizedForwards, forwardPins:normalizedForwardPins };
+    const result={automations:{schedules:normalizedSchedules,forwards:normalizedForwards,forwardPins:normalizedForwardPins}};
+    migrateLegacyForwards(result);
+    return result.automations;
   }
 
   function validateCheckinSchedules(input, name, botCount) {
@@ -258,7 +290,6 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, out
       telegram.api_id = rawId ? Number(rawId) : '';
       telegram.api_hash = credentialText(input.telegram.apiHash) || credentialText(telegram.api_hash);
       telegram.use_system = input.telegram.useSystem === true;
-      if (telegram.use_system) resolveCredentials(applySystemConfig({telegram},systemSettings.read()),{});
     }
     const seenSessions = new Set();
     const users = input.users.map((item, index) => {
@@ -299,9 +330,11 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, out
         else throw new Error(`${botName} 的签到方式无效`);
       });
       const folder = item.botSource === 'configured' ? '' : String(item.dialogFolder || '').trim();
+      const proxyId=item.proxyId === undefined ? old.proxy_id || '' : String(item.proxyId || '');
+      if (proxyId && !systemSettings.read().proxies.some(p=>p.id===proxyId)) throw Error(`账号 ${name} 的出口代理不存在，请重新选择`);
       if (item.botSource === 'folder' && !folder) throw new Error('请填写 Telegram 对话分组名称或 ID');
       if (folder.length > 100) throw new Error('Telegram 分组名称过长');
-      return { ...old, name, session, api_id: apiId, api_hash: apiHash, dialog_folder: folder, bots: [], bot_groups: { button, command }, bot_notes: botNotes, bot_schedules:botSchedules, checkin_schedules: validateCheckinSchedules(item.checkinSchedules || [], name, folder ? 1 : botItems.length) };
+      return { ...old, name, session, proxy_id:proxyId, api_id: apiId, api_hash: apiHash, dialog_folder: folder, bots: [], bot_groups: { button, command }, bot_notes: botNotes, bot_schedules:botSchedules, checkin_schedules: validateCheckinSchedules(item.checkinSchedules || [], name, folder ? 1 : botItems.length) };
     });
     const providers = input.providers.map((item, index) => {
       const old = oldProviders[item.sourceIndex] || {};
@@ -314,8 +347,10 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, out
     });
     original.telegram = { ...telegram, users };
     delete original.telegram.dialog_folder;
-    if (input.useSystemAI === true && !systemSettings.read().ai?.providers?.length) throw Error('管理员尚未配置系统 AI 提供商');
+    if (!prefix && !systemSettings.read().overrides?.ai && input.useSystemAI === true && !systemSettings.read().ai?.providers?.length) throw Error('管理员尚未配置系统 AI 提供商');
     original.ai = { ...(original.ai || {}), use_system:input.useSystemAI === true, model: providers.length ? nonempty(input.model, 'AI 模型', 120) : String(input.model || '').trim(), providers };
+    if (input.systemProviderId !== undefined) original.ai.system_provider_id=String(input.systemProviderId || '');
+    if ((prefix || original.ai.use_system) && original.ai.system_provider_id && !(systemSettings.read().available_providers || systemSettings.read().ai?.providers || []).some(p=>p.id===original.ai.system_provider_id)) throw Error('所选全局 AI 提供商不存在，请重新选择');
     delete original.ai.api_key;
     delete original.ai.base_url;
     delete original.users;
@@ -521,13 +556,16 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, out
   }, isBusy: account => accountBusy(account) || (account && Date.now() < (nextRunAt.get(account) || 0)) });
   for(const record of history.snapshot({category:'checkin'}).records)if(record.trigger==='scheduled' && record.lines.some(line=>line.text==='服务重启，本次任务已中断'))await notifications.notifyRun(record).catch(()=>console.error('中断任务通知入队失败'));
   return {
+    ownSettings, systemSettings,
     start() { notifications.start(); automation.start(); scheduler.start(); },
     canChangeNetwork:() => reservedAccounts.size === 0 && !editingConfig && !login.active() && !shuttingDown,
+    usesProxy:id => (readConfig().telegram?.users || []).some(user=>user.proxy_id===id),
+    usesProvider:id => readConfig().ai?.use_system!==false && readConfig().ai?.system_provider_id===id,
     async pauseNetwork() {await automation.stop();await chatResolver?.shutdown();chatResolver=null;},
     resumeNetwork() {if (!shuttingDown) automation.start();},
     audit(account = '') {
       const raw = readConfig(), config = viewConfig(raw);
-      const secrets = [...new Set([raw.telegram?.api_hash,...(raw.telegram?.users || raw.users || []).map(item=>item.api_hash),raw.ai?.api_key,...(raw.ai?.providers || []).map(item=>item.api_key),systemSettings.read().telegram?.api_hash,...(systemSettings.read().ai?.providers || []).map(item=>item.api_key)].filter(value=>typeof value === 'string' && value))].sort((a,b)=>b.length-a.length);
+      const secrets = [...new Set([raw.telegram?.api_hash,...(raw.telegram?.users || raw.users || []).map(item=>item.api_hash),raw.ai?.api_key,...(raw.ai?.providers || []).map(item=>item.api_key),...systemSettings.secretValues()].filter(value=>typeof value === 'string' && value))].sort((a,b)=>b.length-a.length);
       const redact = text => notifications.redact(secrets.reduce((value,secret)=>value.split(secret).join('[已隐藏]'),String(text || '')).replace(/tg:\/\/login\?token=[^\s]+/gi,'tg://login?token=[已隐藏]'));
       const redactResult = item => ({...item,bot:redact(item.bot),name:redact(item.name),note:redact(item.note),result:redact(item.result)});
       const records = history.snapshot({category:'checkin'}).records;
@@ -544,7 +582,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, out
       };
     },
     async refreshSettings() {
-      if (!readConfig().telegram?.use_system || shuttingDown) return true;
+      if ((!prefix && !systemSettings.read().overrides?.telegram && !readConfig().telegram?.use_system) || shuttingDown) return true;
       if (busy() || login.active()) return false;
       await automation.restart(); return true;
     },
@@ -685,7 +723,8 @@ async function boot() {
   database = await require('./database').createDatabase({dataDir:DATA_ROOT,parseConfig});
   const auth = await createUserAuth({dataDir:DATA_ROOT,store:database});
   const systemSettings = await createSystemSettings({dataDir:DATA_ROOT,store:database});
-  let changingNetwork = false;
+  let changingNetwork = false, changingServices=false;
+  const changingUsers=new Set();
   // PostgreSQL is the persistence service used to load the proxy itself. Only
   // this explicit service endpoint is exempt from the Internet egress policy.
   const databaseAddress=process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL) : null;
@@ -700,7 +739,13 @@ async function boot() {
     if (!workspaces.has(id)) {
       const prefix = id === 'admin' ? '' : `tenant:${id}:`;
       const dataDir = id === 'admin' ? DATA_ROOT : path.join(DATA_ROOT,'.user-workspaces',id);
-      const pending = createWorkspace({dataDir,store:require('./database').scopedStore(database,prefix),prefix,systemSettings,outgoingNetwork,networkChanging:()=>changingNetwork}).then(workspace=>{workspace.start();return workspace;});
+      const pending = (async()=>{
+        const store=require('./database').scopedStore(database,prefix);
+        const legacy=store ? store.read('config') : fs.existsSync(path.join(dataDir,'config.json')) ? parseConfig(fs.readFileSync(path.join(dataDir,'config.json'),'utf8')) : {};
+        const personal=await createPersonalSettings({dataDir,store,admin:systemSettings,legacy,...(prefix ? {} : {documentKey:'personal-settings',fileName:'.personal-settings.json',automatic:false})});
+        const workspace=await createWorkspace({dataDir,store,prefix,systemSettings:personal.effective,ownSettings:personal.own,outgoingNetwork,networkChanging:()=>changingNetwork || changingServices || changingUsers.has(id)});
+        workspace.start();return workspace;
+      })();
       workspaces.set(id,pending);
       pending.catch(()=>{workspaces.delete(id);});
     }
@@ -708,6 +753,19 @@ async function boot() {
   }
   await workspaceFor({id:'admin'});
   for (const user of auth.list()) await workspaceFor(user);
+  let testingNetwork=0;
+  async function changeNetwork(operation,owner=null) {
+    if (changingNetwork || changingServices || changingUsers.size || testingNetwork) throw Error('正在更新或测试出口代理，请稍后重试');
+    if (owner) changingUsers.add(owner.id);else changingNetwork=true;
+    let active=[];
+    try {
+      active=owner ? [await workspaceFor(owner)] : await Promise.all([...workspaces.values()]);
+      if (active.some(workspace=>!workspace.canChangeNetwork())) throw Error('签到、登录或功能插件任务运行期间不能修改出口代理，请等待任务结束');
+      await Promise.all(active.map(workspace=>workspace.pauseNetwork()));
+      if (!owner) outgoingNetwork.reset();
+      return await operation(active);
+    } finally {if(owner)changingUsers.delete(owner.id);else changingNetwork=false;for (const workspace of active) workspace.resumeNetwork();}
+  }
   const types = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml'};
 http.createServer(async (req, res) => {
   try {
@@ -752,14 +810,54 @@ http.createServer(async (req, res) => {
       if (!auth.list().some(item=>item.id === target.id)) return send(res,404,{error:'用户不存在或已删除'});
       return send(res,200,{user:target,...workspace.audit(account)});
     }
-    if (changingNetwork && req.method !== 'GET' && url.pathname.startsWith('/api/')) return send(res,409,{error:'正在更新出口代理，请稍后重试'});
+    if ((changingNetwork || changingServices || changingUsers.has(user?.id)) && req.method !== 'GET' && url.pathname.startsWith('/api/')) return send(res,409,{error:'正在更新全局设置，请稍后重试'});
+    const personalRoute=/^\/api\/(settings|proxies|providers)(?:\/|$)/.test(url.pathname);
+    const personalWorkspace=personalRoute ? await workspaceFor(user) : null;
+    if (personalWorkspace && auth.identity(req)?.id!==user.id) return send(res,401,{error:'登录状态已失效'});
+    const settingsScope=personalWorkspace?.ownSettings || systemSettings;
+    const effectiveScope=personalWorkspace?.systemSettings || (user?.role==='admin' ? (await workspaceFor(user)).systemSettings : systemSettings);
+    const settingsResponse=()=>({settings:settingsScope.view(),effective:effectiveScope.view()});
+    if (url.pathname === '/api/admin/proxies' || url.pathname === '/api/proxies') {
+      if (!personalRoute && user.role !== 'admin') return send(res,403,{error:'仅管理员可设置系统出口代理'});
+      if (req.method === 'GET') return send(res,200,{...settingsScope.proxyList(),effective:effectiveScope.view()});
+      if (req.method !== 'PUT') return send(res,405,{error:'不支持的请求'});
+      const input=await bodyJson(req);
+      if (!Array.isArray(input.proxies)) throw Error('代理列表格式不正确');
+      const result=await changeNetwork(async active=>{
+        for (const old of settingsScope.read().proxies) {
+          if (old.id===settingsScope.read().default_proxy_id && !input.proxies.some(p=>p.id===old.id)) throw Error('此代理是默认出口，请先更改默认出口后再删除');
+          if (!input.proxies.some(p=>p.id===old.id) && active.some(w=>w.usesProxy(old.id))) throw Error(`代理「${old.name}」仍被账号使用，请先更改账号出口`);
+        }
+        return await settingsScope.changeProxies(input);
+      },personalWorkspace ? user : null);
+      return send(res,200,{...result,effective:effectiveScope.view()});
+    }
+    const serviceTest=url.pathname.match(/^\/api\/(?:admin\/)?(proxies|providers)\/([A-Za-z0-9-]+)\/test$/);
+    if (serviceTest) {
+      if (!personalRoute && user.role !== 'admin') return send(res,403,{error:'仅管理员可测试全局服务'});
+      if (req.method !== 'POST') return send(res,405,{error:'不支持的请求'});
+      if (testingNetwork>=4 || changingNetwork) return send(res,409,{error:'测试请求较多，请稍后重试'});
+      const settings=settingsScope.read(), proxyTest=serviceTest[1]==='proxies';
+      const entry=(proxyTest ? settings.proxies : settings.ai?.providers || []).find(item=>item.id===serviceTest[2]);
+      if (!entry) return send(res,404,{error:'服务不存在或已删除'});
+      testingNetwork++;
+      const started=performance.now();
+      try {
+        const target=proxyTest ? 'https://api.telegram.org/bot0:0/getMe' : entry.base_url.replace(/\/+$/,'')+'/models';
+        const response=await outgoingNetwork.withProxy(proxyTest ? entry : (personalWorkspace ? effectiveScope : settingsScope).read().proxy || {enabled:false},()=>outgoingNetwork.fetch(target,{headers:proxyTest ? {} : {Authorization:'Bearer '+entry.api_key}}));
+        if (proxyTest ? response.status>=500 : !response.ok) throw Error();
+        if (!proxyTest) {const data=await response.json();if (!Array.isArray(data.data)) throw Error();}
+        return send(res,200,{ok:true,latencyMs:Math.round(performance.now()-started),testedAt:new Date().toISOString(),message:proxyTest ? 'Telegram HTTPS 连通正常' : '模型接口连通正常'});
+      } catch {return send(res,200,{ok:false,latencyMs:null,testedAt:new Date().toISOString(),message:proxyTest ? '代理连接失败或超时，请检查协议、地址及认证' : 'AI 接口测试失败，请检查地址、密钥或模型接口支持情况'});}
+      finally {testingNetwork--;}
+    }
     if (url.pathname === '/api/admin/proxy') {
       if (user.role !== 'admin') return send(res,403,{error:'仅管理员可设置系统出口代理'});
       if (req.method === 'GET') return send(res,200,{proxy:systemSettings.proxyView()});
       if (req.method !== 'PUT') return send(res,405,{error:'不支持的请求'});
       const input=await bodyJson(req);
       require('./outgoing_proxy').normalizeProxy(input,systemSettings.read().proxy);
-      if (changingNetwork) return send(res,409,{error:'正在更新出口代理，请稍后重试'});
+      if (changingNetwork || changingServices || changingUsers.size || testingNetwork) return send(res,409,{error:'正在更新或测试出口代理，请稍后重试'});
       changingNetwork=true;
       let active=[];
       try {
@@ -771,15 +869,30 @@ http.createServer(async (req, res) => {
         return send(res,200,{proxy});
       } finally {changingNetwork=false;for (const workspace of active) workspace.resumeNetwork();}
     }
-    if (url.pathname === '/api/admin/profile' || url.pathname === '/api/admin/settings') {
-      if (user.role !== 'admin') return send(res,403,{error:'仅管理员可修改系统设置'});
+    if (url.pathname === '/api/admin/profile' || url.pathname === '/api/admin/settings' || url.pathname === '/api/settings') {
+      if (!personalRoute && user.role !== 'admin') return send(res,403,{error:'仅管理员可修改系统设置'});
       if (url.pathname === '/api/admin/profile' && req.method === 'PATCH') return send(res,200,{user:await auth.updateAdministrator((await bodyJson(req)).username)});
-      if (url.pathname === '/api/admin/settings' && req.method === 'GET') return send(res,200,{settings:systemSettings.view()});
-      if (url.pathname === '/api/admin/settings' && req.method === 'PUT') {
-        const settings = await systemSettings.update(await bodyJson(req));
+      if (url.pathname === '/api/admin/profile') return send(res,405,{error:'不支持的请求'});
+      if (req.method === 'GET') return send(res,200,settingsResponse());
+      if (req.method === 'PUT') {
+        const input=await bodyJson(req);
+        if (changingServices || changingNetwork || changingUsers.size) return send(res,409,{error:'正在更新全局设置，请稍后重试'});
+        if(personalWorkspace)changingUsers.add(user.id);else changingServices=true;
+        let settings;
+        try {
+          if (Array.isArray(input.providers)) {
+            const active=personalWorkspace ? [personalWorkspace] : await Promise.all([...workspaces.values()]);
+            const oldProviders=settingsScope.read().ai?.providers || [];
+            for(const [index,old] of oldProviders.entries()) if (!input.providers.some(p=>p.id===old.id || !p.id && p.sourceIndex===index)) {
+              if (active.some(w=>w.usesProvider(old.id))) throw Error(`AI 提供商「${old.name}」仍被用户选择，请先更改选择`);
+              if (active.some(w=>!w.canChangeNetwork())) throw Error('任务运行或配置保存期间不能删除 AI 提供商');
+            }
+          }
+          settings = await settingsScope.update(input);
+        } finally {if(personalWorkspace)changingUsers.delete(user.id);else changingServices=false;}
         let deferred = 0;
-        for (const pending of workspaces.values()) if (!await (await pending).refreshSettings()) deferred++;
-        return send(res,200,{settings,deferred});
+        for (const pending of personalWorkspace ? [personalWorkspace] : workspaces.values()) if (!await (await pending).refreshSettings()) deferred++;
+        return send(res,200,{settings,effective:effectiveScope.view(),deferred});
       }
       return send(res,405,{error:'不支持的请求'});
     }

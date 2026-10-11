@@ -79,20 +79,53 @@ def read_document(key, path=None, default=None, parser=json.loads, system=False)
             value = parser(Path(path).read_text(encoding='utf-8'))
         except FileNotFoundError:
             value = default
-    if document_key == 'config' and value and (value.get('telegram', {}).get('use_system') or value.get('ai', {}).get('use_system')):
+    if document_key == 'config' and value:
         system_dir = os.environ.get('AUTOCHECKIN_SYSTEM_DATA_DIR') or os.environ.get('AUTOCHECKIN_DATA_DIR') or (str(Path(path).parent) if path else '.')
-        settings = read_document('system-settings', Path(system_dir) / '.system-settings.json', default={}, system=True)
+        settings = read_effective_settings(system_dir, str(Path(path).parent) if path else None)
         return apply_system_config(value, settings)
     return value
+
+
+def read_effective_settings(system_dir=None, user_dir=None):
+    from copy import deepcopy
+    root = Path(system_dir or os.environ.get('AUTOCHECKIN_SYSTEM_DATA_DIR') or os.environ.get('AUTOCHECKIN_DATA_DIR') or Path(__file__).resolve().parent)
+    def normalize(settings):
+        settings = deepcopy(settings)
+        proxy = settings.get('proxy', {})
+        settings.setdefault('proxies', [{**proxy, 'enabled': True, 'id': 'legacy-proxy'}] if proxy.get('host') else [])
+        settings.setdefault('default_proxy_id', 'legacy-proxy' if proxy.get('enabled') else '')
+        for index, provider in enumerate(settings.get('ai', {}).get('providers', [])):
+            provider.setdefault('id', f'legacy-ai-{index}')
+        return settings
+    admin = normalize(read_document('system-settings', root / '.system-settings.json', default={}, system=True))
+    tenant = bool(os.environ.get('AUTOCHECKIN_DOCUMENT_PREFIX'))
+    directory = Path(user_dir or os.environ.get('AUTOCHECKIN_DATA_DIR') or '.')
+    own = normalize(read_document('system-settings', directory / '.system-settings.json', default={}) if tenant else
+                    read_document('personal-settings', root / '.personal-settings.json', default={}, system=True))
+    telegram_own = bool(own.get('telegram', {}).get('api_id') and own.get('telegram', {}).get('api_hash'))
+    ai_own = bool(own.get('ai', {}).get('providers'))
+    proxy_owner = own if own.get('default_proxy_id') else admin
+    return {**admin, 'automatic': tenant, 'overrides': {'telegram': telegram_own or own.get('use_globals') is True, 'ai': ai_own or own.get('use_globals') is True},
+            'telegram': deepcopy((own if telegram_own else admin).get('telegram', {})),
+            'ai': deepcopy((own if ai_own else admin).get('ai', {'providers': []})),
+            'available_providers': [{**p, 'model': p.get('model') or source.get('ai', {}).get('model', '')}
+                                    for source in (own, admin) for p in source.get('ai', {}).get('providers', [])],
+            'proxies': own['proxies'] + admin['proxies'],
+            'default_proxy_id': proxy_owner.get('default_proxy_id', ''),
+            'proxy': deepcopy(proxy_owner.get('proxy', {'enabled': False}))}
 
 
 def apply_system_config(config, settings):
     from copy import deepcopy
     config = deepcopy(config)
-    if config.get('telegram', {}).get('use_system') is True:
-        config['telegram'].update(api_id=settings.get('telegram', {}).get('api_id', ''), api_hash=settings.get('telegram', {}).get('api_hash', ''))
-    if config.get('ai', {}).get('use_system') is True:
+    if settings.get('automatic') or settings.get('overrides', {}).get('telegram') or config.get('telegram', {}).get('use_system') is True:
+        config.setdefault('telegram', {}).update(api_id=settings.get('telegram', {}).get('api_id', ''), api_hash=settings.get('telegram', {}).get('api_hash', ''))
+    if settings.get('automatic') or settings.get('overrides', {}).get('ai') or config.get('ai', {}).get('use_system') is True:
+        selected = None if config.get('ai', {}).get('use_system') is False else config.get('ai', {}).get('system_provider_id')
         config['ai'] = {**deepcopy(settings.get('ai', {'providers': []})), 'use_system': True}
+        if selected:
+            config['ai']['providers'] = [item for index, item in enumerate(settings.get('available_providers', config['ai'].get('providers', [])))
+                                         if (item.get('id') or f'legacy-ai-{index}') == selected]
     return config
 
 

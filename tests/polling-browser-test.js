@@ -17,8 +17,8 @@ const path = require('node:path');
         name:session, session, sourceIndex, apiId:'', hasApiHash:false, sessionReady:true,
         dialogFolder:'', bots:[], checkinSchedules:[], discoveredBots:[]
       })),
-      automations:{ schedules:[], forwards:['first', 'second'].map(account => ({
-        id:`rule_${account}`, account, source:'@source_channel', target:'@target_group', enabled:true
+      automations:{ forwards:[],forwardPins:[], schedules:['first', 'second'].map(account => ({
+        id:`rule_${account}`, account, target:'@source_channel', message:'offline',repeat:'daily',time:'09:00',enabled:true
       })) }
     };
     const status = { python:'offline', run:{ state:'idle', lines:[] }, automation:{ status:'idle', lines:[] }, checkinScheduler:{ events:[], planned:[] } };
@@ -45,21 +45,21 @@ const path = require('node:path');
     await page.goto('http://autocheckin-offline.test/');
     await page.locator('#stat-users').filter({ hasText:'2' }).waitFor();
     await page.waitForTimeout(800);
-    assert.equal(lookups.length, 0, 'overview never resolves hidden forwarding rules');
+    assert.equal(lookups.length, 0, 'overview never resolves hidden message rules');
     await page.locator('[data-view="accounts"]').click();
     await page.locator('[data-open-account="0"][data-section="bots"]').click();
     await page.waitForTimeout(800);
-    assert.equal(lookups.length, 0, 'Bot tab never resolves hidden forwarding rules');
-    await page.locator('[data-account-section="forwards"]').click();
-    const badge = page.locator('#forward-list [data-peer-name]').first();
+    assert.equal(lookups.length, 0, 'Bot tab never resolves hidden message rules');
+    await page.locator('[data-account-section="messages"]').click();
+    const badge = page.locator('#schedule-list [data-peer-name]').first();
     await badge.filter({ hasText:'first:@source_channel' }).waitFor();
-    const source = page.locator('#forward-list input[data-field="source"]');
+    const source = page.locator('#schedule-list input[data-field="target"]');
     await source.fill('@draft_channel');
     await page.locator('[data-account-section="bots"]').click();
     const count = lookups.length;
     await page.waitForTimeout(800);
     assert.equal(lookups.length, count, 'leaving the tab cancels the pending debounce');
-    await page.locator('[data-account-section="forwards"]').click();
+    await page.locator('[data-account-section="messages"]').click();
     await badge.filter({ hasText:'first:@draft_channel' }).waitFor();
     await page.waitForTimeout(2200);
     assert.equal(await source.inputValue(), '@draft_channel', 'status polling preserves unsaved input');
@@ -69,7 +69,7 @@ const path = require('node:path');
     await source.fill('@slow_channel');
     await page.waitForRequest(request => request.url().endsWith('/api/accounts/chats/resolve'));
     await page.locator('#account-back').click();
-    await page.locator('[data-open-account="1"][data-section="forwards"]').click();
+    await page.locator('[data-open-account="1"][data-section="messages"]').click();
     await badge.filter({ hasText:'second:@source_channel' }).waitFor();
     assert.ok(!(await badge.textContent()).includes('first'), 'slow old-account response cannot overwrite current account');
 

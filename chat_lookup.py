@@ -74,7 +74,7 @@ async def resolve_chats(account, values, data_dir, *, client_factory=None):
     api_id, api_hash = resolve_credentials(config, user)
     client = (client_factory or TelegramClient)(authorization_snapshot(session_file), api_id, api_hash,
         device_model='AutoCheckin', receive_updates=False, flood_sleep_threshold=0,
-        connection_retries=1, request_retries=0, timeout=8, **telegram_proxy_kwargs())
+        connection_retries=1, request_retries=0, timeout=8, **telegram_proxy_kwargs(user))
     dialogs = None
     async def find_dialog(reference):
         nonlocal dialogs

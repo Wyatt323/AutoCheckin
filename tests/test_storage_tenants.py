@@ -31,7 +31,9 @@ class TenantStorage(TestCase):
             self.assertEqual(storage.read_document('config')['owner'], 'alice')
             storage.write_document('automation-state', {'sent': {}})
         self.assertEqual(connection.calls[0][1], ('tenant:alice:config',))
-        self.assertEqual(connection.calls[1][1][0], 'tenant:alice:automation-state')
+        self.assertEqual(connection.calls[1][1][0], 'system-settings')
+        self.assertEqual(connection.calls[2][1][0], 'tenant:alice:system-settings')
+        self.assertEqual(connection.calls[3][1][0], 'tenant:alice:automation-state')
 
 
 if __name__ == '__main__':

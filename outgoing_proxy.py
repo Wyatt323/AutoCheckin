@@ -11,7 +11,7 @@ from functools import lru_cache
 from contextvars import ContextVar
 from pathlib import Path
 from urllib.parse import quote
-from storage import read_document
+from storage import read_effective_settings
 
 
 def install_network_guard():
@@ -24,7 +24,19 @@ def install_network_guard():
     proxy = read_proxy()
     if not proxy:
         return
-    addresses = {entry[4][0] for entry in socket.getaddrinfo(proxy['host'], proxy['port'], type=socket.SOCK_STREAM)}
+    # One automation worker can maintain several account connections at once.
+    settings = read_settings()
+    candidates = [proxy, *settings.get('proxies', [])]
+    endpoints = set()
+    proxy_hosts = set()
+    for candidate in candidates:
+        proxy_hosts.add(candidate['host'].lower())
+        try:
+            endpoints.update((entry[4][0], int(candidate['port'])) for entry in
+                             socket.getaddrinfo(candidate['host'], candidate['port'], type=socket.SOCK_STREAM))
+        except OSError:
+            # An unavailable optional proxy must not break other accounts.
+            continue
     # Windows implements socketpair with loopback TCP; allow that internal IPC
     # only while socketpair itself is creating it, never ordinary localhost IO.
     making_pair = ContextVar('autocheckin_socketpair', default=False)
@@ -42,7 +54,7 @@ def install_network_guard():
             try:
                 ipaddress.ip_address(host)
             except ValueError:
-                if str(host).lower() != proxy['host'].lower():
+                if str(host).lower() not in proxy_hosts:
                     raise ConnectionError('已启用系统出口代理，禁止绕过代理解析外部域名')
         elif event in ('socket.connect', 'socket.sendto'):
             transport, address = args[0], args[-1]
@@ -51,15 +63,25 @@ def install_network_guard():
             if making_pair.get() and isinstance(address, tuple) and ipaddress.ip_address(address[0]).is_loopback:
                 return
             if (transport.type != socket.SOCK_STREAM or not isinstance(address, tuple)
-                    or address[0] not in addresses or address[1] != proxy['port']):
+                    or (address[0], address[1]) not in endpoints):
                 raise ConnectionError('已启用系统出口代理，禁止绕过代理直接联网')
     sys.addaudithook(audit)
 
 
-def read_proxy():
-    root = Path(os.environ.get('AUTOCHECKIN_SYSTEM_DATA_DIR') or os.environ.get('AUTOCHECKIN_DATA_DIR') or Path(__file__).resolve().parent)
-    settings = read_document('system-settings', root / '.system-settings.json', default={}, system=True)
+def read_settings():
+    return read_effective_settings()
+
+
+def read_proxy(account=None):
+    settings = read_settings()
+    selected = (account or {}).get('proxy_id')
     proxy = settings.get('proxy') or {}
+    if selected:
+        candidates=settings.get('proxies', [{**proxy, 'id':'legacy-proxy'}] if proxy.get('host') else [])
+        proxy = next((item for item in candidates if item.get('id') == selected), None)
+        if not proxy:
+            raise ValueError('账号选择的出口代理不存在，请重新配置')
+        proxy = {**proxy, 'enabled':True}
     if proxy.get('enabled') is not True:
         return None
     try:
@@ -154,13 +176,13 @@ def proxy_connection():
     return ProxyConnection
 
 
-def telegram_proxy_kwargs():
-    proxy = read_proxy()
+def telegram_proxy_kwargs(account=None):
+    proxy = read_proxy(account) if account else read_proxy()
     return {'connection': proxy_connection(), 'proxy': proxy} if proxy else {}
 
 
-def ai_http_client():
-    proxy = read_proxy()
+def ai_http_client(account=None):
+    proxy = read_proxy(account) if account else read_proxy()
     if not proxy:
         return None
     import httpx

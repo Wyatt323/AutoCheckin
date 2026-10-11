@@ -116,7 +116,8 @@ time.sleep(60)
     const userDir=username=>path.join(root,'.user-workspaces',users.find(user=>user.username===username).id);
     for(const [name,cookie] of [['alice',alice],['bob',bob]]) {
       const config=(await state(cookie)).config;
-      config.telegram={apiId:'123',apiHash:`${name}-only`};
+      assert.equal((await fetch(base+'/api/settings',{method:'PUT',headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({telegram:{apiId:'123',apiHash:`${name}-only`},model:'',providers:[]})})).status,200);
+      config.telegram={apiId:'',useSystem:true};
       config.users=[{name,session:'shared',sourceIndex:-1,useGlobalCredentials:true,bots:[{name:'@example_bot',mode:'command',command:'/sign',note:name+' bot note',schedule:{enabled:true,time:'23:59'}}],checkinSchedules:[]}];
       config.automations={schedules:[{id:'same_rule_001',account:'shared',enabled:true,target:'@example_bot',repeat:'daily',time:'09:00',message:name}],forwards:[]};
       fs.writeFileSync(path.join(userDir(name),'shared.session'),'fake session');
@@ -172,10 +173,18 @@ time.sleep(60)
       await page.goto(base+'/login'); await page.fill('#auth-username','admin');await page.fill('#admin-password','admin-secret');await page.click('#auth-submit');await page.waitForURL(base+'/');
       await page.locator('#nav-users').click();await page.fill('#web-new-username','charlie');await page.locator('#web-user-create button').click();
       await page.locator('#web-users-list').filter({hasText:'charlie'}).waitFor();
+      await page.locator('#nav-admin-global-settings').click();
       await page.locator('#system-api-id').fill('789');
       await page.locator('#system-settings-form [type="submit"]').click();
-      await page.locator('#toast').filter({hasText:'系统配置已保存'}).waitFor();
-      assert.equal((await state(admin)).config.system.telegram.apiId,789);
+      await page.locator('#toast').filter({hasText:'系统服务已保存'}).waitFor();
+      assert.equal((await state(admin)).config.system.telegram.apiId,123,'migrated administrator credentials remain personal');
+      assert.equal((await(await request('/api/admin/settings',admin)).json()).settings.telegram.apiId,789,'project default is saved independently');
+      await page.locator('#nav-global-settings').click();
+      await page.waitForFunction(()=>document.querySelector('#system-api-id').value==='123');
+      await page.locator('#settings-reset-telegram').click();
+      await page.locator('.ui-confirm-dialog').getByRole('button',{name:'恢复',exact:true}).click();
+      await page.locator('#settings-inheritance-summary').filter({hasText:'Telegram API · 管理员配置'}).waitFor();
+      assert.equal((await state(admin)).config.system.telegram.apiId,789,'restoring inheritance uses the project default');
       await page.locator('#nav-audit').click();
       await page.locator('#audit-user option[value="'+aliceId+'"]').waitFor({state:'attached'});
       await page.locator('#audit-user').selectOption(aliceId);
@@ -223,10 +232,11 @@ time.sleep(60)
       await page.locator('#toast').filter({hasText:'配置已保存'}).waitFor();
       assert.equal((await(await page.request.get(base+'/api/state')).json()).config.users[0].checkinSchedules.length,1,'regular user can create and persist own tasks through UI');
       await page.locator('#account-back').click();
-      await page.locator('#use-system-api').check();assert.equal(await page.locator('#personal-api-fields').isVisible(),false);
+      assert.equal(await page.locator('#global-api-id').count(),0,'API edit form is only in global settings');
       await page.locator('#account-overview .save-btn').first().click();await page.locator('#toast').filter({hasText:'配置已保存'}).waitFor();
-      await page.locator('[data-view="ai"]').click();await page.locator('#use-system-ai').check();
-      assert.equal(await page.locator('#provider-list').isVisible(),false);
+      await page.locator('[data-view="ai"]').click();
+      assert.equal(await page.locator('#provider-list').count(),0,'duplicate AI editor is removed');
+      assert.equal(await page.locator('#system-provider-choice').count(),1);
       await page.locator('#view-ai .save-btn').click();await page.locator('#toast').filter({hasText:'配置已保存'}).waitFor();
       const charlieState=(await(await page.request.get(base+'/api/state')).json()).config;
       assert.equal(charlieState.telegram.useSystem,true);assert.equal(charlieState.useSystemAI,true);

@@ -193,7 +193,7 @@ async def main():
                 account_error(session, f"账号 {session} 不存在，跳过其规则")
                 continue
             api_id, api_hash = resolve_credentials(config, user)
-            client = TelegramClient(str(DATA_DIR / session), api_id, api_hash, device_model="AutoCheckin", **telegram_proxy_kwargs())
+            client = TelegramClient(str(DATA_DIR / session), api_id, api_hash, device_model="AutoCheckin", **telegram_proxy_kwargs(user))
             connected_clients.append(client)
             try:
                 await client.connect()

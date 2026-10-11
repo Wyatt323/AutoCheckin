@@ -132,7 +132,8 @@ else:
       assert.equal((await request('/api/auth/password',cookie,{currentPassword:'a123456',newPassword:username+'-secret'})).status,200);
       const directory = path.join(root,'.user-workspaces',user.id);
       const config = (await state(cookie)).config;
-      config.telegram = {apiId:'123',apiHash:'offline'};
+      assert.equal((await fetch(base+'/api/settings',{method:'PUT',headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({telegram:{apiId:'123',apiHash:'offline'},model:'',providers:[]})})).status,200);
+      config.telegram.useSystem=true;
       config.users = ['shared','second'].map(session => ({name:session,session,sourceIndex:-1,useGlobalCredentials:true,bots:[{name:'@offline_bot',mode:'command',command:'/sign'}],checkinSchedules:[]}));
       for (const account of config.users) fs.writeFileSync(path.join(directory,account.session+'.session'),'fake-session');
       assert.equal((await request('/api/config',cookie,config)).status,200);

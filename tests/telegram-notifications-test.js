@@ -6,8 +6,8 @@ const wait=async fn=>{for(let i=0;i<200;i++){if(fn())return;await new Promise(re
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'tg-notifications-'));let notifier;
   try {
     let clock=Date.now(),calls=[],mode='ok';
-    const fetchImpl=async(url,options)=>{
-      calls.push({url,body:JSON.parse(options.body)});
+    const fetchImpl=async(url,options,metadata)=>{
+      calls.push({url,body:JSON.parse(options.body),metadata});
       if(mode==='network')throw Error('secret '+token);
       if(mode==='429')return {ok:false,status:429,json:async()=>({ok:false,error_code:429,parameters:{retry_after:5}})};
       if(mode==='403')return {ok:false,status:403,json:async()=>({ok:false,error_code:403,description:token})};
@@ -24,6 +24,7 @@ const wait=async fn=>{for(let i=0;i<200;i++){if(fn())return;await new Promise(re
     assert.equal(await notifier.notifyRun({...run,trigger:'manual'}),false);
     await notifier.notifyRun(run,'My account');await wait(()=>notifier.view().deliveries[0]?.state==='sent');
     assert.equal(calls.length,1);assert.equal(calls[0].body.chat_id,'-100123456');
+    assert.equal(calls[0].metadata.account,'first','transport can route result notifications through the owning account proxy');
     assert.ok(calls[0].body.text.includes('My account') && calls[0].body.text.includes('已完成'));
     assert.equal(calls[0].body.parse_mode,undefined,'plain text template');
     await notifier.notifyRun(run);await notifier.pump();assert.equal(calls.length,1,'one job per run');

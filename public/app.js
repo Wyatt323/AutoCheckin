@@ -36,6 +36,9 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 function lineIcon(name) {
   const paths = {
+    menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',
+    close:'<path d="m6 6 12 12M6 18 18 6"/>',
+    layout:'<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 3v18M5.5 7h1M5.5 11h1M5.5 15h1"/>',
     dashboard:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     features:'<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><path d="M17.5 14v7M14 17.5h7"/>',
     account:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
@@ -53,6 +56,55 @@ function lineIcon(name) {
   return `<svg class="line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.ai}</svg>`;
 }
 document.querySelectorAll('[data-icon]').forEach(element => { element.innerHTML = lineIcon(element.dataset.icon); });
+(() => {
+  const preference='autocheckin-navigation-layout';
+  const small=window.matchMedia('(max-width: 900px)');
+  const sidebar=$('#primary-navigation'),toggle=$('#nav-layout-toggle'),opener=$('#nav-drawer-open'),backdrop=$('#navigation-backdrop');
+  let layout='horizontal',drawerOpen=false;
+  try {if(localStorage.getItem(preference)==='vertical')layout='vertical';} catch {}
+  function render() {
+    const drawer=layout==='vertical' && small.matches,open=drawer && drawerOpen;
+    document.documentElement.dataset.navLayout=layout;
+    toggle.setAttribute('aria-pressed',String(layout==='vertical'));
+    toggle.title=layout==='vertical' ? '点击切换为顶部横向菜单' : '点击切换为左侧竖向菜单';
+    document.body.classList.toggle('nav-drawer-open',open);
+    backdrop.hidden=!open;
+    opener.setAttribute('aria-expanded',String(open));
+    sidebar.inert=drawer && !open;
+    if(drawer)sidebar.setAttribute('aria-hidden',String(!open));else sidebar.removeAttribute('aria-hidden');
+    if(open){sidebar.setAttribute('role','dialog');sidebar.setAttribute('aria-modal','true');sidebar.setAttribute('aria-label','主导航');}
+    else {sidebar.removeAttribute('role');sidebar.removeAttribute('aria-modal');sidebar.removeAttribute('aria-label');}
+  }
+  function closeDrawer(restore=true) {
+    const wasOpen=drawerOpen;drawerOpen=false;render();
+    if(wasOpen && restore)opener.focus();
+  }
+  function openDrawer() {
+    drawerOpen=true;window.UIControls?.close();render();
+    sidebar.querySelector('.nav-item.active:not([hidden])')?.focus();
+  }
+  toggle.addEventListener('click',()=>{
+    window.UIControls?.close();
+    layout=layout==='vertical' ? 'horizontal' : 'vertical';drawerOpen=false;
+    try {localStorage.setItem(preference,layout);} catch {}
+    render();if(layout==='vertical' && small.matches)openDrawer();
+  });
+  opener.addEventListener('click',openDrawer);
+  $('#nav-drawer-close').addEventListener('click',()=>closeDrawer());
+  backdrop.addEventListener('click',()=>closeDrawer());
+  sidebar.addEventListener('click',event=>{if(event.target.closest('[data-view],a'))closeDrawer();});
+  small.addEventListener('change',()=>{const contained=sidebar.contains(document.activeElement);closeDrawer(false);if(contained && layout==='vertical' && small.matches)opener.focus();});
+  document.addEventListener('keydown',event=>{
+    if(!drawerOpen)return;
+    if(event.key==='Escape'){event.preventDefault();closeDrawer();return;}
+    if(event.key!=='Tab')return;
+    const focusable=[...sidebar.querySelectorAll('a[href],button:not([disabled])')].filter(element=>element.getClientRects().length && !element.hidden);
+    const first=focusable[0],last=focusable.at(-1);
+    if(event.shiftKey && document.activeElement===first){event.preventDefault();last?.focus();}
+    else if(!event.shiftKey && document.activeElement===last){event.preventDefault();first?.focus();}
+  });
+  render();
+})();
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]);
 const formatDate = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '—';
 const statusText = { idle:'待运行', running:'运行中', stopping:'正在停止', completed:'已完成', partial:'部分成功', failed:'运行失败', stopped:'已停止', cancelled:'已取消' };
@@ -79,7 +131,8 @@ async function api(url, options = {}) {
 }
 
 function navigate(view, keepAccount = false, logAccount = null) {
-  if (['users','audit'].includes(view) && typeof webUser !== 'undefined' && webUser?.role !== 'admin') view = 'overview';
+  if (['users','audit','admin-global-settings'].includes(view) && typeof webUser !== 'undefined' && webUser?.role !== 'admin') view = 'overview';
+  if(typeof settingsNavigationAllowed==='function' && !settingsNavigationAllowed(view))return;
   if (view === 'bots') view = 'accounts';
   if (view === 'automation') {
     if (!config?.users.length) { navigate('accounts'); toast('先添加账号，再配置消息自动化'); return; }
@@ -93,13 +146,15 @@ function navigate(view, keepAccount = false, logAccount = null) {
   currentView = view;
   if (view === 'activity' && typeof setRunLogScope === 'function') setRunLogScope(logAccount);
   $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
-  $$('.view').forEach(item => item.classList.toggle('active', item.id === `view-${view}`));
-  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', features:'功能中心', ai:'AI 管理', activity:'运行日志', users:'用户管理', audit:'后台审计',notifications:'TG 通知' })[view];
+  $$('.view').forEach(item => item.classList.toggle('active', item.id === `view-${view==='admin-global-settings' ? 'global-settings' : view}`));
+  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', features:'功能中心', ai:'AI 管理', activity:'运行日志', users:'用户管理', 'global-settings':'全局设置','admin-global-settings':'管理员全局设置', audit:'后台审计',notifications:'TG 通知' })[view];
   window.location.hash = view === 'activity' && logAccount ? `activity?account=${encodeURIComponent(logAccount)}` : view;
   schedulePeerLookup();
   if (view === 'activity') renderRun();
   if (view === 'audit' && typeof loadAuditUsers === 'function') loadAuditUsers();
   if (view === 'notifications' && typeof loadNotificationSettings === 'function') loadNotificationSettings();
+  if (view === 'ai' && typeof loadAISettings === 'function') loadAISettings().catch(error=>toast(error.message,true));
+  if (['global-settings','admin-global-settings'].includes(view) && typeof loadSystemSettings === 'function') loadSystemSettings().catch(error=>toast(error.message,true));
   if (view === 'features' && typeof renderFeatureCenter === 'function') renderFeatureCenter();
 }
 
@@ -108,17 +163,18 @@ function openAccount(index, section = 'settings') {
   readEditors();
   if (section === 'logs') { openAccountLogs(config.users[index].session); return; }
   selectedAccountIndex = index;
-  accountSection = section;
+  accountSection = ['settings','bots','checkins','messages'].includes(section) ? section : 'settings';
   navigate('accounts', true);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function showAccountSection(section) {
   if (section === 'logs') { openAccount(selectedAccountIndex, 'logs'); return; }
+  section = ['settings','bots','checkins','messages'].includes(section) ? section : 'settings';
   accountSection = section;
   $('#account-editor').hidden = !['settings','bots','checkins'].includes(section);
   $$('#account-tabs [data-account-section]').forEach(button => button.classList.toggle('active', button.dataset.accountSection === section));
-  $$('#account-editor .account-pane,[data-account-pane="messages"],[data-account-pane="forwards"]').forEach(pane => { pane.hidden = pane.dataset.accountPane !== section; });
+  $$('#account-editor .account-pane,[data-account-pane="messages"]').forEach(pane => { pane.hidden = pane.dataset.accountPane !== section; });
   schedulePeerLookup();
 }
 
@@ -169,35 +225,21 @@ document.addEventListener('error', event => {
   if (event.target.matches?.('.account-tile-avatar img,.account-detail-avatar img')) event.target.remove();
 }, true);
 
-function updateSystemChoices() {
-  const useAPI = $('#use-system-api').checked;
-  $('#personal-api-fields').hidden = useAPI;
-  $('#global-api-status').textContent = useAPI ? (config.system?.telegram?.hasApiHash ? '使用管理员提供的系统 API，保存后生效' : '管理员尚未配置系统 API') : ($('#global-api-id').value && (config.telegram?.hasApiHash || $('#global-api-hash').value) ? '个人 API 凭据已配置' : '个人 API 凭据未完整配置（账号独立凭据仍可使用）');
-  const useAI = $('#use-system-ai').checked;
-  $('#view-ai .settings-panel').hidden = useAI;
-  $('#view-ai .page-heading').hidden = useAI;
-  $('#provider-list').hidden = useAI;
-  $('#add-provider').hidden = useAI;
-}
-$('#use-system-api').addEventListener('change',updateSystemChoices);
-$('#use-system-ai').addEventListener('change',updateSystemChoices);
 function renderConfig() {
   closeModeMenu();
   closeAutoSelect();
   $('#stat-users').textContent = config.users.length;
   $('#stat-bots').textContent = config.users.reduce((sum, user) => sum + user.bots.length, 0);
-  $('#stat-providers').textContent = config.useSystemAI ? (config.system?.providers?.length || 0) : config.providers.length;
-  $('#use-system-api').checked = config.telegram?.useSystem === true;
-  $('#use-system-ai').checked = config.useSystemAI === true;
-  $('#system-api-summary').textContent = config.system?.telegram?.hasApiHash ? '已配置 · API ID ' + config.system.telegram.apiId + '；账号独立凭据优先' : '管理员尚未配置系统 API';
-  $('#system-ai-summary').textContent = config.system?.providers?.length ? config.system.providers.map(p=>p.name).join('、') + ' · 模型 ' + config.system.model : '管理员尚未配置系统 AI 提供商';
-  $('#model-input').value = config.model;
-  config.telegram ||= { apiId: '', hasApiHash: false };
-  $('#global-api-id').value = config.telegram.apiId || '';
-  $('#global-api-hash').value = config.telegram.apiHash || '';
-  $('#global-api-hash').placeholder = config.telegram.hasApiHash ? '已保存 · 留空保持不变' : '填写全局 API Hash';
+  $('#stat-providers').textContent = config.useSystemAI ? (config.systemProviderId ? 1 : (config.system?.activeProviderIds?.length ?? config.system?.providers?.length ?? 0)) : config.providers.length;
+  const providerChoice=$('#system-provider-choice');
+  providerChoice.innerHTML='<option value="">按当前默认列表顺序尝试</option>'+(config.system?.providers || []).map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}${p.source ? (p.source==='personal' ? ' · 我的' : ' · 管理员') : ''}</option>`).join('');
+  if(config.systemProviderId && !(config.system?.providers || []).some(p=>p.id===config.systemProviderId))providerChoice.add(new Option('原提供商已不可用，请重新选择',config.systemProviderId));
+  providerChoice.value=config.systemProviderId || '';
+  const activeAI=(config.system?.providers || []).filter(p=>config.systemProviderId ? p.id===config.systemProviderId : !config.system.activeProviderIds || config.system.activeProviderIds.includes(p.id));
+  const aiScope=config.systemProviderId ? `指定提供商 · ${activeAI[0]?.source==='personal' ? '我的服务' : '管理员服务'}` : config.system?.sources?.ai==='personal' ? '我的 AI 配置' : '继承管理员配置';
+  $('#system-ai-summary').textContent=activeAI.length ? `${aiScope} · ${activeAI.map(p=>p.name).join('、')}` : config.systemProviderId ? '所选提供商已不可用，请重新选择并保存。' : '尚未配置 AI 提供商，请在上方添加，或由管理员配置项目默认服务。';
   $('#account-list').innerHTML = config.users.map((user, index) => {
-    return `<article class="account-tile" data-account-index="${index}"><button type="button" class="account-tile-main" data-open-account="${index}" data-section="settings"><span class="account-tile-top"><span class="account-tile-avatar">${accountAvatar(user)}</span><span class="account-tile-title"><strong>${escapeHtml(user.name || '新账号')}</strong><small>${escapeHtml(user.profile?.username ? `@${user.profile.username}` : user.session || '待设置 Session')}</small></span><span class="account-health ${user.sessionReady ? 'ready' : 'pending'}">${user.sessionReady ? '● 正常' : '○ 待登录'}</span></span><span class="account-tile-info"><span><small>Telegram 用户 ID</small><strong>${escapeHtml(user.profile?.userId || (user.sessionReady ? '待同步' : '登录后获取'))}</strong></span><span><small>数据中心 DC</small><strong title="当前 Telegram Session 连接的数据中心">${user.profile?.dcId ? `DC ${escapeHtml(user.profile.dcId)}` : '—'}</strong></span><span><small>签到 Bot</small><strong>${user.bots.length} 个</strong></span><span><small>资料更新</small><strong>${user.profile?.updatedAt ? escapeHtml(formatDate(user.profile.updatedAt)) : '尚未同步'}</strong></span></span><span class="account-tile-activity"><span>签到状态</span><strong></strong><small></small></span></button><div class="account-tile-actions"><button type="button" data-login-account="${index}" title="Telegram 登录">${lineIcon('login')}<span>登录</span></button><button type="button" data-run-account="${index}" title="立即签到">${lineIcon('play')}<span>执行</span></button><button type="button" data-open-account="${index}" data-section="bots" title="Bot 管理">${lineIcon('bot')}<span>Bot</span></button><button type="button" data-open-account="${index}" data-section="checkins" title="定时任务管理">${lineIcon('clock')}<span>定时</span></button><button type="button" data-open-account="${index}" data-section="messages" title="定时消息">${lineIcon('message')}<span>消息</span></button><button type="button" data-open-account="${index}" data-section="forwards" title="监听转发">${lineIcon('forward')}<span>转发</span></button><button type="button" data-open-account="${index}" data-section="logs" title="账号运行日志">${lineIcon('log')}<span>日志</span></button><button type="button" data-profile-account="${index}" ${!user.sessionReady ? 'disabled' : ''} title="同步 Telegram 头像、用户 ID 和 DC">${lineIcon('refresh')}<span>同步资料</span></button><button type="button" data-open-account="${index}" data-section="settings" title="账号资料">${lineIcon('edit')}<span>资料</span></button></div></article>`;
+    return `<article class="account-tile" data-account-index="${index}"><button type="button" class="account-tile-main" data-open-account="${index}" data-section="settings"><span class="account-tile-top"><span class="account-tile-avatar">${accountAvatar(user)}</span><span class="account-tile-title"><strong>${escapeHtml(user.name || '新账号')}</strong><small>${escapeHtml(user.profile?.username ? `@${user.profile.username}` : user.session || '待设置 Session')}</small></span><span class="account-health ${user.sessionReady ? 'ready' : 'pending'}">${user.sessionReady ? '● 正常' : '○ 待登录'}</span></span><span class="account-tile-info"><span><small>Telegram 用户 ID</small><strong>${escapeHtml(user.profile?.userId || (user.sessionReady ? '待同步' : '登录后获取'))}</strong></span><span><small>数据中心 DC</small><strong title="当前 Telegram Session 连接的数据中心">${user.profile?.dcId ? `DC ${escapeHtml(user.profile.dcId)}` : '—'}</strong></span><span><small>签到 Bot</small><strong>${user.bots.length} 个</strong></span><span><small>资料更新</small><strong>${user.profile?.updatedAt ? escapeHtml(formatDate(user.profile.updatedAt)) : '尚未同步'}</strong></span></span><span class="account-tile-activity"><span>签到状态</span><strong></strong><small></small></span></button><div class="account-tile-actions"><button type="button" data-login-account="${index}" title="Telegram 登录">${lineIcon('login')}<span>登录</span></button><button type="button" data-run-account="${index}" title="立即签到">${lineIcon('play')}<span>执行</span></button><button type="button" data-open-account="${index}" data-section="bots" title="Bot 管理">${lineIcon('bot')}<span>Bot</span></button><button type="button" data-open-account="${index}" data-section="checkins" title="定时任务管理">${lineIcon('clock')}<span>定时</span></button><button type="button" data-open-account="${index}" data-section="messages" title="定时消息">${lineIcon('message')}<span>消息</span></button><button type="button" data-open-account="${index}" data-section="logs" title="账号运行日志">${lineIcon('log')}<span>日志</span></button><button type="button" data-profile-account="${index}" ${!user.sessionReady ? 'disabled' : ''} title="同步 Telegram 头像、用户 ID 和 DC">${lineIcon('refresh')}<span>同步资料</span></button><button type="button" data-open-account="${index}" data-section="settings" title="账号资料">${lineIcon('edit')}<span>资料</span></button></div></article>`;
   }).join('') || '<div class="automation-empty">还没有账号。点击右上角添加账号。</div>';
   if (selectedAccountIndex !== null && !config.users[selectedAccountIndex]) selectedAccountIndex = null;
   $('#account-overview').hidden = selectedAccountIndex !== null;
@@ -212,6 +254,12 @@ function renderConfig() {
     $('#account-detail-subtitle').textContent = `${user.profile ? `TG ID ${user.profile.userId} · DC ${user.profile.dcId}` : user.sessionReady ? 'Telegram 资料待同步' : '等待登录 Session'} · ${user.bots.length} 个 Bot · ${(user.checkinSchedules || []).length} 个签到计划`;
     $('#account-editor').innerHTML = `<article class="account-card" data-index="${selectedAccountIndex}"><section class="account-pane" data-account-pane="settings"><div class="account-editor-title"><div><h2>账号资料</h2><p>维护 Telegram Session 与 API 凭据。</p></div><button class="delete-btn" data-delete="user" data-index="${selectedAccountIndex}">删除账号</button></div><div class="notice"><span>ⓘ</span><p>先保存全局或账号 API 凭据，再点击登录并使用 Telegram 手机客户端扫码。</p><button type="button" class="outline-btn" data-login-account="${selectedAccountIndex}">登录 Telegram</button></div><div class="field-grid account-fields"><label class="field"><span>显示名称</span><input data-field="name" value="${escapeHtml(user.name)}" placeholder="账号名称"></label><label class="field"><span>Session 名称</span><input data-field="session" value="${escapeHtml(user.session)}" placeholder="例如 myaccount"></label><label class="field"><span>Telegram API ID</span><input data-field="apiId" value="${escapeHtml(user.apiId)}" inputmode="numeric" placeholder="留空继承全局 API ID"></label><label class="field"><span>API Hash</span><input data-field="apiHash" type="password" value="${escapeHtml(user.apiHash || '')}" placeholder="${user.hasApiHash ? '已保存 · 留空保持不变' : '留空继承全局 Hash'}" autocomplete="new-password"></label></div></section><section class="account-pane" data-account-pane="bots">${renderAccountBots(user, selectedAccountIndex)}</section><section class="account-pane" data-account-pane="checkins">${renderCheckinSchedules(user, selectedAccountIndex)}</section></article>`;
     const fields = $('#account-editor .account-fields');
+    const proxyField=document.createElement('label');proxyField.className='field';
+    proxyField.innerHTML=`<span>出口代理</span><select data-field="proxyId" aria-label="账号出口代理"><option value="">跟随全局默认出口</option>${(config.system?.proxies || []).map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} · ${escapeHtml(p.type.toUpperCase())}${p.source ? (p.source==='personal' ? ' · 我的' : ' · 管理员') : ''}</option>`).join('')}</select><small>此账号的登录、签到、消息自动化、功能插件和 AI 请求使用此出口；保存后生效。</small>`;
+    const proxySelect=proxyField.querySelector('select');
+    if(user.proxyId && !(config.system?.proxies || []).some(p=>p.id===user.proxyId))proxySelect.add(new Option('原代理已不可用，请重新选择',user.proxyId));
+    proxySelect.value=user.proxyId || '';fields.append(proxyField);
+
     const controls = document.createElement('div');
     controls.className = 'notice credential-controls';
     controls.innerHTML = `<div><label><input type="checkbox" data-use-global ${user.useGlobalCredentials ? 'checked' : ''}> 使用全局凭据（保存时清空此账号的 ID / Hash 覆盖）</label><p data-credential-status></p><p>未填写的字段逐项继承全局；已有 Hash 输入留空保持原覆盖。</p><button type="button" class="outline-btn" data-clear-api-hash>清空账号 Hash 覆盖，改用全局 Hash</button></div>`;
@@ -233,10 +281,6 @@ function renderConfig() {
     deleteAccount.disabled = false;
     showAccountSection(accountSection);
   }
-  $('#provider-list').innerHTML = config.providers.map((provider, index) => `
-    <article class="provider-card" data-index="${index}"><div class="card-top"><div class="card-symbol">✧</div><div><strong>${escapeHtml(provider.name || '新服务')}</strong><small>优先级 ${index + 1}</small></div><button class="delete-btn" data-delete="provider" data-index="${index}">删除</button></div>
-    <div class="field-grid"><label class="field"><span>服务名称</span><input data-field="name" value="${escapeHtml(provider.name)}" placeholder="例如 primary"></label><label class="field"><span>Base URL</span><input data-field="baseUrl" value="${escapeHtml(provider.baseUrl)}" placeholder="https://api.example.com/v1"></label><label class="field"><span>API Key</span><input data-field="apiKey" type="password" value="${escapeHtml(provider.apiKey || '')}" placeholder="${provider.hasApiKey ? '已保存 · 留空保持不变' : '填写 API Key'}" autocomplete="new-password"></label></div></article>`).join('');
-  updateSystemChoices();
   renderAutomation();
   renderCheckinStatus();
   if (typeof renderFeatureCenter === 'function') renderFeatureCenter();
@@ -304,14 +348,10 @@ function autoSelect(kind, index, field, label) {
 function renderAutomation() {
   const account = config.users[selectedAccountIndex]?.session;
   const schedules = config.automations.schedules.map((item, index) => ({ item, index })).filter(entry => entry.item.account === account);
-  const forwards = config.automations.forwards.map((item, index) => ({ item, index })).filter(entry => entry.item.account === account);
   $('#schedule-list').innerHTML = schedules.length ? schedules.map(({ item, index }) => `
     <article class="automation-card" data-auto-kind="schedules" data-index="${index}"><div class="automation-card-head"><div class="automation-card-symbol">◷</div><div><strong>定时消息 ${index + 1}</strong><small>${item.repeat === 'once' ? '指定时间发送一次' : '每天定时发送'}</small></div><div class="automation-card-actions"><label class="auto-switch"><input type="checkbox" data-field="enabled" ${item.enabled !== false ? 'checked' : ''}><i></i>启用</label><button class="delete-btn" data-delete="schedule" data-index="${index}">删除</button></div></div>
     <div class="auto-field-grid"><div class="auto-field"><span>发送频率</span>${autoSelect('schedules', index, 'repeat', item.repeat === 'once' ? '发送一次' : '每天发送')}</div>${scheduleTimeFields(item, 'message')}${peerField('target', '目标群组 / 频道', item.target)}<label class="auto-field wide"><span>消息内容</span><textarea data-field="message" maxlength="4000" placeholder="输入要定时发送的消息">${escapeHtml(item.message || '')}</textarea><small>仅发送纯文本；一次性任务过期超过 5 分钟后不会补发。</small></label></div></article>`).join('') : '<div class="automation-empty">当前账号还没有定时消息。添加规则后，保存即可启用。</div>';
   renderPlannedTimes();
-  $('#forward-list').innerHTML = forwards.length ? forwards.map(({ item, index }) => `
-    <article class="automation-card" data-auto-kind="forwards" data-index="${index}"><div class="automation-card-head"><div class="automation-card-symbol">↗</div><div><strong>转发规则 ${index + 1}</strong><small>来源有新消息时自动转发</small></div><div class="automation-card-actions"><label class="auto-switch"><input type="checkbox" data-field="enabled" ${item.enabled !== false ? 'checked' : ''}><i></i>启用</label><button class="delete-btn" data-delete="forward" data-index="${index}">删除</button></div></div>
-    <div class="auto-field-grid">${peerField('source', '来源群组 / 频道', item.source)}${peerField('target', '转发到', item.target)}</div></article>`).join('') : '<div class="automation-empty">当前账号还没有转发规则。添加来源与目标后，保存即可开始监听。</div>';
   schedulePeerLookup();
 }
 
@@ -321,8 +361,8 @@ function peerField(field, label, value) {
 let peerLookupTimer = null, peerLookupRunning = false;
 const peerNames = new Map();
 const peerKey = (account, value) => JSON.stringify([account, value.trim().toLowerCase()]);
-const peerLookupVisible = () => !document.hidden && currentView === 'accounts' && selectedAccountIndex !== null && ['forwards','messages'].includes(accountSection);
-function peerFields() { return [...document.querySelectorAll(`${accountSection === 'messages' ? '#schedule-list' : '#forward-list'} .peer-input-row input`)]; }
+const peerLookupVisible = () => !document.hidden && currentView === 'accounts' && selectedAccountIndex !== null && accountSection === 'messages';
+function peerFields() { return [...document.querySelectorAll('#schedule-list .peer-input-row input')]; }
 function paintPeerNames() {
   const account = config?.users[selectedAccountIndex]?.session;
   for (const input of peerFields()) {
@@ -368,7 +408,7 @@ async function resolvePeerNames() {
   }
 }
 for (const type of ['input','paste','change','focusout']) document.addEventListener(type, event => {
-  if (event.target.matches('#forward-list .peer-input-row input, #schedule-list .peer-input-row input')) schedulePeerLookup(type === 'input' ? 250 : 0);
+  if (event.target.matches('#schedule-list .peer-input-row input')) schedulePeerLookup(type === 'input' ? 250 : 0);
 });
 
 function closeAutoSelect() {
@@ -477,10 +517,9 @@ function chooseMode(mode) {
 function readEditors() {
   if (typeof readFeatureEditors === 'function') readFeatureEditors();
   config.telegram ||= {};
-  config.telegram.useSystem = $('#use-system-api').checked;
-  config.useSystemAI = $('#use-system-ai').checked;
-  config.telegram.apiId = $('#global-api-id').value;
-  config.telegram.apiHash = $('#global-api-hash').value;
+  config.telegram.useSystem = true;
+  config.useSystemAI = true;
+  config.systemProviderId=$('#system-provider-choice').value;
   $$('#account-editor .account-card').forEach(card => {
     const item = config.users[Number(card.dataset.index)];
     if (!item) return; // Discard stale editors after deleting an account.
@@ -503,15 +542,10 @@ function readEditors() {
       row.querySelectorAll('[data-field]').forEach(input => { schedule[input.dataset.field] = input.type === 'checkbox' ? input.checked : input.value; });
     });
   });
-  $$('#provider-list article').forEach(card => {
-    const item = config.providers[Number(card.dataset.index)];
-    card.querySelectorAll('[data-field]').forEach(input => { item[input.dataset.field] = input.value; });
-  });
   $$('.automation-card[data-auto-kind]').forEach(card => {
     const item = config.automations[card.dataset.autoKind][Number(card.dataset.index)];
     card.querySelectorAll('input[data-field],textarea[data-field],select[data-field]').forEach(input => { item[input.dataset.field] = input.type === 'checkbox' ? input.checked : input.value; });
   });
-  config.model = $('#model-input').value;
 }
 
 async function saveConfig() {
@@ -627,7 +661,7 @@ document.addEventListener('click', event => {
   const del = event.target.closest('[data-delete]');
   if (del) {
     readEditors();
-    const field = ({ user:'users', provider:'providers' })[del.dataset.delete];
+    const field = ({ user:'users' })[del.dataset.delete];
     if (del.dataset.delete === 'bot') config.users[Number(del.dataset.accountIndex)].bots.splice(Number(del.dataset.index), 1);
     else if (del.dataset.delete === 'checkin') config.users[Number(del.dataset.accountIndex)].checkinSchedules.splice(Number(del.dataset.index), 1);
     else if (field) {
@@ -641,7 +675,7 @@ document.addEventListener('click', event => {
       }
       config[field].splice(Number(del.dataset.index), 1);
     }
-    else config.automations[del.dataset.delete === 'schedule' ? 'schedules' : 'forwards'].splice(Number(del.dataset.index), 1);
+    else if (del.dataset.delete === 'schedule') config.automations.schedules.splice(Number(del.dataset.index), 1);
     renderConfig();
   }
   const addBot = event.target.closest('[data-add-bot]');
@@ -766,9 +800,7 @@ window.addEventListener('scroll', () => { closeModeMenu(); closeAutoSelect(); },
 window.addEventListener('resize', () => { closeModeMenu(); closeAutoSelect(); });
 $('#add-account').addEventListener('click', () => { readEditors(); config.users.push({ sourceIndex:-1, name:'', session:'', apiId:'', apiHash:'', hasApiHash:false, sessionReady:false, dialogFolder:'', bots:[], checkinSchedules:[] }); openAccount(config.users.length - 1); $('#account-editor .account-fields input')?.focus(); });
 $('#account-back').addEventListener('click', () => navigate('accounts'));
-$('#add-provider').addEventListener('click', () => { readEditors(); config.providers.push({ sourceIndex:-1, name:'', baseUrl:'', apiKey:'', hasApiKey:false }); renderConfig(); $('#provider-list article:last-child input').focus(); });
 $('#add-schedule').addEventListener('click', () => { readEditors(); config.automations.schedules.push({ id:crypto.randomUUID(), enabled:true, account:config.users[selectedAccountIndex]?.session || '', target:'', repeat:'daily', time:'09:00', message:'' }); renderAutomation(); $('#schedule-list article:last-child input[data-field="target"]')?.focus(); });
-$('#add-forward').addEventListener('click', () => { readEditors(); config.automations.forwards.push({ id:crypto.randomUUID(), enabled:true, account:config.users[selectedAccountIndex]?.session || '', source:'', target:'' }); renderAutomation(); $('#forward-list article:last-child input[data-field="source"]')?.focus(); });
 $('#restart-automation').addEventListener('click', async () => {
   try { const data = await api('/api/automation/restart', { method:'POST', body:'{}' }); automationState = data.automation; renderAutomationState(); toast('自动化已重新启动'); }
   catch (error) { toast(error.message, true); }
@@ -792,7 +824,7 @@ $('#today').textContent = new Date().toLocaleDateString('zh-CN', { year:'numeric
     renderRun();
     renderAutomationState();
     const [hash, query] = location.hash.slice(1).split('?');
-    if (['overview','bots','accounts','features','ai','automation','activity','users','audit','notifications'].includes(hash)) navigate(hash, false, hash === 'activity' ? new URLSearchParams(query).get('account') : null);
+    if (['overview','bots','accounts','features','ai','automation','activity','users','global-settings','admin-global-settings','audit','notifications'].includes(hash)) navigate(hash, false, hash === 'activity' ? new URLSearchParams(query).get('account') : null);
     if (!pythonVersion) toast('未检测到 Python，配置可编辑，运行需安装 Python 环境', true);
     const statePollTimer = setInterval(() => { if (!document.hidden) poll(); }, 2000);
     document.addEventListener('visibilitychange', () => {

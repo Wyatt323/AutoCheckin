@@ -78,7 +78,8 @@ async function main() {
     assert.equal(persisted.telegram.users[1].api_hash, 'second-hash');
     assert.equal(persisted.ai.providers[0].api_key, 'secret-key');
     assert.equal(persisted.automations.schedules[0].time, '09:30');
-    assert.equal(persisted.automations.forwards[0].source, '@source_group');
+    assert.deepEqual(persisted.automations.forwards, []);
+    assert.deepEqual(persisted.automations.forwardPins[0].sources, ['@source_group']);
     assert.equal(persisted.telegram.users[0].checkin_schedules[0].time, '09:30');
     assert.equal(persisted.telegram.users[1].checkin_schedules[0].enabled, false);
     const refreshed = await (await fetch(`${base}/api/state`)).json();

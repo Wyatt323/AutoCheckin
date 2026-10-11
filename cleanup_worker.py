@@ -260,7 +260,7 @@ async def main(job_id):
     if not account:
         raise ValueError('任务账号不存在')
     api_id,api_hash = resolve_credentials(config,account)
-    client = TelegramClient(str(DATA_DIR/job['account']),api_id,api_hash,device_model='AutoCheckin',**telegram_proxy_kwargs())
+    client = TelegramClient(str(DATA_DIR/job['account']),api_id,api_hash,device_model='AutoCheckin',**telegram_proxy_kwargs(account))
     save = lambda state:write_document('cleanup-job:'+job_id,state,job_path)
     try:
         await client.connect()
