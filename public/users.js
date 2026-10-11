@@ -14,7 +14,7 @@ async function loadWebUsers() {
   try {
     const data = await api('/api/users');
     document.querySelector('#admin-username').value = webUser.username;
-    document.querySelector('#web-users-list').innerHTML = data.users.length ? data.users.map(user=>`<tr data-web-user-id="${escapeHtml(user.id)}" data-web-username="${escapeHtml(user.username)}"><td>${escapeHtml(user.username)}</td><td><span class="count-pill">${user.mustChangePassword ? '待修改密码' : '已启用'}</span></td><td>${escapeHtml(formatDate(user.createdAt))}</td><td><div class="web-user-actions"><button class="outline-btn" type="button" data-web-user-action="edit">修改</button><button class="outline-btn" type="button" data-web-user-action="reset">重置密码</button><button class="delete-btn" type="button" data-web-user-action="delete">删除</button></div></td></tr>`).join('') : '<tr><td colspan="4">还没有普通用户，点击上方添加。</td></tr>';
+    document.querySelector('#web-users-list').innerHTML = data.users.length ? data.users.map(user=>`<tr data-web-user-id="${escapeHtml(user.id)}" data-web-username="${escapeHtml(user.username)}"><td data-label="用户名"><strong>${escapeHtml(user.username)}</strong></td><td data-label="密码状态"><span class="status-badge ${user.mustChangePassword ? 'status-warning' : 'status-success'}">${user.mustChangePassword ? '待修改密码' : '已启用'}</span></td><td data-label="创建时间" class="record-time">${escapeHtml(formatDate(user.createdAt))}</td><td class="record-actions-cell"><div class="web-user-actions"><button class="outline-btn" type="button" data-web-user-action="edit">修改</button><button class="outline-btn" type="button" data-web-user-action="reset">重置密码</button><button class="delete-btn" type="button" data-web-user-action="delete">删除</button></div></td></tr>`).join('') : '<tr class="table-empty-row"><td colspan="4">还没有普通用户，点击上方添加。</td></tr>';
   } catch (error) { toast(error.message,true); }
 }
 document.querySelector('#nav-users').addEventListener('click',loadWebUsers);
@@ -90,6 +90,8 @@ function renderSettingsScope() {
   document.querySelector('#proxy-default-description').textContent=personal ? '用于你的账号、TG 通知和 AI 测试；账号可再单独选择出口，保存后仅重新连接你的监听任务。' : '用于项目级请求，并作为各用户未配置出口时的默认值。';
   document.querySelector('#global-services-title').textContent=personal ? '我的 Telegram API' : '项目全局服务';
   document.querySelector('#global-services-description').textContent=personal ? '配置你自己的共用 Telegram API，账号独立凭据仍优先使用。Hash 不回显，编辑留空保留原值。' : '配置项目共享的 Telegram API 与 AI 服务。密钥不回显，编辑留空保留原值。';
+  document.querySelector('#global-services-scope').textContent=personal ? '仅我的账号' : '项目共享';
+  document.querySelector('#system-settings-save-hint').textContent=personal ? '仅应用于你的账号；账号独立配置的 API 优先使用。' : '用户未设置个人服务时，自动继承这里的默认配置。';
   document.querySelector('#system-api-id-label').textContent=personal ? '我的 API ID' : '项目 API ID';
   document.querySelector('#system-api-hash-label').textContent=personal ? '我的 API Hash' : '项目 API Hash';
   document.querySelector('#system-settings-form [type=submit]').textContent=personal ? '保存 Telegram API' : '保存系统服务';
@@ -111,8 +113,22 @@ function serviceTestText(kind,id) {
   const result=serviceTests.get(kind+':'+id);
   return result?.testing ? '测试中…' : result ? (result.ok ? result.latencyMs+' ms' : '连接失败') : '未测试';
 }
+function serviceTestStatus(kind,id) {
+  const result=serviceTests.get(kind+':'+id);
+  const state=result?.testing ? 'testing' : result ? (result.ok ? 'success' : 'failed') : 'idle';
+  const hint=result?.message || (kind==='providers' ? '查询模型接口，不发送聊天请求' : '测试 Telegram HTTPS 连通耗时');
+  return `<span class="service-status service-status-${state}" role="status" title="${escapeHtml(hint)}">${escapeHtml(serviceTestText(kind,id))}</span>`;
+}
+function serviceEmptyState(kind,loading=false) {
+  const project=isProjectSettings();
+  const title=loading ? '正在读取 AI 提供商' : kind==='proxies' ? '还没有添加出口代理' : '还没有添加 AI 提供商';
+  const description=loading ? '请稍候，正在加载你的服务配置。' : kind==='proxies'
+    ? (project ? '点击右上角添加代理，按名称管理并测试不同出口。' : '点击右上角添加你的代理；未配置时使用管理员默认出口。')
+    : (project ? '添加共享 AI 服务，供用户选择或继承使用。' : '点击右上角添加个人服务；未配置时使用管理员默认 AI。');
+  return `<tr class="service-empty-row"><td colspan="4"><div class="service-empty" role="status"><span class="service-empty-icon">${lineIcon(loading ? 'refresh' : kind==='proxies' ? 'layout' : 'ai')}</span><strong>${title}</strong><p>${description}</p></div></td></tr>`;
+}
 function serviceActions(kind,id) {
-  return `<div class="service-actions"><button class="outline-btn" type="button" data-service-test="${kind}" data-service-id="${escapeHtml(id)}" ${serviceTests.get(kind+':'+id)?.testing ? 'disabled' : ''}>延迟测试</button><button class="outline-btn" type="button" data-service-edit="${kind}" data-service-id="${escapeHtml(id)}">编辑</button><button class="delete-btn" type="button" data-service-delete="${kind}" data-service-id="${escapeHtml(id)}">删除</button></div>`;
+  return `<div class="service-actions"><button class="outline-btn service-test-btn" type="button" data-service-test="${kind}" data-service-id="${escapeHtml(id)}" ${serviceTests.get(kind+':'+id)?.testing ? 'disabled' : ''}>延迟测试</button><button class="outline-btn service-edit-btn" type="button" data-service-edit="${kind}" data-service-id="${escapeHtml(id)}">编辑</button><button class="delete-btn" type="button" data-service-delete="${kind}" data-service-id="${escapeHtml(id)}">删除</button></div>`;
 }
 function renderSystemSettings() {
   document.querySelector('#system-api-id').value=systemSettings.telegram.apiId || '';
@@ -123,13 +139,13 @@ function renderSystemSettings() {
   renderSystemProviders();
 }
 function renderSystemProviders() {
-  document.querySelector(currentView==='ai' ? '#ai-provider-list' : '#system-provider-list').innerHTML=systemSettings.providers.map(p=>`<tr><td><strong>${escapeHtml(p.name)}</strong><small class="service-detail">${escapeHtml(p.model || systemSettings.model || '默认模型未设置')}</small></td><td class="service-address">${escapeHtml(p.baseUrl)}</td><td title="${escapeHtml(serviceTests.get('providers:'+p.id)?.message || '查询模型接口，不发送聊天请求')}">${serviceTestText('providers',p.id)}</td><td>${serviceActions('providers',p.id)}</td></tr>`).join('') || '<tr><td colspan="4">暂无个人 AI 提供商，点击添加提供商；未添加时继承管理员默认服务。</td></tr>';
+  document.querySelector(currentView==='ai' ? '#ai-provider-list' : '#system-provider-list').innerHTML=systemSettings.providers.map(p=>`<tr class="service-row"><td><div class="service-identity"><span class="service-icon service-icon-ai">${lineIcon('ai')}</span><div><strong>${escapeHtml(p.name)}</strong><small class="service-tag">${escapeHtml(p.model || systemSettings.model || '默认模型未设置')}</small></div></div></td><td class="service-endpoint" data-label="Base URL"><code class="service-address">${escapeHtml(p.baseUrl)}</code></td><td class="service-state-cell" data-label="连接状态">${serviceTestStatus('providers',p.id)}</td><td class="service-actions-cell">${serviceActions('providers',p.id)}</td></tr>`).join('') || serviceEmptyState('providers');
 }
 function renderProxySettings() {
   const select=document.querySelector('#proxy-default');
   select.innerHTML='<option value="">'+(isProjectSettings() ? '不使用默认代理（直连）' : '跟随项目默认出口')+'</option>'+proxySettings.proxies.map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} · ${escapeHtml(p.type.toUpperCase())}</option>`).join('');
   select.value=proxySettings.defaultProxyId;
-  document.querySelector('#proxy-list').innerHTML=proxySettings.proxies.map(p=>`<tr><td><strong>${escapeHtml(p.name)}</strong>${p.id===proxySettings.defaultProxyId ? '<small class="service-detail">'+(isProjectSettings() ? '项目默认' : '我的默认')+'</small>' : ''}</td><td>${escapeHtml(p.type.toUpperCase())}<small class="service-detail service-address">${escapeHtml(p.host)}:${escapeHtml(p.port)}</small></td><td title="${escapeHtml(serviceTests.get('proxies:'+p.id)?.message || '测试 Telegram HTTPS 连通耗时')}">${serviceTestText('proxies',p.id)}</td><td>${serviceActions('proxies',p.id)}</td></tr>`).join('') || '<tr><td colspan="4">暂无代理，点击添加代理。未单独指定出口的账号将使用项目默认出口。</td></tr>';
+  document.querySelector('#proxy-list').innerHTML=proxySettings.proxies.map(p=>`<tr class="service-row"><td><div class="service-identity"><span class="service-icon service-icon-proxy">${lineIcon('layout')}</span><div><strong>${escapeHtml(p.name)}</strong>${p.id===proxySettings.defaultProxyId ? '<small class="service-tag service-tag-default">'+(isProjectSettings() ? '项目默认' : '我的默认')+'</small>' : ''}</div></div></td><td class="service-endpoint" data-label="协议 / 地址"><span class="service-tag service-protocol">${escapeHtml(p.type.toUpperCase())}</span><code class="service-address">${escapeHtml(p.host)}:${escapeHtml(p.port)}</code></td><td class="service-state-cell" data-label="连接状态">${serviceTestStatus('proxies',p.id)}</td><td class="service-actions-cell">${serviceActions('proxies',p.id)}</td></tr>`).join('') || serviceEmptyState('proxies');
   UIControls.refresh();
 }
 async function loadSystemSettings() {
@@ -146,7 +162,7 @@ document.querySelector('#global-settings-refresh').addEventListener('click',()=>
 async function loadAISettings() {
   if (globalSaving || currentView!=='ai') return;
   const version=++serviceLoadVersion;serviceSettingsView=null;
-  document.querySelector('#ai-provider-list').innerHTML='<tr><td colspan="4">正在读取我的 AI 提供商…</td></tr>';
+  document.querySelector('#ai-provider-list').innerHTML=serviceEmptyState('providers',true);
   const data=await api('/api/settings');
   if(currentView!=='ai' || serviceLoadVersion!==version)return;
   serviceSettingsView='ai';
