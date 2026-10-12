@@ -43,6 +43,7 @@ function lineIcon(name) {
     features:'<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><path d="M17.5 14v7M14 17.5h7"/>',
     account:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
     bot:'<rect x="4" y="7" width="16" height="14" rx="4"/><path d="M12 7V3M8 13h.01M16 13h.01M9 17h6M1 12v4M23 12v4"/>',
+    gift:'<rect x="3" y="8" width="18" height="4" rx="1"/><path d="M5 12v9h14v-9M12 8v13"/><path d="M12 8H8a3 3 0 1 1 3-3l1 3Zm0 0h4a3 3 0 1 0-3-3l-1 3Z"/>',
     ai:'<path d="m12 3 2.6 6.4L21 12l-6.4 2.6L12 21l-2.6-6.4L3 12l6.4-2.6L12 3Z"/>',
     log:'<path d="M8 5h12M8 12h12M8 19h12M3 5h.01M3 12h.01M3 19h.01"/>',
     clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
@@ -529,7 +530,7 @@ function readEditors() {
     item.useGlobalCredentials = card.querySelector('[data-use-global]').checked;
     card.querySelectorAll('.account-fields [data-field]').forEach(input => { item[input.dataset.field] = input.value; });
     if (item.session !== previousSession) {
-      for (const kind of ['schedules', 'forwards', 'forwardPins']) (config.automations[kind] || []).forEach(rule => { if (rule.account === previousSession) rule.account = item.session; });
+      for (const kind of ['schedules', 'forwards', 'forwardPins', 'redPackets']) (config.automations[kind] || []).forEach(rule => { if (rule.account === previousSession) rule.account = item.session; });
       (config.plugins?.zeroSpeakers || []).forEach(rule=>{if(rule.account===previousSession)rule.account=item.session;});
     }
   });
@@ -662,6 +663,7 @@ document.addEventListener('click', event => {
         config.automations.schedules = config.automations.schedules.filter(item => item.account !== session);
         config.automations.forwards = config.automations.forwards.filter(item => item.account !== session);
         config.automations.forwardPins = (config.automations.forwardPins || []).filter(item => item.account !== session);
+        config.automations.redPackets = (config.automations.redPackets || []).filter(item => item.account !== session);
         if(config.plugins)config.plugins.zeroSpeakers=(config.plugins.zeroSpeakers || []).filter(item=>item.account!==session);
         const removedIndex = Number(del.dataset.index);
         if (checkinAccountIndex === removedIndex) checkinAccountIndex = null;

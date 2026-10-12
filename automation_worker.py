@@ -10,6 +10,7 @@ import json
 import os
 import re
 import random
+import signal
 import sys
 import time
 from pathlib import Path
@@ -18,6 +19,7 @@ ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("AUTOCHECKIN_DATA_DIR") or ROOT)
 CONFIG_PATH = DATA_DIR / "config.json"
 STATE_PATH = DATA_DIR / ".automation-state.json"
+PACKET_STATE_PATH = DATA_DIR / ".red-packet-state.json"
 _last_database_state = None
 CHINA_TIME = dt.timezone(dt.timedelta(hours=8))
 
@@ -45,6 +47,15 @@ def load_state():
 
 def load_sent():
     return load_state()["sent"]
+
+
+def packet_state(data):
+    if not isinstance(data, dict):
+        return {}
+    cutoff = time.time() - 7 * 86400
+    entries = [(key, value) for key, value in data.items() if isinstance(value, dict)
+               and isinstance(value.get('time'), (int, float)) and value['time'] > cutoff]
+    return dict(sorted(entries, key=lambda item: item[1]['time'])[-2000:])
 
 
 def save_sent(sent, planned=None, claimed=None):
@@ -168,12 +179,14 @@ async def main():
     rules = config.get("automations") or {}
     schedules = [rule for rule in rules.get("schedules", []) if rule.get("enabled", True)]
     forwards = [rule for rule in [*rules.get("forwards", []), *rules.get("forwardPins", [])] if rule.get("enabled", True)]
-    required = {rule["account"] for rule in schedules + forwards}
+    red_packets = [rule for rule in rules.get('redPackets', []) if rule.get('enabled', True)]
+    required = {rule["account"] for rule in schedules + forwards + red_packets}
     users = {str(user.get("session") or user["name"]): user for user in config.get("telegram", {}).get("users", [])}
     clients = {}
     forward_tasks = []
     schedule_tasks = set()
     connected_clients = []
+    packet_monitors = []
     persisted = load_state()
     sent, planned, claimed = (persisted[name] for name in ("sent", "planned", "claimed"))
     last_plans = None
@@ -181,7 +194,7 @@ async def main():
     retry_after = {}
 
     def account_error(session, message):
-        for category, entries in [('message', schedules), ('forward', forwards)]:
+        for category, entries in [('message', schedules), ('forward', forwards), ('red_packet', red_packets)]:
             for rule in entries:
                 if rule['account'] == session:
                     emit_rule(rule, category, message, 'error')
@@ -193,7 +206,8 @@ async def main():
                 account_error(session, f"账号 {session} 不存在，跳过其规则")
                 continue
             api_id, api_hash = resolve_credentials(config, user)
-            client = TelegramClient(str(DATA_DIR / session), api_id, api_hash, device_model="AutoCheckin", **telegram_proxy_kwargs(user))
+            packet_options = {'flood_sleep_threshold': 0} if any(rule['account'] == session for rule in red_packets) else {}
+            client = TelegramClient(str(DATA_DIR / session), api_id, api_hash, device_model="AutoCheckin", **packet_options, **telegram_proxy_kwargs(user))
             connected_clients.append(client)
             try:
                 await client.connect()
@@ -263,7 +277,76 @@ async def main():
             matching = f"任意关键词：{'、'.join(rule['keywords'])}" if rule.get('keywords') else '全部新消息'
             emit_rule(rule, 'forward', f"开始监听 {source_label} → {rule['target']} · {matching}" + (' · 转发后置顶' if rule.get('pinAfterForward') is True else ''))
 
-        emit(f"自动化运行中：{len(schedules)} 条定时消息，{active_forwards} 条转发监听", kind="ready")
+        active_packets = 0
+        if red_packets:
+            from red_packet import RedPacketMonitor
+            from telethon import utils, types
+            completed_packets = packet_state(read_document('red-packet-state', PACKET_STATE_PATH, default={}))
+            packet_save_lock = asyncio.Lock()
+
+            async def persist_packets():
+                async with packet_save_lock:
+                    retained = packet_state(completed_packets)
+                    completed_packets.clear()
+                    completed_packets.update(retained)
+                    await asyncio.to_thread(write_document, 'red-packet-state', dict(retained), PACKET_STATE_PATH)
+
+            for account, client in clients.items():
+                groups = {}
+                dialogs = None
+
+                async def resolve_group(value):
+                    nonlocal dialogs
+                    reference = chat_value(value)
+                    try:
+                        return await asyncio.wait_for(client.get_entity(reference), 15)
+                    except ValueError:
+                        if not isinstance(reference, int):
+                            raise
+                        if dialogs is None:
+                            dialogs = await asyncio.wait_for(client.get_dialogs(limit=None), 20)
+                        entity = next((dialog.entity for dialog in dialogs if utils.get_peer_id(dialog.entity) == reference), None)
+                        if entity is None:
+                            raise ValueError('输入错误或账号未加入')
+                        return entity
+
+                for rule in red_packets:
+                    if rule['account'] != account:
+                        continue
+                    valid = False
+                    for value in rule['groups']:
+                        try:
+                            entity = await resolve_group(value)
+                            if not (isinstance(entity, types.Chat) or isinstance(entity, types.Channel) and entity.megagroup):
+                                raise ValueError('请选择群组，广播频道和私聊不支持抢红包')
+                            if getattr(entity, 'left', False):
+                                raise ValueError('输入错误或账号未加入')
+                            peer = await client.get_input_entity(entity)
+                            chat = utils.get_peer_id(peer)
+                            group = groups.setdefault(chat, {'peer': peer, 'rules': []})
+                            if rule not in group['rules']:
+                                group['rules'].append(rule)
+                            valid = True
+                        except Exception as error:
+                            emit_rule(rule, 'red_packet', f"监听群组 {value} 无法启用：{error}", 'error')
+                    if valid:
+                        active_packets += 1
+                        emit_rule(rule, 'red_packet', f"[{rule.get('name') or rule['id']}] 开始监听 /red 红包指令", state='running')
+                if not groups:
+                    continue
+                monitor = RedPacketMonitor(client, account, groups, emit, completed_packets, persist_packets)
+                packet_monitors.append(monitor)
+
+                async def packet_handler(event, *, monitor=monitor):
+                    await monitor.handle(event)
+
+                async def packet_edit_handler(event, *, monitor=monitor):
+                    await monitor.handle(event, edited=True)
+
+                client.add_event_handler(packet_handler, events.NewMessage(chats=list(groups)))
+                client.add_event_handler(packet_edit_handler, events.MessageEdited(chats=list(groups)))
+
+        emit(f"自动化运行中：{len(schedules)} 条定时消息，{active_forwards} 条转发监听，{active_packets} 条红包监听", kind="ready")
 
         async def send_schedule(rule, key):
             try:
@@ -324,6 +407,8 @@ async def main():
                 task.add_done_callback(schedule_tasks.discard)
             await asyncio.sleep(1)
     finally:
+        for monitor in packet_monitors:
+            await monitor.close()
         tasks = [*forward_tasks, *schedule_tasks]
         for task in tasks:
             task.cancel()
@@ -339,10 +424,28 @@ async def main():
                 emit(f"账号断开失败：{result}", "error")
 
 
+async def run_until_stopped():
+    loop = asyncio.get_running_loop()
+    task = asyncio.create_task(main())
+    try:
+        loop.add_signal_handler(signal.SIGTERM, task.cancel)
+    except (NotImplementedError, RuntimeError):
+        pass  # Windows TerminateProcess has no graceful SIGTERM delivery.
+    try:
+        return await task
+    except asyncio.CancelledError:
+        return 0
+    finally:
+        try:
+            loop.remove_signal_handler(signal.SIGTERM)
+        except NotImplementedError:
+            pass
+
+
 if __name__ == "__main__":
     try:
         install_network_guard()
-        sys.exit(asyncio.run(main()))
+        sys.exit(asyncio.run(run_until_stopped()))
     except KeyboardInterrupt:
         pass
     except Exception as error:

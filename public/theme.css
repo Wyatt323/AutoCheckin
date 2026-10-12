@@ -522,6 +522,11 @@ dialog::backdrop, #login-dialog::backdrop, #run-log-dialog::backdrop { backgroun
 .feature-plugin-notice { align-items:flex-start; margin-bottom:22px; }
 .feature-plugin-notice p { margin:0 0 8px; }
 .feature-plugin-runtime { margin-bottom:24px; flex-wrap:wrap; }
+.red-packet-options { margin-top:20px; padding-top:16px; border-top:2px dashed var(--ink); }
+.red-packet-options summary { cursor:pointer; font-size:14px; font-weight:700; padding:6px 0; }
+.red-packet-options[open] summary { margin-bottom:18px; }
+.red-packet-options textarea { font:inherit; width:100%; min-width:0; resize:vertical; line-height:1.7; }
+.feature-plugin-card:has(#open-red-packet) .feature-plugin-icon { background:var(--pink); }
 .feature-input-list { display:grid; gap:10px; margin:10px 0 0; }
 .feature-input-item { display:flex; align-items:center; gap:10px; min-width:0; }
 .feature-input-item>.peer-input-row,.feature-input-item>input { flex:1; min-width:0; }

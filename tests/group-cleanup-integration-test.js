@@ -98,7 +98,7 @@ for _ in range(900):
         if(new URL(route.request().url()).pathname==='/api/accounts/chats/resolve') {const {peers}=route.request().postDataJSON();return route.fulfill({contentType:'application/json',body:JSON.stringify({results:peers.map(value=>({value,status:'ok',title:'测试交流群 '+value,id:'-100123',type:'group'}))})});}
         return route.continue();
       });
-      await page.goto(base+'/#features');assert.equal(await page.locator('.feature-plugin-card').count(),3);
+      await page.goto(base+'/#features');assert.equal(await page.locator('.feature-plugin-card').count(),4);
       await page.locator('#open-zero-speakers').click();const card=page.locator('[data-cleanup-rule="cleanup_admin_001"]');
       await card.locator('[data-feature-peer-name]').filter({hasText:'测试交流群'}).waitFor();
       assert.equal(await card.locator('.ui-select-trigger').count(),1);

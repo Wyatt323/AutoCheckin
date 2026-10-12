@@ -70,6 +70,7 @@
             <article class="panel feature-plugin-card"><div class="feature-plugin-heading"><span class="feature-plugin-icon" data-icon="bot" aria-hidden="true">▦</span><span class="feature-center-badge">签到插件</span></div><h2>Bot 自动签到</h2><p>按账号管理签到 Bot 与计划，支持命令、按钮和对话分组轮询，也可立即手动执行。</p><div class="feature-plugin-tags"><span>多账号并行</span><span>Bot 独立定时</span><span>分组轮询</span></div><div class="feature-plugin-footer"><small id="checkin-plugin-count">尚无账号</small><button class="primary-btn" id="open-checkin" type="button" data-open-checkin>配置插件 <span aria-hidden="true">→</span></button></div></article>
             <article class="panel feature-plugin-card"><div class="feature-plugin-heading"><span class="feature-plugin-icon" data-icon="forward" aria-hidden="true">↗</span><span class="feature-center-badge">消息插件</span></div><h2>监听转发并置顶</h2><p>监听多个群组或频道，筛选关键词，将新消息转发到目标会话，并按需置顶。</p><div class="feature-plugin-tags"><span>多来源监听</span><span>关键词过滤</span><span>可选置顶</span></div><div class="feature-plugin-footer"><small id="forward-pin-count">尚无规则</small><button class="primary-btn" id="open-forward-pin" type="button">配置插件 <span aria-hidden="true">→</span></button></div></article>
             <article class="panel feature-plugin-card"><div class="feature-plugin-heading"><span class="feature-plugin-icon" data-icon="account" aria-hidden="true">♧</span><span class="feature-center-badge">群管理插件</span></div><h2>清理0发言群员</h2><p>检测群内历史未发言成员，发送 Excel 名单，由执行账号在群内确认是否清理。</p><div class="feature-plugin-tags"><span>Excel 名单</span><span>群内确认</span><span>可再次进群</span></div><div class="feature-plugin-footer"><small id="zero-speakers-count">尚无规则</small><button class="primary-btn" id="open-zero-speakers" type="button">配置插件 <span aria-hidden="true">→</span></button></div></article>
+            <article class="panel feature-plugin-card"><div class="feature-plugin-heading"><span class="feature-plugin-icon" data-icon="gift" aria-hidden="true">♢</span><span class="feature-center-badge">红包插件</span></div><h2>抢红包</h2><p>监听群内 /red 指令，红包按钮出现立即领取，成功或领完后继续等待下一个。</p><div class="feature-plugin-tags"><span>实时监听</span><span>自动领取</span><span>多群配置</span></div><div class="feature-plugin-footer"><small id="red-packet-count">尚无规则</small><button class="primary-btn" id="open-red-packet" type="button">配置插件 <span aria-hidden="true">→</span></button></div></article>
           </div>
           <section id="checkin-plugin-editor" hidden aria-labelledby="checkin-plugin-title">
             <button class="account-back" id="close-checkin" type="button">← 返回功能中心</button>
@@ -89,6 +90,14 @@
             <div class="notice feature-plugin-notice"><span>ⓘ</span><div><p>关键词命中任意一个即可转发，忽略大小写；不填关键词则转发全部新消息，支持文字及媒体说明。</p><p>执行账号需能访问来源并向目标发送消息；开启置顶还需要目标会话的置顶权限。签到或登录期间监听会暂停。</p></div></div>
             <div class="feature-plugin-runtime"><span id="feature-runtime-status" role="status">读取运行状态…</span><button class="outline-btn" id="feature-forward-logs" type="button">查看转发日志</button></div>
             <div id="forward-pin-rules" class="automation-list"></div>
+            <div class="bottom-save"><small>保存后自动应用规则，配置与日志仅属于当前用户。</small><button class="primary-btn save-btn" type="button">保存插件规则</button></div>
+          </section>
+          <section id="red-packet-editor" hidden aria-labelledby="red-packet-title">
+            <button class="account-back" id="close-red-packet" type="button">← 返回功能列表</button>
+            <div class="page-heading"><div><span class="kicker">RED PACKET MONITOR</span><h2 id="red-packet-title">抢红包</h2><p>选择执行账号与监听群组，保存规则后开始监听。</p></div><button class="outline-btn" id="add-red-packet" type="button">＋ 添加规则</button></div>
+            <div class="notice feature-plugin-notice"><span>ⓘ</span><div><p>发现 /red 后临时刷新，优先响应新消息与消息编辑；领取成功、已领取或红包领完后停止本轮，继续监听。</p><p>仅点击匹配的领取按钮。等待超时自动结束；遇到 Telegram 限流会等待。签到、登录或清理任务期间监听会暂停。</p></div></div>
+            <div class="feature-plugin-runtime"><span id="red-packet-runtime-status" role="status">读取运行状态…</span><button class="outline-btn" id="red-packet-logs" type="button">查看红包日志</button></div>
+            <div id="red-packet-rules" class="automation-list"></div>
             <div class="bottom-save"><small>保存后自动应用规则，配置与日志仅属于当前用户。</small><button class="primary-btn save-btn" type="button">保存插件规则</button></div>
           </section>
           <section id="zero-speakers-editor" hidden aria-labelledby="zero-speakers-title">

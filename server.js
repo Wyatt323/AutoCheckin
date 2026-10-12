@@ -163,7 +163,8 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
       automations: {
         schedules: Array.isArray(config.automations?.schedules) ? config.automations.schedules : [],
         forwards: Array.isArray(config.automations?.forwards) ? config.automations.forwards : [],
-        forwardPins: Array.isArray(config.automations?.forwardPins) ? config.automations.forwardPins : []
+        forwardPins: Array.isArray(config.automations?.forwardPins) ? config.automations.forwardPins : [],
+        redPackets: Array.isArray(config.automations?.redPackets) ? config.automations.redPackets : []
       },
       plugins: {zeroSpeakers:Array.isArray(config.plugins?.zeroSpeakers) ? config.plugins.zeroSpeakers : []},
       model: ai.model || '',
@@ -191,7 +192,8 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     const schedules = input?.schedules || [];
     const forwards = input?.forwards || [];
     const forwardPins = input?.forwardPins || [];
-    if (![schedules, forwards, forwardPins].every(items => Array.isArray(items)) || schedules.length>100 || forwards.length>100 || forwards.length+forwardPins.length>200) throw new Error('自动化规则格式不正确或数量过多');
+    const redPackets = input?.redPackets || [];
+    if (![schedules, forwards, forwardPins, redPackets].every(items => Array.isArray(items)) || schedules.length>100 || forwards.length>100 || forwards.length+forwardPins.length>200 || redPackets.length>100) throw new Error('自动化规则格式不正确或数量过多');
     const sessions = new Set(users.map(user => user.session));
     const ids = new Set();
     const idFor = (item, label) => {
@@ -237,6 +239,24 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
       return {id:idFor(item,label), enabled:item.enabled !== false, name:String(item.name || '').trim().slice(0,80),
         account:accountFor(item,label), sources,target,keywords:normalizedKeywords,pinAfterForward:item.pinAfterForward === true};
     });
+    const normalizedRedPackets = redPackets.map((item,index) => {
+      const label = `抢红包规则 ${index+1}`;
+      if (!item || !Array.isArray(item.groups) || !item.groups.length || item.groups.length>20) throw Error(`${label} 需要 1–20 个监听群组`);
+      const groups=[...new Set(item.groups.map(value=>chatRef(value,`${label} 群组`)).map(value=>value.toLowerCase()))];
+      const botUsername=item.botUsername ? chatRef(item.botUsername,`${label} Bot 用户名`) : '';
+      if (botUsername && !botUsername.startsWith('@')) throw Error(`${label} 的 Bot 须填写用户名`);
+      if (item.enabled!==undefined && typeof item.enabled!=='boolean') throw Error(`${label} 的启用开关无效`);
+      const watchSeconds=item.watchSeconds ?? 120, retryInterval=item.retryInterval ?? 0.5;
+      if (!Number.isInteger(watchSeconds) || watchSeconds<30 || watchSeconds>600) throw Error(`${label} 的实时刷新窗口须为 30–600 秒`);
+      if (typeof retryInterval!=='number' || !Number.isFinite(retryInterval) || retryInterval<0.5 || retryInterval>5) throw Error(`${label} 的重试间隔须为 0.5–5 秒`);
+      const keywords = field => {
+        const values=item[field] ?? [];
+        if (!Array.isArray(values) || values.length>30 || values.some(value=>typeof value!=='string' || value.length>80)) throw Error(`${label} 的识别词最多 30 个，每个不超过 80 字`);
+        return [...new Set(values.map(value=>value.trim()).filter(Boolean))];
+      };
+      return {id:idFor(item,label),name:String(item.name || '').trim().slice(0,80),enabled:item.enabled!==false,account:accountFor(item,label),groups,botUsername,
+        watchSeconds,retryInterval,buttonKeywords:keywords('buttonKeywords'),successKeywords:keywords('successKeywords'),emptyKeywords:keywords('emptyKeywords')};
+    });
     const links = new Map();
     for (const rule of [...normalizedForwards, ...normalizedForwardPins].filter(rule => rule.enabled)) {
       const to = rule.target.toLowerCase();
@@ -257,7 +277,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
       visited.add(node);
     }
     for (const node of links.keys()) visit(node);
-    const result={automations:{schedules:normalizedSchedules,forwards:normalizedForwards,forwardPins:normalizedForwardPins}};
+    const result={automations:{schedules:normalizedSchedules,forwards:normalizedForwards,forwardPins:normalizedForwardPins,redPackets:normalizedRedPackets}};
     migrateLegacyForwards(result);
     return result.automations;
   }

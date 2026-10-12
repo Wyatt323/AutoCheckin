@@ -35,7 +35,7 @@ function filterRunLogs(records, filter, accounts = []) {
   return rows.sort((a,b) => Date.parse(a.time) - Date.parse(b.time));
 }
 function runLogGroupsHtml(rows, accountLabel) {
-  const groups = new Map(), categories = {checkin:'定时任务',message:'定时消息',forward:'监听转发',plugin:'功能插件'};
+  const groups = new Map(), categories = {checkin:'定时任务',message:'定时消息',forward:'监听转发',plugin:'功能插件',red_packet:'抢红包'};
   for (const row of rows) {
     const key = JSON.stringify([row.runId,row.account,row.category]);
     if (!groups.has(key)) groups.set(key,[]);
@@ -45,14 +45,14 @@ function runLogGroupsHtml(rows, accountLabel) {
     const first=lines[0], summary=first.summary, counts=summary?.counts;
     const label=summary?.label || statusText[first.state] || first.state;
     const stats=counts?.total ? `共 ${counts.total} 个 · 成功 ${counts.success} · 超时 ${counts.timeout} · 失败 ${counts.failed}${counts.unknown ? ` · 待确认 ${counts.unknown}` : ''}${counts.skipped ? ` · 跳过 ${counts.skipped}` : ''}` : '';
-    const trigger=first.category==='forward' ? '自动转发' : first.trigger==='scheduled' ? '定时' : '手动';
+    const trigger=first.category==='forward' ? '自动转发' : first.category==='red_packet' ? '自动领取' : first.trigger==='scheduled' ? '定时' : '手动';
     return `<section class="log-run-group"><header class="log-run-heading"><div><b>${escapeHtml(accountLabel(first))}</b><span>${categories[first.category] || first.category} · ${trigger}${first.bot ? ' · '+escapeHtml(first.bot) : ''}</span></div><strong class="log-run-state ${escapeHtml(first.state)}">${escapeHtml(label)}</strong>${stats ? `<small>${escapeHtml(stats)}</small>` : ''}</header>${lines.map(line=>{const parts=beijingParts(line.time);return `<div class="log-line ${escapeHtml(line.botResult && ['success','already'].includes(line.botResult.status) ? 'success' : line.stream)}"><time>${parts ? parts.date+' '+parts.time : '—'}</time><span>${escapeHtml(line.text)}</span></div>`;}).join('')}</section>`;
   }).join('');
 }
 if (typeof module !== 'undefined') module.exports = { beijingParts, filterRunLogs };
 if (typeof document !== 'undefined') {
   let runRecords = [], modalRunId = null, lastRevision = -1, polling = false, logScope = null, lastQuery = null;
-  const categories = {checkin:'定时任务', message:'定时消息', forward:'监听转发',plugin:'功能插件'};
+  const categories = {checkin:'定时任务', message:'定时消息', forward:'监听转发',plugin:'功能插件',red_packet:'抢红包'};
   const dialog = document.createElement('dialog');
   dialog.id = 'run-log-dialog';
   dialog.setAttribute('aria-labelledby', 'run-log-title');

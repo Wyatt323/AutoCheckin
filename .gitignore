@@ -13,6 +13,7 @@ data/
 *.session
 *.session-*
 .automation-state.json*
+.red-packet-state.json*
 .checkin-schedule-state.json*
 .venv/
 venv/

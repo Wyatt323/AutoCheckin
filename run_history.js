@@ -34,7 +34,7 @@ function createRunHistory(dataRoot, store = null) {
   try {
     const saved = store ? structuredClone(store.read('run-history') || {}) : JSON.parse(fs.readFileSync(file, 'utf8'));
     records = Array.isArray(saved.records) ? saved.records.filter(r => r && typeof r.id === 'string' && Array.isArray(r.lines)) : [];
-    events = Array.isArray(saved.events) ? saved.events.filter(r => r && typeof r.id === 'string' && typeof r.account === 'string' && ['message','forward'].includes(r.category) && Array.isArray(r.lines)) : [];
+    events = Array.isArray(saved.events) ? saved.events.filter(r => r && typeof r.id === 'string' && typeof r.account === 'string' && ['message','forward','red_packet'].includes(r.category) && Array.isArray(r.lines)) : [];
     for (const record of records) {
       if (['running', 'stopping'].includes(record.state)) {
         record.state = 'failed'; record.finishedAt = new Date().toISOString();
@@ -57,10 +57,10 @@ function createRunHistory(dataRoot, store = null) {
     },
     changed, flush,
     appendEvent(event) {
-      if (!event || typeof event.account !== 'string' || !['message','forward'].includes(event.category)) return;
+      if (!event || typeof event.account !== 'string' || !['message','forward','red_packet'].includes(event.category)) return;
       const time = new Date().toISOString(), id = randomUUID();
       const state = ['completed','failed','running','stopped'].includes(event.state) ? event.state : event.level === 'error' ? 'failed' : 'completed';
-      events.push({ id, account:event.account, category:event.category, ruleId:event.ruleId, trigger:event.category === 'forward' ? 'automatic' : 'scheduled', state, startedAt:time, finishedAt:time,
+      events.push({ id, account:event.account, category:event.category, ruleId:event.ruleId, trigger:event.category === 'message' ? 'scheduled' : 'automatic', state, startedAt:time, finishedAt:time,
         lines:[{ id:1, time, stream:event.level === 'error' ? 'stderr' : 'system', text:String(event.message || '').slice(0,2000) }] });
       changed();
     },

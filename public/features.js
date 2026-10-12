@@ -1,6 +1,7 @@
 let featureEditorOpen = false;
 let cleanupEditorOpen = false;
 let checkinEditorOpen = false;
+let redPacketEditorOpen = false;
 let checkinAccountIndex = null;
 let checkinSection = 'bots';
 let cleanupRuns = [], cleanupStarting = new Set();
@@ -12,11 +13,15 @@ function rememberSavedCleanupSettings() {
 let featureLookupTimer = null, featureLookupRunning = false;
 const featureRules = () => config?.automations?.forwardPins || [];
 const featureRule = id => featureRules().find(rule => rule.id === id);
-const featureVisible = () => !document.hidden && currentView === 'features' && (featureEditorOpen || cleanupEditorOpen);
+const featureVisible = () => !document.hidden && currentView === 'features' && (featureEditorOpen || cleanupEditorOpen || redPacketEditorOpen);
+const redPacketRules = () => config?.automations?.redPackets || [];
+const redPacketRule = id => redPacketRules().find(rule => rule.id === id);
+const featurePeerSelector = '[data-feature-rule] [data-feature-peer], [data-cleanup-rule] [data-feature-peer], [data-red-packet-rule] [data-feature-peer]';
 const cleanupRules = () => config?.plugins?.zeroSpeakers || [];
 const cleanupRule = id => cleanupRules().find(rule=>rule.id===id);
 function peerRule(input) {
-  const card = input.closest('[data-feature-rule],[data-cleanup-rule]');
+  const card = input.closest('[data-feature-rule],[data-cleanup-rule],[data-red-packet-rule]');
+  if (card?.hasAttribute('data-red-packet-rule')) return redPacketRule(card.dataset.redPacketRule);
   return card?.hasAttribute('data-cleanup-rule') ? cleanupRule(card.dataset.cleanupRule) : featureRule(card?.dataset.featureRule);
 }
 
@@ -33,6 +38,15 @@ function readFeatureEditors() {
     const rule=cleanupRule(card.dataset.cleanupRule);
     if(rule)card.querySelectorAll('[data-cleanup-field]').forEach(input=>{rule[input.dataset.cleanupField]=input.value.trim();});
   });
+  document.querySelectorAll('[data-red-packet-rule]').forEach(card => {
+    const rule = redPacketRule(card.dataset.redPacketRule);
+    if (!rule) return;
+    card.querySelectorAll('[data-red-packet-field]').forEach(input => {
+      rule[input.dataset.redPacketField] = input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value.trim();
+    });
+    rule.groups = [...card.querySelectorAll('[data-red-packet-group]')].map(input => input.value.trim());
+    card.querySelectorAll('[data-red-packet-words]').forEach(input => {rule[input.dataset.redPacketWords] = input.value.split(/\r?\n/).map(word => word.trim()).filter(Boolean);});
+  });
 }
 
 function featurePeerInput(value, label, attribute) {
@@ -42,9 +56,10 @@ function featurePeerInput(value, label, attribute) {
 function renderFeatureCenter() {
   if (!config) return;
   config.automations.forwardPins ||= [];
+  config.automations.redPackets ||= [];
   config.plugins ||= {};config.plugins.zeroSpeakers ||= [];
-  const editorOpen = featureEditorOpen || cleanupEditorOpen || checkinEditorOpen;
-  $('#view-features').setAttribute('aria-labelledby', checkinEditorOpen ? 'checkin-plugin-title' : featureEditorOpen ? 'forward-pin-title' : cleanupEditorOpen ? 'zero-speakers-title' : 'feature-center-title');
+  const editorOpen = featureEditorOpen || cleanupEditorOpen || checkinEditorOpen || redPacketEditorOpen;
+  $('#view-features').setAttribute('aria-labelledby', checkinEditorOpen ? 'checkin-plugin-title' : featureEditorOpen ? 'forward-pin-title' : cleanupEditorOpen ? 'zero-speakers-title' : redPacketEditorOpen ? 'red-packet-title' : 'feature-center-title');
   $('#feature-center-heading').hidden = editorOpen;
   $('#feature-catalog').hidden = editorOpen;
   renderCheckinCenter();
@@ -53,6 +68,7 @@ function renderFeatureCenter() {
   $('#forward-pin-count').textContent = rules.length ? `${rules.length} 条规则 · ${enabled} 条启用` : '尚无规则';
   $('#add-forward-pin').disabled = !config.users.length;
   renderCleanupCenter();
+  renderRedPacketCenter();
   $('#forward-pin-rules').innerHTML = rules.length ? rules.map((rule, index) => `
     <article class="automation-card feature-rule" data-feature-rule="${escapeHtml(rule.id)}">
       <div class="automation-card-head"><div class="automation-card-symbol">${lineIcon('forward')}</div><div><strong>${escapeHtml(rule.name || `规则 ${index + 1}`)}</strong><small>${(rule.sources || []).length} 个监听来源 · ${rule.keywords?.length ? `${rule.keywords.length} 个关键词` : '全部新消息'}</small></div><div class="automation-card-actions"><label class="auto-switch"><input type="checkbox" data-feature-field="enabled" ${rule.enabled !== false ? 'checked' : ''}><i></i>启用规则</label><button class="delete-btn" type="button" data-feature-remove>删除规则</button></div></div>
@@ -84,7 +100,7 @@ function openCheckinFeature(index = null, section = 'bots') {
   if (index !== null && config.users[index]) checkinAccountIndex = index;
   checkinSection = section === 'checkins' ? 'checkins' : 'bots';
   checkinEditorOpen = true;
-  featureEditorOpen = cleanupEditorOpen = false;
+  featureEditorOpen = cleanupEditorOpen = redPacketEditorOpen = false;
   navigate('features');
   window.scrollTo({top:0,behavior:'smooth'});
 }
@@ -158,11 +174,13 @@ function renderFeatureStatus() {
   const element = $('#feature-runtime-status');
   if (!element) return;
   const names = {idle:'未启动',starting:'准备监听',running:'运行中',paused:'已暂停',stopping:'正在停止',failed:'运行异常',unavailable:'无法启动'};
-  element.textContent = `自动化：${names[automationState?.status] || '读取中'}${automationState?.message ? ' · '+automationState.message : ''}`;
+  const text = `自动化：${names[automationState?.status] || '读取中'}${automationState?.message ? ' · '+automationState.message : ''}`;
+  element.textContent = text;
+  $('#red-packet-runtime-status').textContent = text;
 }
 
 function paintFeaturePeerNames() {
-  $$('[data-feature-rule] [data-feature-peer], [data-cleanup-rule] [data-feature-peer]').forEach(input => {
+  $$(featurePeerSelector).forEach(input => {
     const rule = peerRule(input), value = input.value.trim();
     const badge = input.parentElement.querySelector('[data-feature-peer-name]');
     const entry = peerNames.get(peerKey(rule?.account, value));
@@ -187,7 +205,7 @@ async function resolveFeaturePeers() {
   let account;
   let blockedByTask = false;
   const peers = [];
-  for (const input of $$('[data-feature-rule] [data-feature-peer], [data-cleanup-rule] [data-feature-peer]')) {
+  for (const input of $$(featurePeerSelector)) {
     if (input.closest('[hidden]')) continue;
     const rule = peerRule(input), value = input.value.trim();
     if (!value || !rule?.account || !config.users.some(user => user.session === rule.account && user.sessionReady)) continue;
@@ -220,7 +238,7 @@ async function resolveFeaturePeers() {
   }
 }
 
-$('#open-forward-pin').addEventListener('click',() => {readEditors();checkinEditorOpen=false;featureEditorOpen=true;cleanupEditorOpen=false;renderFeatureCenter();});
+$('#open-forward-pin').addEventListener('click',() => {readEditors();checkinEditorOpen=redPacketEditorOpen=false;featureEditorOpen=true;cleanupEditorOpen=false;renderFeatureCenter();});
 $('#close-forward-pin').addEventListener('click',() => {readEditors();featureEditorOpen=false;renderFeatureCenter();});
 $('#add-forward-pin').addEventListener('click',() => {
   readEditors();
@@ -294,7 +312,7 @@ function renderCleanupStatus(runs = cleanupRuns) {
     const report=card.querySelector('[data-cleanup-report]');report.hidden=!progress.reportReady;report.href=run ? '/api/features/zero-speakers/report?id='+encodeURIComponent(run.id) : '#';
   });
 }
-$('#open-zero-speakers').addEventListener('click',()=>{readEditors();checkinEditorOpen=false;featureEditorOpen=false;cleanupEditorOpen=true;renderFeatureCenter();});
+$('#open-zero-speakers').addEventListener('click',()=>{readEditors();checkinEditorOpen=redPacketEditorOpen=false;featureEditorOpen=false;cleanupEditorOpen=true;renderFeatureCenter();});
 $('#close-zero-speakers').addEventListener('click',()=>{readEditors();cleanupEditorOpen=false;renderFeatureCenter();});
 $('#add-zero-speakers').addEventListener('click',()=>{
   readEditors();if(!config.users.length){toast('先添加 Telegram 账号',true);return;}
@@ -329,3 +347,54 @@ $('#zero-speakers-rules').addEventListener('click',async event=>{
   }catch(error){toast(error.message,true);}finally{cleanupStarting.delete(id);renderCleanupStatus();}
 });
 if(config)rememberSavedCleanupSettings();
+
+function renderRedPacketCenter() {
+  $('#red-packet-editor').hidden = !redPacketEditorOpen;
+  const rules = redPacketRules();
+  $('#red-packet-count').textContent = rules.length ? `${rules.length} 条规则 · ${rules.filter(rule => rule.enabled !== false).length} 条启用` : '尚无规则';
+  $('#add-red-packet').disabled = !config.users.length;
+  $('#red-packet-rules').innerHTML = rules.map((rule,index) => `
+    <article class="automation-card feature-rule" data-red-packet-rule="${escapeHtml(rule.id)}">
+      <div class="automation-card-head"><div class="automation-card-symbol">${lineIcon('gift')}</div><div><strong>${escapeHtml(rule.name || `红包规则 ${index+1}`)}</strong><small>${rule.groups?.length || 0} 个监听群组 · /red 自动领取</small></div><div class="automation-card-actions"><label class="auto-switch"><input type="checkbox" data-red-packet-field="enabled" ${rule.enabled !== false ? 'checked' : ''}><i></i>启用规则</label><button class="delete-btn" type="button" data-red-packet-remove>删除规则</button></div></div>
+      <div class="auto-field-grid">
+        <label class="auto-field"><span>规则名称</span><input data-red-packet-field="name" value="${escapeHtml(rule.name || '')}" maxlength="80" placeholder="例如 牛逼群红包"></label>
+        <label class="auto-field"><span>执行 TG 账号</span><select data-red-packet-field="account" aria-label="执行 TG 账号"><option value="">选择账号</option>${config.users.map(user => `<option value="${escapeHtml(user.session)}" ${user.session === rule.account ? 'selected' : ''}>${escapeHtml(user.name)} (${escapeHtml(user.session)})${user.sessionReady ? '' : ' · 待登录'}</option>`).join('')}</select></label>
+        <div class="auto-field wide"><div class="feature-field-heading"><span>监听群组</span><button class="outline-btn" type="button" data-red-packet-add-group>＋ 添加群组</button></div><div class="feature-input-list">${(rule.groups || ['']).map((group,i) => `<div class="feature-input-item">${featurePeerInput(group,`监听群组 ${i+1}`,'data-red-packet-group')}<button class="feature-remove-item" type="button" data-red-packet-remove-group="${i}" aria-label="移除群组 ${i+1}">×</button></div>`).join('')}</div><small>支持 1–20 个群组；执行账号需要已加入群组。输入后自动显示群名。</small></div>
+        <label class="auto-field wide"><span>红包 Bot 用户名 · 可选</span><input data-red-packet-field="botUsername" value="${escapeHtml(rule.botUsername || '')}" placeholder="例如 @niubi_bot" maxlength="120"><small>填写后只领取该 Bot 的红包；留空匹配群内 Bot 的领取按钮。</small></label>
+      </div>
+      <details class="red-packet-options"><summary>识别与重试设置</summary><div class="auto-field-grid">
+        <label class="auto-field"><span>实时等待窗口 · 秒</span><input type="number" data-red-packet-field="watchSeconds" min="30" max="600" step="1" value="${rule.watchSeconds ?? 120}"><small>30–600 秒，超时停止本轮刷新。</small></label>
+        <label class="auto-field"><span>领取重试间隔 · 秒</span><input type="number" data-red-packet-field="retryInterval" min="0.5" max="5" step="0.1" value="${rule.retryInterval ?? 0.5}"><small>首次立即点击，后续默认 0.5 秒；限流时按 Telegram 要求等待。</small></label>
+        ${[['buttonKeywords','领取按钮识别词','好運連連\n领取红包\n领取'],['successKeywords','成功 / 已领取识别词','领取成功\n你已领取\n已经领取过'],['emptyKeywords','领完 / 失效识别词','已经被抢光\n红包已领完\n红包已过期']].map(([field,label,placeholder]) => `<label class="auto-field wide"><span>${label}</span><textarea rows="3" data-red-packet-words="${field}" aria-label="${label}" placeholder="${escapeHtml(placeholder)}">${escapeHtml((rule[field] || []).join('\n'))}</textarea><small>每行一个，最多 30 个，每个最多 80 字；留空使用默认识别词，填写后替换该类默认词。</small></label>`).join('')}
+      </div></details>
+    </article>`).join('') || `<div class="automation-empty">${config.users.length ? '点击“添加规则”，选择执行账号和监听群组。' : '请先添加并登录 Telegram 账号，再配置抢红包。'}</div>`;
+}
+$('#open-red-packet').addEventListener('click',() => {readEditors();checkinEditorOpen=featureEditorOpen=cleanupEditorOpen=false;redPacketEditorOpen=true;renderFeatureCenter();});
+$('#close-red-packet').addEventListener('click',() => {readEditors();redPacketEditorOpen=false;renderFeatureCenter();});
+$('#add-red-packet').addEventListener('click',() => {
+  readEditors();
+  if (!config.users.length) {toast('先添加 Telegram 账号',true);return;}
+  config.automations.redPackets.push({id:crypto.randomUUID(),enabled:true,name:'',account:(config.users.find(user => user.sessionReady) || config.users[0]).session,groups:[''],botUsername:'',watchSeconds:120,retryInterval:0.5,buttonKeywords:[],successKeywords:[],emptyKeywords:[]});
+  renderFeatureCenter();$('#red-packet-rules [data-red-packet-rule]:last-child [data-red-packet-field="name"]')?.focus();
+});
+$('#red-packet-logs').addEventListener('click',() => {
+  navigate('activity');$('#log-filter-category').value='red_packet';$('#log-filter-category').dispatchEvent(new Event('change',{bubbles:true}));
+});
+$('#red-packet-rules').addEventListener('click',async event => {
+  const button=event.target.closest('button'),card=event.target.closest('[data-red-packet-rule]');
+  if (!button || !card) return;
+  readEditors();const rule=redPacketRule(card.dataset.redPacketRule);if (!rule) return;
+  if (button.hasAttribute('data-red-packet-remove')) {
+    if (!await UIControls.confirm({title:'删除红包规则',message:'删除后需保存才会停止此规则。',confirmText:'删除规则'})) return;
+    config.automations.redPackets=redPacketRules().filter(item => item.id!==rule.id);
+  } else if (button.hasAttribute('data-red-packet-add-group')) {
+    if (rule.groups.length>=20) {toast('每条规则最多 20 个群组',true);return;}rule.groups.push('');
+  } else if (button.hasAttribute('data-red-packet-remove-group')) {
+    rule.groups.splice(Number(button.dataset.redPacketRemoveGroup),1);if (!rule.groups.length) rule.groups.push('');
+  } else return;
+  renderFeatureCenter();
+});
+$('#red-packet-rules').addEventListener('input',onFeaturePeerInput);
+$('#red-packet-rules').addEventListener('paste',onFeaturePeerInput);
+$('#red-packet-rules').addEventListener('focusout',onFeaturePeerInput);
+$('#red-packet-rules').addEventListener('change',() => {readFeatureEditors();scheduleFeatureLookup(0);});

@@ -10,6 +10,8 @@
   },
   "automations": {
     "schedules": [],
-    "forwards": []
+    "forwards": [],
+    "forwardPins": [],
+    "redPackets": []
   }
 }
