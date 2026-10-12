@@ -47,7 +47,8 @@ const path = require('node:path');
     await card.locator('strong').filter({ hasText:'账号定时已关闭' }).waitFor();
     assert.ok((await card.locator('small').textContent()).startsWith('上次调度：定时签到已触发'));
     assert.ok(!(await card.textContent()).includes('已启动'));
-    await page.locator('[data-open-account="0"][data-section="checkins"]').click();
+    await page.locator('[data-view="features"]').click();if(await page.locator('#feature-catalog').isVisible())await page.locator('#open-checkin').click();await page.selectOption('#checkin-account-choice','0');
+    await page.locator('[data-checkin-section="checkins"]').click();
     const hint = page.locator('.checkin-status');
     assert.ok((await hint.textContent()).startsWith('账号定时已关闭'));
     const toggle = page.locator('.checkin-rule [data-field="enabled"]');
@@ -72,18 +73,18 @@ const path = require('node:path');
     assert.ok(!(await hint.textContent()).includes('未保存'));
 
     // Independent Bot schedules remain visible even when the account schedule is off.
-    await page.locator('[data-account-section="bots"]').click();
+    await page.locator('[data-checkin-section="bots"]').click();
     await page.locator('.bot-schedule-switch').click();
     await save.click();
     await page.locator('#toast').filter({ hasText:'配置已保存' }).waitFor();
-    await page.locator('[data-account-section="checkins"]').click();
+    await page.locator('[data-checkin-section="checkins"]').click();
     assert.ok((await hint.textContent()).includes('账号定时已关闭 · 1 个 Bot 独立定时已启用'));
     await page.evaluate(() => { config.users[0].botSource = 'folder'; renderConfig(); });
     assert.ok(!(await hint.textContent()).includes('Bot 独立定时已启用'), 'folder mode ignores independent Bot rules');
     await page.evaluate(() => { config.users[0].botSource = 'configured'; renderConfig(); });
 
     // Current run state is refreshed in the account card without rerendering editors.
-    await page.locator('#account-back').click();
+    await page.locator('[data-view="accounts"]').click();
     status.run = { state:'running', account:'test', lines:[] };
     await card.locator('strong').filter({ hasText:'当前签到运行中' }).waitFor();
     status.run = { state:'completed', account:'test', lines:[] };

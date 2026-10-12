@@ -1,5 +1,8 @@
 let featureEditorOpen = false;
 let cleanupEditorOpen = false;
+let checkinEditorOpen = false;
+let checkinAccountIndex = null;
+let checkinSection = 'bots';
 let cleanupRuns = [], cleanupStarting = new Set();
 let savedCleanupRules = new Map();
 const cleanupSignature = rule => JSON.stringify([rule.name || '',rule.account || '',rule.group || '']);
@@ -40,8 +43,11 @@ function renderFeatureCenter() {
   if (!config) return;
   config.automations.forwardPins ||= [];
   config.plugins ||= {};config.plugins.zeroSpeakers ||= [];
-  $('#feature-center-heading').hidden = featureEditorOpen || cleanupEditorOpen;
-  $('#feature-catalog').hidden = featureEditorOpen || cleanupEditorOpen;
+  const editorOpen = featureEditorOpen || cleanupEditorOpen || checkinEditorOpen;
+  $('#view-features').setAttribute('aria-labelledby', checkinEditorOpen ? 'checkin-plugin-title' : featureEditorOpen ? 'forward-pin-title' : cleanupEditorOpen ? 'zero-speakers-title' : 'feature-center-title');
+  $('#feature-center-heading').hidden = editorOpen;
+  $('#feature-catalog').hidden = editorOpen;
+  renderCheckinCenter();
   $('#forward-pin-editor').hidden = !featureEditorOpen;
   const rules = featureRules(), enabled = rules.filter(rule => rule.enabled !== false).length;
   $('#forward-pin-count').textContent = rules.length ? `${rules.length} 条规则 · ${enabled} 条启用` : '尚无规则';
@@ -61,7 +67,92 @@ function renderFeatureCenter() {
     </article>`).join('') : `<div class="automation-empty">${config.users.length ? '还没有规则。点击“添加规则”配置你的监听来源。' : '请先在账号管理中添加并登录 Telegram 账号，再配置插件。'}</div>`;
   renderFeatureStatus();
   scheduleFeatureLookup();
+  syncCheckinRoute();
 }
+
+function syncCheckinRoute() {
+  if (currentView !== 'features') return;
+  const query = new URLSearchParams({plugin:'checkin',section:checkinSection});
+  const account = config.users[checkinAccountIndex]?.session;
+  if (account) query.set('account',account);
+  history.replaceState(null,'',checkinEditorOpen ? `#features?${query}` : '#features');
+}
+
+function openCheckinFeature(index = null, section = 'bots') {
+  if (!config) return;
+  readEditors();
+  if (index !== null && config.users[index]) checkinAccountIndex = index;
+  checkinSection = section === 'checkins' ? 'checkins' : 'bots';
+  checkinEditorOpen = true;
+  featureEditorOpen = cleanupEditorOpen = false;
+  navigate('features');
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+function showCheckinSection(section) {
+  checkinSection = section === 'checkins' ? 'checkins' : 'bots';
+  $$('#checkin-plugin-tabs [data-checkin-section]').forEach(button => {
+    const active = button.dataset.checkinSection === checkinSection;
+    button.classList.toggle('active',active);
+    button.setAttribute('aria-pressed',String(active));
+  });
+  $$('#checkin-config-editor [data-checkin-pane]').forEach(pane => {pane.hidden = pane.dataset.checkinPane !== checkinSection;});
+  syncCheckinRoute();
+}
+
+function renderCheckinCenter() {
+  const configured = config.users.filter(user => user.bots.length || (user.botSource ? user.botSource === 'folder' : Boolean(user.dialogFolder)));
+  const botCount = config.users.reduce((sum,user) => sum + user.bots.length,0);
+  $('#checkin-plugin-count').textContent = config.users.length ? `${configured.length} 个账号已配置 · ${botCount} 个 Bot` : '尚无账号';
+  $('#checkin-plugin-editor').hidden = !checkinEditorOpen;
+  if (!checkinEditorOpen) {$('#checkin-config-editor').replaceChildren();return;}
+  if (checkinAccountIndex === null || !config.users[checkinAccountIndex]) checkinAccountIndex = config.users.length ? 0 : null;
+  const user = config.users[checkinAccountIndex];
+  $('#checkin-workspace').hidden = !user;
+  $('#checkin-no-accounts').hidden = Boolean(user);
+  $('#checkin-config-editor').replaceChildren();
+  $('#checkin-account-choice').innerHTML = config.users.map((user,index) => `<option value="${index}">${escapeHtml(user.name || user.session || '未命名账号')} (${escapeHtml(user.session || '待设置 Session')})${user.sessionReady ? '' : ' · 待登录'}</option>`).join('');
+  if (user) {
+    $('#checkin-account-choice').value = String(checkinAccountIndex);
+    $('#checkin-account-avatar').innerHTML = accountAvatar(user);
+    $('#checkin-account-summary').textContent = `${user.sessionReady ? '已登录 Telegram' : '尚未登录，请先到账号管理登录'} · ${user.bots.length} 个 Bot · ${(user.checkinSchedules || []).length} 个账号签到计划`;
+    $('#checkin-account-status').dataset.checkinStatus = checkinAccountIndex;
+    $('#checkin-config-editor').innerHTML = `<div class="account-card checkin-account-card" data-checkin-account="${checkinAccountIndex}"><section data-checkin-pane="bots">${renderAccountBots(user,checkinAccountIndex)}</section><section data-checkin-pane="checkins">${renderCheckinSchedules(user,checkinAccountIndex)}</section></div>`;
+    showCheckinSection(checkinSection);
+  }
+  renderCheckinStatus();
+  renderRun();
+}
+
+function readCheckinEditors() {
+  $$('#checkin-config-editor [data-checkin-account]').forEach(card => {
+    const user = config.users[Number(card.dataset.checkinAccount)];
+    if (!user) return;
+    user.botSource = card.querySelector('[data-bot-source]').value;
+    user.dialogFolder = card.querySelector('[data-dialog-folder]').value;
+    card.querySelectorAll('tr[data-bot-index]').forEach(row => {
+      const bot = user.bots[Number(row.dataset.botIndex)];
+      if (!bot) return;
+      row.querySelectorAll('[data-field]').forEach(input => {bot[input.dataset.field] = input.value;});
+      bot.schedule = {enabled:row.querySelector('[data-bot-schedule-enabled]').checked,time:row.querySelector('[data-bot-schedule-time]').value};
+    });
+    card.querySelectorAll('[data-checkin-index]').forEach(row => {
+      const schedule = user.checkinSchedules[Number(row.dataset.checkinIndex)];
+      if (schedule) row.querySelectorAll('[data-field]').forEach(input => {schedule[input.dataset.field] = input.type === 'checkbox' ? input.checked : input.value;});
+    });
+  });
+}
+
+$('#close-checkin').addEventListener('click',() => {readEditors();closeModeMenu();window.UIControls?.close();checkinEditorOpen=false;renderFeatureCenter();});
+$('#checkin-account-choice').addEventListener('change',event => {readEditors();closeModeMenu();checkinAccountIndex=Number(event.target.value);renderCheckinCenter();});
+$('#checkin-plugin-tabs').addEventListener('click',event => {
+  const button = event.target.closest('[data-checkin-section]');
+  if (button) {readEditors();closeModeMenu();window.UIControls?.close();showCheckinSection(button.dataset.checkinSection);}
+});
+$('#checkin-run').addEventListener('click',() => {const user=config.users[checkinAccountIndex];if(user)startRun(user.session);});
+$('#checkin-run-all').addEventListener('click',() => startRun());
+$('#checkin-account-logs').addEventListener('click',() => {const user=config.users[checkinAccountIndex];if(user)openAccountLogs(user.session);});
+$('#checkin-account-settings').addEventListener('click',() => openAccount(checkinAccountIndex));
 
 function renderFeatureStatus() {
   const element = $('#feature-runtime-status');
@@ -129,7 +220,7 @@ async function resolveFeaturePeers() {
   }
 }
 
-$('#open-forward-pin').addEventListener('click',() => {readEditors();featureEditorOpen=true;cleanupEditorOpen=false;renderFeatureCenter();});
+$('#open-forward-pin').addEventListener('click',() => {readEditors();checkinEditorOpen=false;featureEditorOpen=true;cleanupEditorOpen=false;renderFeatureCenter();});
 $('#close-forward-pin').addEventListener('click',() => {readEditors();featureEditorOpen=false;renderFeatureCenter();});
 $('#add-forward-pin').addEventListener('click',() => {
   readEditors();
@@ -203,7 +294,7 @@ function renderCleanupStatus(runs = cleanupRuns) {
     const report=card.querySelector('[data-cleanup-report]');report.hidden=!progress.reportReady;report.href=run ? '/api/features/zero-speakers/report?id='+encodeURIComponent(run.id) : '#';
   });
 }
-$('#open-zero-speakers').addEventListener('click',()=>{readEditors();featureEditorOpen=false;cleanupEditorOpen=true;renderFeatureCenter();});
+$('#open-zero-speakers').addEventListener('click',()=>{readEditors();checkinEditorOpen=false;featureEditorOpen=false;cleanupEditorOpen=true;renderFeatureCenter();});
 $('#close-zero-speakers').addEventListener('click',()=>{readEditors();cleanupEditorOpen=false;renderFeatureCenter();});
 $('#add-zero-speakers').addEventListener('click',()=>{
   readEditors();if(!config.users.length){toast('先添加 Telegram 账号',true);return;}
