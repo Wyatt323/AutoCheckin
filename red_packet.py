@@ -6,7 +6,8 @@ import time
 BUTTON_WORDS = ['好运连连', '好運連連', '领取红包', '領取紅包', '抢红包', '搶紅包', '领取', '領取', '拆红包', '拆紅包']
 SUCCESS_WORDS = ['领取成功', '領取成功', '成功领取', '成功領取', '抢到了', '搶到了', '你已领取', '你已領取', '已经领取过', '已經領取過', '已领取过', '已領取過']
 EMPTY_WORDS = ['红包已领完', '紅包已領完', '红包已被领完', '紅包已被領完', '红包已抢完', '紅包已搶完', '红包领完了', '紅包領完了', '红包抢完了', '紅包搶完了', '红包已过期', '紅包已過期', '红包不存在', '紅包不存在', '手慢了', '已被抢光', '已被搶光', '已经被抢光', '已經被搶光']
-RED_COMMAND = re.compile(r'^/red(?:@[a-z0-9_]+)?(?=\s|$)', re.I)
+RED_COMMAND = re.compile(r'^/red', re.I)
+PREPARING_WORDS = ['正在准备红包', '正在準備紅包', '准备红包，稍等', '準備紅包，稍等']
 
 
 def contains(text, words):
@@ -27,8 +28,11 @@ def claim_button(message, rule):
     for row_index, row in enumerate(getattr(message, 'buttons', None) or []):
         for column_index, button in enumerate(row):
             raw = getattr(button, 'button', button)
+            # Telethon 1.45 / new Telegram layers wrap callbacks in button.type.
+            callback = getattr(raw,'type',None)
+            data = getattr(raw,'data',None) if callback is None else getattr(callback,'data',None)
             # Only callback buttons; never open links or authorize a payment/login.
-            if getattr(raw, 'data', None) is not None and contains(getattr(button, 'text', ''), rule.get('buttonKeywords') or BUTTON_WORDS):
+            if data is not None and not getattr(callback or raw,'requires_password',False) and contains(getattr(button, 'text', ''), rule.get('buttonKeywords') or BUTTON_WORDS):
                 return row_index, column_index
     return None
 
@@ -46,6 +50,58 @@ class RedPacketMonitor:
         self.flood_until = 0
         self.closed = False
         self.started_at = int(time.time())
+        self.cursors = {}
+        self.diagnostics = set()
+        self.last_health_at = -10
+        self.health = {chat: {'chatId':str(chat), 'title':group.get('title') or str(chat),
+            'ruleIds':[rule['id'] for rule in group['rules']], 'received':0, 'commands':0,
+            'packets':0, 'lastReceivedAt':None, 'lastMessageId':None, 'fallbackChecks':0}
+            for chat, group in groups.items()}
+
+    def report_health(self, force=False):
+        if not force and self.clock()-self.last_health_at < 2:
+            return
+        self.last_health_at = self.clock()
+        self.emit('', kind='red_packet_status', account=self.account, groups=list(self.health.values()))
+
+    async def start(self):
+        # Establish a history watermark before polling; never claim old packets.
+        for chat, group in self.groups.items():
+            try:
+                recent = await asyncio.wait_for(self.client.get_messages(group['peer'],limit=1),15)
+                self.cursors[chat] = max(self.cursors.get(chat,0),max((message.id for message in recent if message is not None),default=0))
+            except Exception as error:
+                wait = getattr(error,'seconds',None)
+                if isinstance(wait,(int,float)) and wait > 0:
+                    self.flood_until = max(self.flood_until,self.clock()+wait+1)
+                self.log(group['rules'][0],f'群 {chat} 的备用检测初始化失败：{error}；仍使用实时事件监听','running','error')
+        self.report_health(force=True)
+        self.spawn(self.watchdog())
+
+    def begin_window(self, chat, window_id, rules, message_id=None, origin='command'):
+        key = (chat,window_id)
+        if key in self.windows:
+            return self.windows[key]
+        if len(self.active(chat)) >= 30:
+            self.log(rules[0],'当前群的红包等待队列已满，跳过本轮','failed','error')
+            return None
+        watch = {'id':message_id if message_id is not None else window_id,
+            'deadline':self.clock()+max(rule.get('watchSeconds',120) for rule in rules),
+            'started':self.clock(),'done':False,'rules':rules,'origin':origin}
+        self.windows[key] = watch
+        if chat not in self.refreshers:
+            self.refreshers[chat] = self.spawn(self.refresh(chat))
+        return watch
+
+    def diagnose(self, chat, message_id, reason, text, rules):
+        key = (chat,message_id,reason)
+        if key in self.diagnostics:
+            return
+        if len(self.diagnostics) >= 500:
+            self.diagnostics.clear()
+        self.diagnostics.add(key)
+        for rule in rules:
+            self.log(rule,text)
 
     def log(self, rule, message, state='running', level='info'):
         label = f"[{rule['name']}] " if rule.get('name') else ''
@@ -72,26 +128,91 @@ class RedPacketMonitor:
         chat = getattr(event, 'chat_id', None) or getattr(message, 'chat_id', None)
         if chat not in self.groups:
             return
+        health = self.health[chat]
+        health['received'] += 1
+        health['lastReceivedAt'] = time.time()
+        health['lastMessageId'] = message.id
+        if not edited:
+            self.cursors[chat] = max(self.cursors.get(chat,0),message.id)
+        if health['received'] == 1:
+            for rule in self.groups[chat]['rules']:
+                self.log(rule,f"已接收群 {health['title']} ({chat}) 的实时消息，消息 #{message.id}")
+        self.report_health()
+        await self.process(chat,message,edited=edited)
+
+    async def process(self, chat, message, edited=False):
+        if self.closed:
+            return
         text = getattr(message, 'raw_text', None) or getattr(message, 'message', '') or ''
         if not edited and RED_COMMAND.match(text.strip()):
             key = (chat, message.id)
             if key in self.windows:
                 return
-            # Bound bursts; older windows expire rather than growing indefinitely.
-            if len(self.active(chat)) >= 30:
-                self.log(self.groups[chat]['rules'][0], '当前群的红包等待队列已满，跳过本次 /red', 'failed', 'error')
-                return
             rules = self.groups[chat]['rules']
             date = getattr(message,'date',None)
-            if date is not None and date.timestamp() < self.started_at:
+            if date is not None and time.time()-date.timestamp() > max(rule.get('watchSeconds',120) for rule in rules):
+                self.diagnose(chat,message.id,'old','跳过已超出等待窗口的旧 /red 指令',rules)
                 return
-            self.windows[key] = {'id':message.id, 'deadline':self.clock()+max(rule.get('watchSeconds',120) for rule in rules), 'started':self.clock(), 'done':False, 'rules':rules}
+            if not self.begin_window(chat,message.id,rules):
+                return
+            self.health[chat]['commands'] += 1
             for rule in rules:
                 self.log(rule, f"发现 /red · 群 {chat} · 指令 #{message.id}，等待红包按钮")
-            if chat not in self.refreshers:
-                self.refreshers[chat] = self.spawn(self.refresh(chat))
+            self.report_health(force=True)
             return
+        await self.discover(chat,message)
         await self.ingest(chat, message)
+
+    async def discover(self, chat, message):
+        """Recover a fresh Bot packet when /red was deleted or its event missed."""
+        reply_id = getattr(message,'reply_to_msg_id',None)
+        watches = self.active(chat)
+        if watches and (not reply_id or any(watch['id']==reply_id for watch in watches) or (chat,reply_id) in self.links):
+            return
+        rules = self.groups[chat]['rules']
+        text = getattr(message,'raw_text',None) or getattr(message,'message','') or ''
+        preparing = contains(text,PREPARING_WORDS)
+        if not (any(claim_button(message,rule) is not None for rule in rules) or preparing or contains(text,['红包','紅包']) and getattr(message,'buttons',None)):
+            return
+        if self.packet_key(chat,message.id) in self.completed:
+            return
+        if (chat,message.id) in self.links:
+            return
+        date = getattr(message,'edit_date',None) or getattr(message,'date',None)
+        if date is not None and time.time()-date.timestamp() > max(rule.get('watchSeconds',120) for rule in rules):
+            return
+        try:
+            sender = await self.bot_sender(message)
+        except Exception as error:
+            self.diagnose(chat,message.id,'sender',f'无法核对红包 Bot 身份：{error}',rules)
+            wait = getattr(error,'seconds',None)
+            if isinstance(wait,(int,float)) and wait > 0:
+                self.flood_until = max(self.flood_until,self.clock()+wait+1)
+            return
+        if not getattr(sender,'bot',False):
+            return
+        matched = [rule for rule in rules if self.matches_bot(sender,rule)]
+        if not matched:
+            self.diagnose(chat,message.id,'bot',f"发现红包消息，但 Bot @{getattr(sender,'username',None) or getattr(sender,'id','未知')} 与规则指定的 Bot 不匹配，请核对用户名",rules)
+            return
+        if not preparing and not any(claim_button(message,rule) is not None for rule in matched):
+            self.diagnose(chat,message.id,'button','收到 Bot 红包按钮，但未匹配可领取的回调按钮，请核对“领取按钮识别词”',matched)
+            return
+        watch = self.begin_window(chat,f'packet:{message.id}',matched,message_id=message.id-1,origin='packet')
+        if watch:
+            self.links[(chat,message.id)] = watch
+            if reply_id:
+                self.links[(chat,reply_id)] = watch
+            for rule in matched:
+                self.log(rule,f'直接检测到 Bot 红包 · 群 {chat} · 消息 #{message.id}（/red 可能已删除或漏收），开始本轮检测')
+
+    @staticmethod
+    def matches_bot(sender,rule):
+        if not rule.get('botUsername'):
+            return True
+        names = [getattr(sender,'username','')]
+        names.extend(getattr(item,'username','') for item in getattr(sender,'usernames',None) or [] if getattr(item,'active',False))
+        return rule['botUsername'].lstrip('@').casefold() in {str(name or '').casefold() for name in names}
 
     async def bot_sender(self, message):
         sender_id = getattr(message, 'sender_id', None)
@@ -144,8 +265,9 @@ class RedPacketMonitor:
         if watch['done'] or not getattr(sender, 'bot', False):
             return
         rules = [rule for rule in watch['rules'] if self.clock() < watch['started']+rule.get('watchSeconds',120) and
-                 (not rule.get('botUsername') or rule['botUsername'].lstrip('@').casefold() == str(getattr(sender,'username','')).casefold())]
+                 self.matches_bot(sender,rule)]
         if not rules:
+            self.diagnose(chat,message.id,'bot',f"跳过红包 Bot @{getattr(sender,'username',None) or getattr(sender,'id','未知')}：与规则指定的 Bot 不匹配或等待窗口已结束",watch['rules'])
             return
         self.messages[key] = message
         self.links[key] = watch
@@ -156,6 +278,8 @@ class RedPacketMonitor:
             await self.finish(chat,message.id,watch,terminal,'exhausted',text)
             return
         rule = next((rule for rule in rules if claim_button(message,rule) is not None), None)
+        if not rule and getattr(message,'buttons',None):
+            self.diagnose(chat,message.id,'button','收到 Bot 按钮，但未匹配领取按钮识别词，请核对“领取按钮识别词”',rules)
         if not rule or key in self.packets:
             return
         stored_key = self.packet_key(chat,message.id)
@@ -164,6 +288,8 @@ class RedPacketMonitor:
             return
         packet = {'watch':watch,'rule':rule,'done':False,'attempts':0}
         self.packets[key] = packet
+        self.health[chat]['packets'] += 1
+        self.report_health(force=True)
         self.log(rule, f"红包按钮已出现 · 群 {chat} · 消息 #{message.id}，立即领取")
         self.spawn(self.claim(chat,message.id,packet))
 
@@ -280,6 +406,39 @@ class RedPacketMonitor:
         finally:
             self.refreshers.pop(chat,None)
             self.prune(chat)
+
+    async def watchdog(self):
+        """Low-rate safety net for stalled Telegram updates, with no history replay."""
+        while not self.closed:
+            await asyncio.sleep(5)
+            for chat, group in self.groups.items():
+                if self.closed:
+                    return
+                if self.active(chat) or self.clock() < self.flood_until:
+                    continue
+                health = self.health[chat]
+                if health['lastReceivedAt'] and time.time()-health['lastReceivedAt'] < 5:
+                    continue
+                try:
+                    if chat not in self.cursors:
+                        recent = await asyncio.wait_for(self.client.get_messages(group['peer'],limit=1),15)
+                        self.cursors[chat] = max((message.id for message in recent if message is not None),default=0)
+                        continue
+                    messages = await asyncio.wait_for(self.client.get_messages(group['peer'],limit=50,min_id=self.cursors[chat]),15)
+                    health['fallbackChecks'] += 1
+                    for message in sorted((item for item in messages if item is not None),key=lambda item:item.id):
+                        if message.id <= self.cursors[chat]:
+                            continue
+                        self.cursors[chat] = message.id
+                        await self.process(chat,message)
+                    self.report_health()
+                except Exception as error:
+                    wait = getattr(error,'seconds',None)
+                    if isinstance(wait,(int,float)) and wait > 0:
+                        self.flood_until = max(self.flood_until,self.clock()+wait+1)
+                        self.log(group['rules'][0],f'备用检测触发 Telegram 限流，等待 {wait} 秒','running','error')
+                    else:
+                        self.diagnose(chat,0,'watchdog',f'群 {chat} 的备用检测失败：{error}',group['rules'])
 
     def prune(self, chat):
         self.windows = {key:watch for key,watch in self.windows.items() if key[0]!=chat or not watch['done']}

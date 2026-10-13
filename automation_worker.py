@@ -323,7 +323,7 @@ async def main():
                                 raise ValueError('输入错误或账号未加入')
                             peer = await client.get_input_entity(entity)
                             chat = utils.get_peer_id(peer)
-                            group = groups.setdefault(chat, {'peer': peer, 'rules': []})
+                            group = groups.setdefault(chat, {'peer': peer, 'title':getattr(entity,'title',str(chat)), 'rules': []})
                             if rule not in group['rules']:
                                 group['rules'].append(rule)
                             valid = True
@@ -331,20 +331,32 @@ async def main():
                             emit_rule(rule, 'red_packet', f"监听群组 {value} 无法启用：{error}", 'error')
                     if valid:
                         active_packets += 1
-                        emit_rule(rule, 'red_packet', f"[{rule.get('name') or rule['id']}] 开始监听 /red 红包指令", state='running')
                 if not groups:
                     continue
                 monitor = RedPacketMonitor(client, account, groups, emit, completed_packets, persist_packets)
                 packet_monitors.append(monitor)
 
                 async def packet_handler(event, *, monitor=monitor):
-                    await monitor.handle(event)
+                    try:
+                        await monitor.handle(event)
+                    except Exception as error:
+                        for rule in monitor.groups.get(event.chat_id,{}).get('rules',[]):
+                            monitor.log(rule,f'红包新消息处理失败：{error}','failed','error')
 
                 async def packet_edit_handler(event, *, monitor=monitor):
-                    await monitor.handle(event, edited=True)
+                    try:
+                        await monitor.handle(event, edited=True)
+                    except Exception as error:
+                        for rule in monitor.groups.get(event.chat_id,{}).get('rules',[]):
+                            monitor.log(rule,f'红包消息编辑处理失败：{error}','failed','error')
 
                 client.add_event_handler(packet_handler, events.NewMessage(chats=list(groups)))
                 client.add_event_handler(packet_edit_handler, events.MessageEdited(chats=list(groups)))
+                await monitor.start()
+                registered = {rule['id']:rule for group in groups.values() for rule in group['rules']}
+                for rule in registered.values():
+                    labels = '、'.join(f"{group['title']} ({chat})" for chat,group in groups.items() if rule in group['rules'])
+                    emit_rule(rule, 'red_packet', f"[{rule.get('name') or rule['id']}] 开始监听 /red 红包指令 · {labels} · Bot {rule.get('botUsername') or '不限'} · 启用漏收备用检测", state='running')
 
         emit(f"自动化运行中：{len(schedules)} 条定时消息，{active_forwards} 条转发监听，{active_packets} 条红包监听", kind="ready")
 

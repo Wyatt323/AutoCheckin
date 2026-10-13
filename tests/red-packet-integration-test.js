@@ -11,7 +11,17 @@ const {spawn}=require('node:child_process'),{createHash}=require('node:crypto');
   try {
     for(const file of ['server.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'])fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
     fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
-    fs.writeFileSync(path.join(root,'automation_worker.py'),"import json,time\nprint(json.dumps(dict(type='ready',message='offline red packet worker')),flush=True)\nprint(json.dumps(dict(type='log',account='first',category='red_packet',ruleId='red_rule_001',state='completed',message='offline claim completed')),flush=True)\ntime.sleep(60)\n");
+    fs.writeFileSync(path.join(root,'automation_worker.py'),`import json,time
+from pathlib import Path
+config=json.loads(Path('config.json').read_text(encoding='utf-8'))
+print(json.dumps(dict(type='ready',message='offline red packet worker')),flush=True)
+for rule in config.get('automations',{}).get('redPackets',[]):
+    if not rule.get('enabled',True):continue
+    group=dict(chatId='-100123',title='Offline group',ruleIds=[rule['id']],received=12,commands=2,packets=1,lastReceivedAt=time.time(),fallbackChecks=3)
+    print(json.dumps(dict(type='red_packet_status',account=rule['account'],groups=[group])),flush=True)
+print(json.dumps(dict(type='log',account='first',category='red_packet',ruleId='red_rule_001',state='completed',message='offline claim completed')),flush=True)
+time.sleep(60)
+`);
     fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({telegram:{api_id:123,api_hash:'offline',users:['first','second'].map(session=>({name:session,session,bot_groups:{button:[],command:[]}}))},ai:{providers:[]},automations:{schedules:[],forwards:[]}}));
     fs.mkdirSync(path.join(root,'.account-profiles'));
     for(const account of ['first','second']){
@@ -78,6 +88,9 @@ const {spawn}=require('node:child_process'),{createHash}=require('node:crypto');
       await screenshot('red-packet-catalog');await page.locator('#open-red-packet').click();
       const card=page.locator('[data-red-packet-rule="red_rule_001"]');
       await card.locator('[data-feature-peer-name]').first().filter({hasText:'first的群组 @group_one'}).waitFor();
+      await card.locator('[data-red-packet-runtime]').filter({hasText:'已接收 12 条实时消息'}).waitFor();
+      const runtime=await card.locator('[data-red-packet-runtime]').innerText();
+      assert.ok(runtime.includes('已连接 1 个群组') && runtime.includes('/red 2 次') && runtime.includes('红包按钮 1 个') && runtime.includes('备用检查 3 次'));
       assert.equal(await card.locator('.ui-select-trigger').count(),1,'themed account selector');
       await card.locator('[data-red-packet-field="account"]').selectOption('second');
       await card.locator('[data-feature-peer-name]').first().filter({hasText:'second的群组 @group_one'}).waitFor();
@@ -90,6 +103,7 @@ const {spawn}=require('node:child_process'),{createHash}=require('node:crypto');
       await page.waitForTimeout(2200);assert.equal(await card.locator('[data-red-packet-group]').last().inputValue(),'@new_group','polling preserves unsaved edits');
       await page.locator('#red-packet-editor .save-btn').click();await page.locator('#toast').filter({hasText:'配置已保存'}).waitFor();
       const saved=(await state(admin)).config.automations.redPackets[0];assert.equal(saved.account,'second');assert.equal(saved.watchSeconds,180);assert.equal(saved.retryInterval,0.8);assert.deepEqual(saved.successKeywords,['入账完成','已经领取过']);assert.equal(saved.groups.length,3);
+      await card.locator('[data-red-packet-runtime]').filter({hasText:'已接收 12 条实时消息'}).waitFor();
       await card.locator('summary').click();
       await page.waitForFunction(()=>!document.querySelector('#toast').classList.contains('show'));await screenshot('red-packet-desktop');
       await card.locator('summary').click();await screenshot('red-packet-options');

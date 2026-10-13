@@ -7,7 +7,8 @@ function createAutomation() {
   let desired = false;
   let retryTimer = null;
   let stopping = null;
-  let state = { status: 'idle', startedAt: null, message: '尚未配置自动化规则', lines: [], planned: [] };
+  let state = { status: 'idle', startedAt: null, message: '尚未配置自动化规则', lines: [], planned: [], redPackets: Object.create(null) };
+  let lastPacketNotice = '';
 
   function configure(options) { context = options; }
   function getState() {
@@ -32,6 +33,14 @@ function createAutomation() {
   function enabledRules(config) {
     const rules = config.automations || {};
     return [...(rules.schedules || []), ...(rules.forwards || []), ...(rules.forwardPins || []), ...(rules.redPackets || [])].filter(rule => rule.enabled !== false);
+  }
+
+  function packetNotice(message, level = 'info', runState = 'running') {
+    const rules=(context?.readConfig().automations?.redPackets || []).filter(rule=>rule.enabled!==false);
+    const signature=JSON.stringify([message,level,runState,rules.map(rule=>rule.id)]);
+    if(signature===lastPacketNotice)return;
+    lastPacketNotice=signature;
+    for(const rule of rules)line(`[${rule.name || rule.id}] ${message}`,level,{account:rule.account,category:'red_packet',ruleId:rule.id,state:runState});
   }
 
   function start() {
@@ -66,12 +75,14 @@ function createAutomation() {
     if (context.canRun && !context.canRun()) {
       state.status = 'paused';
       state.message = '签到任务运行中，自动化已暂停';
+      packetNotice(state.message,'info','stopped');
       return;
     }
     const python = context.pythonCommand();
     if (!python) {
       state.status = 'unavailable';
       state.message = '未找到 Python；安装运行环境后重启自动化';
+      packetNotice(state.message,'error','failed');
       return;
     }
     const users = config.telegram?.users || config.users || [];
@@ -80,13 +91,16 @@ function createAutomation() {
       if (!users.some(user => (user.session || user.name) === session) || !require('node:fs').existsSync(path.join(context.dataDir || context.root, `${session}.session`))) {
         state.status = 'unavailable';
         state.message = `账号 ${session} 缺少 Session 文件，请先在账号管理中登录`;
+        packetNotice(state.message,'error','failed');
         return;
       }
     }
     state.status = 'starting';
+    state.redPackets = Object.create(null);
     state.startedAt = new Date().toISOString();
     state.message = `使用 ${python.version} 启动自动化`;
     line(state.message);
+    packetNotice(`${state.message}，正在连接账号与监听群组`);
     let worker;
     try {
       worker = spawn(python.name, [...(python.prefix || []), '-u', 'automation_worker.py'], {
@@ -96,6 +110,7 @@ function createAutomation() {
       state.status = 'failed';
       state.message = error.message;
       line(error.message, 'error');
+      packetNotice(`自动化进程无法启动：${error.message}`,'error','failed');
       return;
     }
     processHandle = worker;
@@ -109,12 +124,13 @@ function createAutomation() {
         buffer = parts.pop();
         for (const part of parts) {
           if (!part) continue;
-          if (level === 'error') { line(part, 'error'); continue; }
+          if (level === 'error') { line(part, 'error'); packetNotice(`自动化进程错误：${part}`,'error','failed'); continue; }
           try {
             const event = JSON.parse(part);
             if (event.type === 'planned') { state.planned = Array.isArray(event.planned) ? event.planned.map(({account, ruleId, date, time}) => ({account, ruleId, date, time})) : []; }
+            else if (event.type === 'red_packet_status' && typeof event.account === 'string' && Array.isArray(event.groups)) { state.redPackets[event.account] = {groups:event.groups}; }
             else if (event.type === 'ready' && desired) { state.status = 'running'; state.message = event.message || '监听中'; }
-            else if (event.type === 'fatal') { state.status = 'failed'; state.message = event.message || '自动化启动失败'; line(state.message, 'error'); }
+            else if (event.type === 'fatal') { state.status = 'failed'; state.message = event.message || '自动化启动失败'; line(state.message, 'error'); packetNotice(state.message,'error','failed'); }
             else line(event.message || part, event.level || 'info', event);
           } catch { line(part); }
         }
@@ -122,7 +138,7 @@ function createAutomation() {
       });
       pipe.on('end', () => { if (buffer && processHandle === worker) line(buffer, level); });
     }
-    worker.on('error', error => { if (processHandle !== worker) return; state.status = 'failed'; state.message = error.message; line(error.message, 'error'); });
+    worker.on('error', error => { if (processHandle !== worker) return; state.status = 'failed'; state.message = error.message; line(error.message, 'error'); packetNotice(`自动化进程错误：${error.message}`,'error','failed'); });
     worker.on('close', code => {
       if (processHandle !== worker) return;
       processHandle = null;
@@ -134,6 +150,7 @@ function createAutomation() {
       state.status = 'failed';
       if (code !== 2) state.message = `自动化进程退出（代码 ${code}），15 秒后重试`;
       line(`自动化进程退出（代码 ${code}）`, 'error');
+      packetNotice(state.message || `自动化进程退出（代码 ${code}）`,'error','failed');
       if (code !== 2) { retryTimer = setTimeout(start, 15000); retryTimer.unref?.(); }
     });
   }
@@ -151,6 +168,7 @@ function createAutomation() {
     }
     state.status = 'stopping';
     state.message = '自动化正在停止';
+    packetNotice('红包监听暂停，恢复后重新连接','info','stopped');
     const graceMs = context.stopTimeoutMs ?? 5000;
     stopping = new Promise((resolve, reject) => {
       let escalation;

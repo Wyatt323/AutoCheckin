@@ -58,13 +58,70 @@ class RedPacketTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_idle_and_command_prefix_and_edited_command(self):
         monitor=self.monitor()
-        for text in ['/redirect','/redpacket','hello /red','/red66']:
+        for text in ['/sign','/checkin','hello /red','red66']:
             await self.deliver(monitor,message(10,text,bot=False))
         await self.deliver(monitor,message(10,'/red 66 10',bot=False),edited=True)
         self.assertFalse(monitor.windows)
         monitor.client.get_messages.assert_not_awaited()
         await self.deliver(monitor,message(10,'/red@niubi_bot 66 10',bot=False))
         self.assertEqual(len(monitor.windows),1)
+
+    async def test_fresh_packet_without_red_command_is_claimed(self):
+        monitor=self.monitor()
+        packet=message(11,'🧧 牛币红包',button=True)
+        await self.deliver(monitor,packet)
+        await settle()
+        packet.click.assert_awaited_once()
+        self.assertEqual(monitor.completed[monitor.packet_key(CHAT,11)]['result'],'success')
+        self.assertTrue(any('直接检测到 Bot 红包' in log['text'] for log in self.logs))
+
+    async def test_bot_preparation_without_command_tracks_reply_and_edit(self):
+        monitor=self.monitor()
+        await self.deliver(monitor,message(11,'正在准备红包，稍等',reply=10))
+        packet=message(12,button=True,reply=11)
+        await self.deliver(monitor,packet)
+        await settle()
+        packet.click.assert_awaited_once()
+
+    async def test_clock_skew_does_not_drop_recent_red_and_prefix_is_supported(self):
+        monitor=self.monitor()
+        command=message(10,'/red66 10',bot=False)
+        command.date=dt.datetime.now(dt.timezone.utc)-dt.timedelta(seconds=3)
+        await self.deliver(monitor,command)
+        self.assertEqual(monitor.health[CHAT]['commands'],1)
+        self.assertIn((CHAT,10),monitor.windows)
+
+    async def test_bot_mismatch_is_logged_once_and_secondary_username_matches(self):
+        monitor=self.monitor([rule(botUsername='@wanted_bot')])
+        packet=message(button=True,username='niubi2233_bot')
+        await self.deliver(monitor,packet)
+        await self.deliver(monitor,packet,edited=True)
+        self.assertEqual(sum('Bot 不匹配' in log['text'] for log in self.logs),1)
+        packet.click.assert_not_awaited()
+        monitor.senders.clear()
+        packet.sender.usernames=[types.SimpleNamespace(username='wanted_bot',active=True)]
+        await self.deliver(monitor,packet,edited=True)
+        await settle()
+        packet.click.assert_awaited_once()
+
+    async def test_watchdog_history_watermark_and_recovery_without_events(self):
+        monitor=self.monitor()
+        old=message(11,button=True)
+        new=message(12,button=True)
+        monitor.client.get_messages.side_effect=[[old],[new]]
+        await monitor.start()
+        self.assertEqual(monitor.cursors[CHAT],11)
+        old.click.assert_not_awaited()
+        # Advance just this watchdog's wait; no network or five-second test delay.
+        original_sleep=asyncio.sleep
+        async def sleep(delay):
+            await original_sleep(0)
+        with patch.object(red.asyncio,'sleep',side_effect=sleep):
+            for _ in range(15):await original_sleep(0)
+            await monitor.close()
+        new.click.assert_awaited_once()
+        old.click.assert_not_awaited()
+        self.assertTrue(any(call.kwargs.get('min_id')==11 for call in monitor.client.get_messages.call_args_list))
 
     async def test_preparation_edit_claims_and_duplicate_events_dedupe(self):
         persist=AsyncMock()
@@ -81,18 +138,30 @@ class RedPacketTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(monitor.completed[f'first:{CHAT}:11']['result'],'success')
         persist.assert_awaited_once()
 
-    async def test_nonbot_wrongbot_old_reply_and_url_buttons_ignored(self):
+    async def test_nonbot_wrongbot_old_message_and_url_buttons_ignored(self):
         monitor=self.monitor([rule(botUsername='@niubi_bot')])
         await self.begin(monitor)
-        for packet in [message(9,button=True),message(11,button=True,bot=False),
-                       message(12,button=True,username='other_bot'),message(13,button=True,reply=8)]:
+        ignored=[message(9,button=True),message(11,button=True,bot=False),
+                 message(12,button=True,username='other_bot')]
+        for packet in ignored:
             await self.deliver(monitor,packet)
-            packet.click.assert_not_awaited()
         url=message(14,text='红包',button=True)
         url.buttons=[[types.SimpleNamespace(text='领取红包',url='https://example.invalid')]]
         await self.deliver(monitor,url)
         await settle()
+        for packet in ignored:
+            packet.click.assert_not_awaited()
         url.click.assert_not_awaited()
+
+    async def test_missing_command_reply_does_not_consume_another_window(self):
+        monitor=self.monitor()
+        await self.begin(monitor,id=10)
+        packet=message(31,'红包',button=True,reply=30)
+        await self.deliver(monitor,packet)
+        await settle()
+        packet.click.assert_awaited_once()
+        self.assertFalse(monitor.windows[(CHAT,10)]['done'])
+        self.assertTrue(monitor.windows[(CHAT,'packet:31')]['done'])
 
     async def test_other_member_success_does_not_end_our_window(self):
         monitor=self.monitor()

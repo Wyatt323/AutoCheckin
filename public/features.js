@@ -177,6 +177,7 @@ function renderFeatureStatus() {
   const text = `自动化：${names[automationState?.status] || '读取中'}${automationState?.message ? ' · '+automationState.message : ''}`;
   element.textContent = text;
   $('#red-packet-runtime-status').textContent = text;
+  renderRedPacketStatus();
 }
 
 function paintFeaturePeerNames() {
@@ -362,12 +363,26 @@ function renderRedPacketCenter() {
         <div class="auto-field wide"><div class="feature-field-heading"><span>监听群组</span><button class="outline-btn" type="button" data-red-packet-add-group>＋ 添加群组</button></div><div class="feature-input-list">${(rule.groups || ['']).map((group,i) => `<div class="feature-input-item">${featurePeerInput(group,`监听群组 ${i+1}`,'data-red-packet-group')}<button class="feature-remove-item" type="button" data-red-packet-remove-group="${i}" aria-label="移除群组 ${i+1}">×</button></div>`).join('')}</div><small>支持 1–20 个群组；执行账号需要已加入群组。输入后自动显示群名。</small></div>
         <label class="auto-field wide"><span>红包 Bot 用户名 · 可选</span><input data-red-packet-field="botUsername" value="${escapeHtml(rule.botUsername || '')}" placeholder="例如 @niubi_bot" maxlength="120"><small>填写后只领取该 Bot 的红包；留空匹配群内 Bot 的领取按钮。</small></label>
       </div>
+      <div class="cleanup-rule-runtime" data-red-packet-runtime role="status"></div>
       <details class="red-packet-options"><summary>识别与重试设置</summary><div class="auto-field-grid">
         <label class="auto-field"><span>实时等待窗口 · 秒</span><input type="number" data-red-packet-field="watchSeconds" min="30" max="600" step="1" value="${rule.watchSeconds ?? 120}"><small>30–600 秒，超时停止本轮刷新。</small></label>
         <label class="auto-field"><span>领取重试间隔 · 秒</span><input type="number" data-red-packet-field="retryInterval" min="0.5" max="5" step="0.1" value="${rule.retryInterval ?? 0.5}"><small>首次立即点击，后续默认 0.5 秒；限流时按 Telegram 要求等待。</small></label>
         ${[['buttonKeywords','领取按钮识别词','好運連連\n领取红包\n领取'],['successKeywords','成功 / 已领取识别词','领取成功\n你已领取\n已经领取过'],['emptyKeywords','领完 / 失效识别词','已经被抢光\n红包已领完\n红包已过期']].map(([field,label,placeholder]) => `<label class="auto-field wide"><span>${label}</span><textarea rows="3" data-red-packet-words="${field}" aria-label="${label}" placeholder="${escapeHtml(placeholder)}">${escapeHtml((rule[field] || []).join('\n'))}</textarea><small>每行一个，最多 30 个，每个最多 80 字；留空使用默认识别词，填写后替换该类默认词。</small></label>`).join('')}
       </div></details>
     </article>`).join('') || `<div class="automation-empty">${config.users.length ? '点击“添加规则”，选择执行账号和监听群组。' : '请先添加并登录 Telegram 账号，再配置抢红包。'}</div>`;
+  renderRedPacketStatus();
+}
+function renderRedPacketStatus() {
+  $$('[data-red-packet-rule]').forEach(card => {
+    const rule=redPacketRule(card.dataset.redPacketRule),element=card.querySelector('[data-red-packet-runtime]');
+    if (!rule || !element) return;
+    const groups=(automationState?.redPackets?.[rule.account]?.groups || []).filter(group=>group.ruleIds?.includes(rule.id));
+    const sum=key=>groups.reduce((value,group)=>value+Number(group[key] || 0),0);
+    const last=Math.max(0,...groups.map(group=>Number(group.lastReceivedAt || 0)));
+    const active=automationState?.status==='running' && groups.length;
+    const label=rule.enabled===false ? '规则已关闭 · 保存后生效' : active ? `已连接 ${groups.length} 个群组` : automationState?.status==='starting' ? '正在连接，请稍候' : '尚未确认群组连接，请查看红包日志';
+    element.innerHTML=`<strong>${escapeHtml(label)}</strong><small>已接收 ${sum('received')} 条实时消息 · /red ${sum('commands')} 次 · 红包按钮 ${sum('packets')} 个 · 备用检查 ${sum('fallbackChecks')} 次${last ? ' · 最近接收 '+escapeHtml(formatDate(new Date(last*1000).toISOString())) : ''}</small><small>运行状态对应已保存规则。未收到指令时，也会检测新红包按钮；无实时消息时每 5 秒补充检查新消息。</small>`;
+  });
 }
 $('#open-red-packet').addEventListener('click',() => {readEditors();checkinEditorOpen=featureEditorOpen=cleanupEditorOpen=false;redPacketEditorOpen=true;renderFeatureCenter();});
 $('#close-red-packet').addEventListener('click',() => {readEditors();redPacketEditorOpen=false;renderFeatureCenter();});
