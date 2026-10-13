@@ -137,6 +137,9 @@ class RedPacketMonitor:
         if health['received'] == 1:
             for rule in self.groups[chat]['rules']:
                 self.log(rule,f"已接收群 {health['title']} ({chat}) 的实时消息，消息 #{message.id}")
+        # Metadata-only receipt diagnostics survive rapid server-side deletion.
+        for rule in self.groups[chat]['rules']:
+            self.log(rule, f"实时{'编辑' if edited else '新消息'} · 群 {chat} · 消息 #{message.id} · sender {getattr(message, 'sender_id', None)}")
         self.report_health()
         await self.process(chat,message,edited=edited)
 

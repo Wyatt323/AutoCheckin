@@ -1,6 +1,7 @@
 telethon==1.45.0
 openai==3.24.0
 httpx[socks]==0.28.1
+python-socks[asyncio]>=2.4.4,<3
 ddddocr==1.6.1
 Pillow==12.3.0
 qrcode==8.2

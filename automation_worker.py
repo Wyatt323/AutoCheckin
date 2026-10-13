@@ -206,7 +206,9 @@ async def main():
                 account_error(session, f"账号 {session} 不存在，跳过其规则")
                 continue
             api_id, api_hash = resolve_credentials(config, user)
-            packet_options = {'flood_sleep_threshold': 0} if any(rule['account'] == session for rule in red_packets) else {}
+            # Red packet detection is driven by pushed NewMessage/MessageEdited events;
+            # history polling is only a fallback, never the primary listener.
+            packet_options = {'flood_sleep_threshold': 0, 'receive_updates': True, 'sequential_updates': False} if any(rule['account'] == session for rule in red_packets) else {}
             client = TelegramClient(str(DATA_DIR / session), api_id, api_hash, device_model="AutoCheckin", **packet_options, **telegram_proxy_kwargs(user))
             connected_clients.append(client)
             try:
