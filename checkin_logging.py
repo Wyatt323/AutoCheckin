@@ -6,20 +6,44 @@ import os
 import sys
 
 _account = contextvars.ContextVar('checkin_account', default=None)
+_emitter = contextvars.ContextVar('checkin_emitter', default=None)
 _sink = None
 
 
+def write_raw(event):
+    sink = _sink or sys.stdout
+    sink.write(json.dumps(event, ensure_ascii=False) + '\n')
+    sink.flush()
+
+
+def write_event(event):
+    emitter = _emitter.get()
+    if emitter is not None:
+        emitter(event)
+    elif _sink is not None:
+        write_raw(event)
+
+
+@contextlib.contextmanager
+def output_to(emitter):
+    token = _emitter.set(emitter)
+    try:
+        yield
+    finally:
+        _emitter.reset(token)
+
+
+def log_context():
+    return _account.get(), _emitter.get()
+
+
 def emit_health(message='', kind='health', **metadata):
-    if _sink is not None:
-        _sink.write(json.dumps({'type': kind, **metadata}, ensure_ascii=False) + '\n')
-        _sink.flush()
+    write_event({'type': kind, **metadata})
 
 
 def emit_result(account, completed):
-    if _sink is not None:
-        _sink.write(json.dumps({'type':'account_result', 'account':account,
-                                'state':'completed' if completed else 'failed'}, ensure_ascii=False) + '\n')
-        _sink.flush()
+    write_event({'type':'account_result', 'account':account,
+                 'state':'completed' if completed else 'failed'})
 
 
 def result_status(result):
@@ -38,11 +62,9 @@ def result_status(result):
 
 def emit_bot_result(account, bot, name, note, result):
     status = result_status(result)
-    if _sink is not None:
-        _sink.write(json.dumps({"type": "bot_result", "account": account, "bot": str(bot),
-                               "name": name, "note": note, "status": status, "result": result},
-                              ensure_ascii=False) + "\n")
-        _sink.flush()
+    if _sink is not None or _emitter.get() is not None:
+        write_event({"type": "bot_result", "account": account, "bot": str(bot),
+                     "name": name, "note": note, "status": status, "result": result})
     else:
         label = f"{note}（{name}）" if note else name
         prefix = {"success": "✅", "already": "✅", "timeout": "⏰", "failed": "❌",
@@ -53,13 +75,17 @@ def emit_bot_result(account, bot, name, note, result):
 
 
 class ScopedOutput:
-    def __init__(self, sink, stream):
+    def __init__(self, sink, stream, passthrough=False):
         self.sink, self.stream = sink, stream
+        self.passthrough = passthrough
         self.buffers = {}
 
     def write(self, text):
+        if self.passthrough and _emitter.get() is None:
+            return self.sink.write(text)
         account = _account.get()
-        buffer = self.buffers.get(account, '') + text
+        key = (account, _emitter.get())
+        buffer = self.buffers.get(key, '') + text
         while '\n' in buffer or len(buffer) > 2000:
             boundary = buffer.find('\n')
             if 0 <= boundary <= 2000:
@@ -67,18 +93,25 @@ class ScopedOutput:
             else:
                 line, buffer = buffer[:2000], buffer[2000:]
             self.emit(account, line.rstrip('\r'))
-        self.buffers[account] = buffer
+        if buffer:
+            self.buffers[key] = buffer
+        else:
+            self.buffers.pop(key, None)
         return len(text)
 
     def emit(self, account, text):
         if text:
-            self.sink.write(json.dumps({'type':'checkin_log', 'account':account,
-                'stream':self.stream, 'text':text}, ensure_ascii=False) + '\n')
-            self.sink.flush()
+            event = {'type':'checkin_log', 'account':account, 'stream':self.stream, 'text':text}
+            emitter = _emitter.get()
+            if emitter is not None:
+                emitter(event)
+            else:
+                self.sink.write(json.dumps(event, ensure_ascii=False) + '\n')
+                self.sink.flush()
 
     def flush(self):
         account = _account.get()
-        self.emit(account, self.buffers.pop(account, ''))
+        self.emit(account, self.buffers.pop((account, _emitter.get()), ''))
         self.sink.flush()
 
     def __getattr__(self, name):
@@ -96,9 +129,9 @@ def account_log(account):
         _account.reset(token)
 
 
-def install_json_output():
+def install_json_output(passthrough=False):
     global _sink
-    if os.environ.get('AUTOCHECKIN_LOG_JSON') == '1' and _sink is None:
+    if (passthrough or os.environ.get('AUTOCHECKIN_LOG_JSON') == '1') and _sink is None:
         _sink = sys.stdout
-        sys.stdout = ScopedOutput(_sink, 'stdout')
-        sys.stderr = ScopedOutput(_sink, 'stderr')
+        sys.stdout = ScopedOutput(_sink, 'stdout', passthrough)
+        sys.stderr = ScopedOutput(sys.stderr if passthrough else _sink, 'stderr', passthrough)

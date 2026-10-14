@@ -1,5 +1,26 @@
 const { spawn } = require('node:child_process');
 const path = require('node:path');
+const { EventEmitter } = require('node:events');
+const { PassThrough } = require('node:stream');
+
+function combineCheckinWorkers(workers) {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();child.stderr = new PassThrough();
+  child.exitCode = null;child.signalCode = null;
+  let remaining = workers.length,failed = false;
+  for(const worker of workers) {
+    worker.stdout.pipe(child.stdout,{end:false});worker.stderr.pipe(child.stderr,{end:false});
+    worker.on('error',error=>{failed=true;child.stderr.write('签到执行失败：'+error.message+'\n');});
+    worker.once('close',code=>{
+      failed ||= code!==0;
+      if(--remaining===0) {
+        child.exitCode=failed ? 1 : 0;child.stdout.end();child.stderr.end();child.emit('close',child.exitCode);
+      }
+    });
+  }
+  child.kill=signal=>{for(const worker of workers)if(worker.exitCode===null && worker.signalCode===null)worker.kill(signal);return true;};
+  return child;
+}
 
 function createAutomation() {
   let context;
@@ -11,6 +32,8 @@ function createAutomation() {
   let sessionOwners = [];
   let stableSince = null;
   const accountHealth = new Map();
+  const checkins = new Map();
+  let checkinAccounts = [];
   let state = { status: 'idle', startedAt: null, message: '尚未配置自动化规则', lines: [], planned: [], redPackets: Object.create(null) };
   let lastPacketNotice = '';
   state.retryAttempts = 0;
@@ -40,6 +63,52 @@ function createAutomation() {
   function enabledRules(config) {
     const rules = config.automations || {};
     return [...(rules.schedules || []), ...(rules.forwards || []), ...(rules.forwardPins || []), ...(rules.redPackets || [])].filter(rule => rule.enabled !== false);
+  }
+
+  function finishCheckin(id, code, message) {
+    const job=checkins.get(id);
+    if(!job)return;
+    checkins.delete(id);clearTimeout(job.timeout);
+    if(message)job.child.stderr.write(message+'\n');
+    job.child.exitCode=code;job.child.stdout.end();job.child.stderr.end();job.child.emit('close',code);
+  }
+
+  function submitCheckin(job) {
+    if(job.sent || processHandle!==job.worker || state.status!=='running')return;
+    if(!job.accounts.every(account=>checkinAccounts.includes(account))) {
+      finishCheckin(job.id,1,'监听账号未连接，无法复用连接签到；监听继续运行');return;
+    }
+    job.sent=true;clearTimeout(job.timeout);
+    job.worker.stdin.write(JSON.stringify({type:'checkin',id:job.id,accounts:job.accounts,bot:job.bot,scheduled:job.scheduled})+'\n',error=>{
+      if(error)job.worker.kill('SIGTERM'); // Completion waits for close, preserving Session ownership.
+    });
+  }
+
+  function runCheckin({id,accounts,bot=null,scheduled=false}) {
+    if(!processHandle || !['starting','running'].includes(state.status) || !accounts.every(account=>sessionOwners.includes(account)))throw Error('自动化连接未就绪，请稍后执行签到');
+    if(checkins.has(id) || [...checkins.values()].some(job=>job.accounts.some(account=>accounts.includes(account))))throw Error('此账号已有签到任务');
+    const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();
+    child.exitCode=null;child.signalCode=null;
+    const job={id,accounts,bot,scheduled,child,worker:processHandle,sent:false,timeout:null,cancelling:false};
+    checkins.set(id,job);
+    child.kill=signal=>{
+      if(!checkins.has(id))return false;
+      if(!job.sent){finishCheckin(id,130);return true;}
+      if(signal==='SIGKILL'){job.worker.kill('SIGKILL');return true;}
+      if(!job.cancelling) {
+        job.cancelling=true;
+        job.worker.stdin.write(JSON.stringify({type:'cancel_checkin',id})+'\n',error=>{if(error)job.worker.kill('SIGTERM');});
+        job.timeout=setTimeout(()=>{if(checkins.has(id))job.worker.kill('SIGTERM');},15000);job.timeout.unref?.();
+      }
+      return true;
+    };
+    // Delay delivery so the web runner can attach all stdout/close listeners first.
+    queueMicrotask(()=>{
+      if(!checkins.has(id))return;
+      if(state.status==='running')submitCheckin(job);
+      else {job.timeout=setTimeout(()=>finishCheckin(id,1,'等待监听连接就绪超时，本次未执行签到'),90000);job.timeout.unref?.();}
+    });
+    return child;
   }
 
   function packetNotice(message, level = 'info', runState = 'running') {
@@ -83,7 +152,7 @@ function createAutomation() {
     desired = true;
     if (context.canRun && !context.canRun()) {
       state.status = 'paused';
-      state.message = '签到任务运行中，自动化已暂停';
+      state.message = '登录、配置变更或其他账号任务占用连接，自动化暂未启动';
       packetNotice(state.message,'info','stopped');
       return;
     }
@@ -114,7 +183,7 @@ function createAutomation() {
     let worker;
     try {
       worker = spawn(python.name, [...(python.prefix || []), '-u', 'automation_worker.py'], {
-        cwd: context.root, env: { ...process.env, ...(context.workerEnv || {}), AUTOCHECKIN_DATA_DIR:context.dataDir || context.root, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
+        cwd: context.root, env: { ...process.env, ...(context.workerEnv || {}), AUTOCHECKIN_CONTROL:'1', AUTOCHECKIN_DATA_DIR:context.dataDir || context.root, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']
       });
     } catch (error) {
       state.status = 'failed';
@@ -126,7 +195,9 @@ function createAutomation() {
     processHandle = worker;
     sessionOwners = [...sessions];
     accountHealth.clear();
+    checkinAccounts=[];
     stableSince = null;
+    worker.stdin?.on('error',()=>{});
     for (const [level, pipe] of [['info', worker.stdout], ['error', worker.stderr]]) {
       let buffer = '';
       pipe.setEncoding('utf8');
@@ -140,10 +211,17 @@ function createAutomation() {
           if (level === 'error') { line(part, 'error'); packetNotice(`自动化进程错误：${part}`,'error','failed'); continue; }
           try {
             const event = JSON.parse(part);
-            if(event.type==='health') {
+            if(event.type==='checkin') {
+              const job=checkins.get(event.requestId);
+              if(!job || job.worker!==worker || !event.event || typeof event.event!=='object')continue;
+              if(event.event.type==='finished')finishCheckin(job.id,[0,1,130].includes(event.event.code) ? event.event.code : 1);
+              else if(['checkin_log','account_result','bot_result','health'].includes(event.event.type) && (!event.event.account || job.accounts.includes(event.event.account)))job.child.stdout.write(JSON.stringify(event.event)+'\n');
+            }
+            else if(event.type==='health') {
               state.lastHeartbeatAt=new Date().toISOString();
               if(sessionOwners.includes(event.account))accountHealth.set(event.account,event.status);
               context.onHealth?.(event);
+              for(const job of checkins.values())if(job.worker===worker && (!event.account || job.accounts.includes(event.account)))job.child.stdout.write(JSON.stringify({...event,source:'automation'})+'\n');
               if(state.status==='running' && sessionOwners.every(account=>accountHealth.get(account)==='online')) {
                 stableSince ??= Date.now();
                 if(Date.now()-stableSince>=120000)state.retryAttempts=0;
@@ -151,7 +229,11 @@ function createAutomation() {
             }
             else if (event.type === 'planned') { state.planned = Array.isArray(event.planned) ? event.planned.map(({account, ruleId, date, time}) => ({account, ruleId, date, time})) : []; }
             else if (event.type === 'red_packet_status' && typeof event.account === 'string' && Array.isArray(event.groups)) { state.redPackets[event.account] = {groups:event.groups}; }
-            else if (event.type === 'ready' && desired) { state.status = 'running'; state.runningSince=new Date().toISOString();state.message = event.message || '监听中'; }
+            else if (event.type === 'ready' && desired) {
+              state.status = 'running';state.runningSince=new Date().toISOString();state.message = event.message || '监听中';
+              checkinAccounts=Array.isArray(event.checkinAccounts) ? event.checkinAccounts.filter(account=>sessionOwners.includes(account)) : [];
+              for(const job of checkins.values())submitCheckin(job);
+            }
             else if (event.type === 'fatal') { state.status = 'failed'; state.message = event.message || '自动化启动失败'; line(state.message, 'error'); packetNotice(state.message,'error','failed'); }
             else line(event.message || part, event.level || 'info', event);
           } catch { line(part); }
@@ -166,6 +248,8 @@ function createAutomation() {
       clearTimeout(recoveryTimer);recoveryTimer=null;
       processHandle = null;
       sessionOwners = [];
+      checkinAccounts=[];
+      for(const job of [...checkins.values()])if(job.worker===worker)finishCheckin(job.id,1,'监听进程已退出，本次签到中断；不会自动重复发送签到消息');
       if (!desired) {
         state.status = 'paused';
         state.message = '自动化已暂停';
@@ -235,7 +319,7 @@ function createAutomation() {
   }
 
   function recover() {
-    if(!processHandle || state.status!=='running' || stopping)return;
+    if(!processHandle || state.status!=='running' || stopping || checkins.size)return;
     state.status='recovering';state.message='健康检查发现连接异常，正在恢复自动化';
     const worker=processHandle;
     recoveryTimer=setTimeout(()=>{if(processHandle===worker)worker.kill('SIGKILL');},5000);
@@ -243,6 +327,6 @@ function createAutomation() {
     worker.kill('SIGTERM');
   }
 
-  return { configure, getState, start, stop, restart, recover, ownedAccounts:()=>sessionOwners.slice() };
+  return { configure, getState, start, stop, restart, recover, runCheckin, ownedAccounts:()=>sessionOwners.slice() };
 }
-module.exports = { ...createAutomation(), createAutomation };
+module.exports = { ...createAutomation(), createAutomation, combineCheckinWorkers };

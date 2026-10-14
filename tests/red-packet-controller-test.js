@@ -39,7 +39,7 @@ function controller() {
   for (const [change, status, text] of [
     [o => o.pythonCommand = () => null, 'unavailable', '未找到 Python'],
     [o => o.sessionReady = false, 'unavailable', '缺少 Session'],
-    [o => o.canRun = () => false, 'paused', '自动化已暂停'],
+    [o => o.canRun = () => false, 'paused', '自动化暂未启动'],
   ]) {
     const test = controller(); change(test.options); test.automation.start();
     assert.equal(test.automation.getState().status, status);

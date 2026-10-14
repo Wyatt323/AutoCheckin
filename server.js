@@ -8,7 +8,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
-const { createAutomation } = require('./automation');
+const { createAutomation, combineCheckinWorkers } = require('./automation');
 const { createScheduler } = require('./checkin_scheduler');
 const { createLoginController } = require('./login');
 const { resolveCredentials, credentialText } = require('./telegram_credentials');
@@ -480,9 +480,26 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
       throw new Error('执行记录无法保存或服务已停止，本次任务未启动');
     }
     addLine(`使用 ${python.version} 启动${account ? `账号 ${account} 的` : '批量'}${trigger === 'scheduled' ? bot ? ` Bot ${bot} 独立定时` : '定时' : '手动'}签到`, 'system');
-    const child = spawn(python.name, [...python.prefix, '-u', 'allinone.py', ...(account ? ['--account', account] : ['--parallel']), ...(bot ? ['--bot', bot] : []), ...(trigger === 'scheduled' ? ['--scheduled'] : [])], {
+    const spawnCheckin = selectedAccount => spawn(python.name, [...python.prefix, '-u', 'allinone.py', ...(selectedAccount ? ['--account', selectedAccount] : ['--parallel']), ...(bot ? ['--bot', bot] : []), ...(trigger === 'scheduled' ? ['--scheduled'] : [])], {
       cwd: ROOT, env: { ...process.env, ...workerEnv, AUTOCHECKIN_DATA_DIR:DATA_ROOT, AUTOCHECKIN_LOG_JSON:'1', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
     });
+    const shared = run.accounts.filter(session=>automationAccounts().includes(session));
+    let child;
+    if(shared.length) {
+      addLine('复用 Telegram 监听连接执行签到，抢红包、监听转发与定时消息继续运行', 'system');
+      let sharedWorker;
+      try {sharedWorker=automation.runCheckin({id:run.id,accounts:shared,bot,scheduled:trigger==='scheduled'});}
+      catch(error) {
+        // The listener may exit while the execution record is being saved.
+        run.state='failed';run.finishedAt=new Date().toISOString();
+        for(const session of run.accounts)run.accountStates[session]='failed';
+        addLine(error.message, 'stderr');history.changed(true);
+        throw error;
+      }
+      const workers=[sharedWorker];
+      for(const session of run.accounts.filter(session=>!shared.includes(session)))workers.push(spawnCheckin(session));
+      child=workers.length===1 ? workers[0] : combineCheckinWorkers(workers);
+    } else child=spawnCheckin(account);
     const accounts = new Set(selected.map(user => user.session));
     let finished;
     const completion = new Promise(resolve => { finished = resolve; });
@@ -573,7 +590,9 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
       const delay = Math.max(0, ...accounts.map(session => (nextRunAt.get(session) || 0) - Date.now()));
       if (delay) await require('node:timers/promises').setTimeout(delay, null, {signal:shutdownController.signal});
       if (shuttingDown) throw new Error('服务正在停止');
-      await automation.stop();
+      // Existing listeners execute signers on their own client. Never open the
+      // same Session twice, and do not pause listeners for unrelated accounts.
+      if(accounts.some(session=>automationAccounts().includes(session)) && !['starting','running'].includes(automation.getState().status))await automation.stop();
       if (shuttingDown) throw new Error('当前用户工作空间已关闭');
       const record = await startRun(account, trigger, bot);
       started = true;

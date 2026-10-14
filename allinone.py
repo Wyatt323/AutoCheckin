@@ -4,7 +4,7 @@
 from telegram_credentials import resolve_credentials
 from outgoing_proxy import telegram_proxy_kwargs, ai_http_client, install_network_guard
 from storage import read_document, parse_config_text
-from checkin_logging import account_log, emit_result, emit_bot_result, emit_health, install_json_output
+from checkin_logging import account_log, output_to, log_context, emit_result, emit_bot_result, emit_health, install_json_output
 from worker_health import heartbeat
 import asyncio
 import json
@@ -688,6 +688,7 @@ async def mark_all_read(client, bots):
 def install_handlers(client, signers):
     pending = set()
     closing = False
+    account, emitter = log_context()
 
     async def process(event):
         sender = await event.get_sender()
@@ -746,18 +747,21 @@ def install_handlers(client, signers):
     async def handler(event):
         # Completed/inactive signers need no sender lookup, including during
         # read acknowledgements and disconnect at the end of the account run.
-        if closing or not any(not signer.done and signer.active for signer in signers.values()):
+        if closing or getattr(event, 'is_private', None) is False or not any(not signer.done and signer.active for signer in signers.values()):
             return
         task = asyncio.current_task()
         pending.add(task)
         try:
-            await process(event)
-        except ConnectionError:
-            if not closing:
-                print('⚠️ 签到消息处理时连接中断，等待自动重连或本轮超时')
-        except Exception as error:
-            if not closing:
-                print(f'⚠️ 签到消息处理失败：{error}')
+            # Telethon dispatches in its own task context, outside the requesting run.
+            with output_to(emitter), account_log(account):
+                try:
+                    await process(event)
+                except ConnectionError:
+                    if not closing:
+                        print('⚠️ 签到消息处理时连接中断，等待自动重连或本轮超时')
+                except Exception as error:
+                    if not closing:
+                        print(f'⚠️ 签到消息处理失败：{error}')
         finally:
             pending.discard(task)
 
@@ -801,12 +805,13 @@ async def login_by_qr(client):
             return
 
 
-async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder=None, only_bot=None, scheduled=False):
+async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder=None, only_bot=None, scheduled=False, client=None):
     session_name = user["session"]
     user_name = user["name"]
     api_id = user["api_id"]
     api_hash = user["api_hash"]
-    client = TelegramClient(
+    owns_client = client is None
+    client = client or TelegramClient(
         str(DATA_DIR / session_name),
         api_id,
         api_hash,
@@ -816,16 +821,21 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
     signers = {}
     stop_handlers = install_handlers(client, signers)
     health_task = None
+    cancelled = False
 
     try:
-        await client.connect()
-        if not await client.is_user_authorized():
+        if owns_client:
+            await client.connect()
+        if not owns_client and not client.is_connected():
+            raise ConnectionError('监听连接正在重连，请稍后再执行签到')
+        if owns_client and not await client.is_user_authorized():
             try:
                 await login_by_qr(client)
             except FloodWaitError as e:
                 print(f"❌ Telegram 暂时禁止登录，还需等待 {e.seconds} 秒（约 {e.seconds / 3600:.1f} 小时）")
                 return False
-        health_task = asyncio.create_task(heartbeat(client, session_name, 'checkin', emit_health))
+        if owns_client:
+            health_task = asyncio.create_task(heartbeat(client, session_name, 'checkin', emit_health))
         print(f"\n====== 👤 开始用户 {user_name} ({session_name}) ======")
         mode = "Bot 独立定时" if scheduled and only_bot else "账号整体定时" if scheduled else "手动签到"
         print(f"执行方式：{mode}" + (f" · {only_bot}" if only_bot else ""))
@@ -899,25 +909,40 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
             display_name = await get_bot_display_name(client, bot)
             emit_bot_result(session_name, bot, display_name, notes.get(str(bot).lstrip("@").lower(), ""), signers[bot].result or "⚠️ 未知")
         return not stopped_by_limit
+    except asyncio.CancelledError:
+        cancelled = True
+        raise
     finally:
         try:
             await stop_handlers()
             if health_task:
                 health_task.cancel()
                 await asyncio.gather(health_task, return_exceptions=True)
-            await mark_all_read(client, signers.keys())
+            if not cancelled:
+                if owns_client:
+                    await mark_all_read(client, signers.keys())
+                else:
+                    try:
+                        await asyncio.wait_for(mark_all_read(client, signers.keys()), 10)
+                    except asyncio.TimeoutError:
+                        print('⚠️ 标记已读超时，签到已结束；监听继续运行')
         finally:
-            await client.disconnect()
+            if owns_client:
+                await client.disconnect()
         print(f"🛑 用户 {user_name} 结束")
 
 
-async def main(account=None, bot=None, scheduled=False, parallel=False):
-    ai_model, ai_providers, users = load_config()
+async def main(account=None, bot=None, scheduled=False, parallel=False, clients=None, accounts=None):
+    ai_model, ai_providers, users = await asyncio.to_thread(load_config)
     if account is not None:
         users = [user for user in users if user['session'] == account]
         if not users:
             raise ValueError(f'找不到 Session 为 {account} 的账号')
-    ai_clients = build_ai_clients(ai_providers)
+    if accounts is not None:
+        if set(accounts) - {user['session'] for user in users}:
+            raise ValueError('签到账号不存在')
+        users = [user for user in users if user['session'] in accounts]
+    ai_clients = await asyncio.to_thread(build_ai_clients, ai_providers)
     if not ai_clients:
         print('未配置 AI；普通签到可执行，诗词验证码将无法自动作答')
 
@@ -928,17 +953,18 @@ async def main(account=None, bot=None, scheduled=False, parallel=False):
         with account_log(user["session"]):
             account_ai_clients=ai_clients
             try:
+                kwargs = {'client': clients[user['session']]} if clients is not None else {}
                 if user.get('proxy_id'):
-                    account_ai_clients=build_ai_clients(ai_providers, user)
+                    account_ai_clients=await asyncio.to_thread(build_ai_clients, ai_providers, user)
                 bots = user["bots"]
                 if not bots and not user['dialog_folder']:
                     print(f"⏭️ 用户 {user['name']} 没有配置 Bot，跳过")
                     emit_result(user["session"], True)
                     return True
                 if bot is None:
-                    completed = await run_user(user, ai_model, account_ai_clients, bots, user["bot_commands"], user["dialog_folder"], scheduled=scheduled)
+                    completed = await run_user(user, ai_model, account_ai_clients, bots, user["bot_commands"], user["dialog_folder"], scheduled=scheduled, **kwargs)
                 else:
-                    completed = await run_user(user, ai_model, account_ai_clients, bots, user["bot_commands"], user["dialog_folder"], only_bot=bot, scheduled=scheduled)
+                    completed = await run_user(user, ai_model, account_ai_clients, bots, user["bot_commands"], user["dialog_folder"], only_bot=bot, scheduled=scheduled, **kwargs)
                 if not completed:
                     print(f"⚠️ 用户 {user['name']} 有未完成的 Bot，继续处理下一个账号")
                 emit_result(user["session"], completed)
@@ -952,22 +978,28 @@ async def main(account=None, bot=None, scheduled=False, parallel=False):
             finally:
                 if account_ai_clients is not ai_clients:
                     for _, client in account_ai_clients:
-                        client.close()
+                        await asyncio.to_thread(client.close)
 
-    if parallel:
-        print("不同账号并行签到；每个账号内部的 Bot 依次执行")
-        return all(await asyncio.gather(*(execute_user(user) for user in users)))
-    previous_executed = False
-    failed_any = False
-    for user in users:
-        if previous_executed and (user['bots'] or user['dialog_folder']):
-            delay = random.randint(BOT_INTERVAL_MIN, BOT_INTERVAL_MAX)
-            print(f'⏳ 等待 {delay}s 后处理下一个账号的 Bot...')
-            await asyncio.sleep(delay)
-        previous_executed = previous_executed or bool(user['bots'] or user['dialog_folder'])
-        if not await execute_user(user):
-            failed_any = True
-    return not failed_any
+    try:
+        if parallel:
+            print("不同账号并行签到；每个账号内部的 Bot 依次执行")
+            return all(await asyncio.gather(*(execute_user(user) for user in users)))
+        previous_executed = False
+        failed_any = False
+        for user in users:
+            if previous_executed and (user['bots'] or user['dialog_folder']):
+                delay = random.randint(BOT_INTERVAL_MIN, BOT_INTERVAL_MAX)
+                print(f'⏳ 等待 {delay}s 后处理下一个账号的 Bot...')
+                await asyncio.sleep(delay)
+            previous_executed = previous_executed or bool(user['bots'] or user['dialog_folder'])
+            if not await execute_user(user):
+                failed_any = True
+        return not failed_any
+    finally:
+        for _, ai_client in ai_clients:
+            close = getattr(ai_client, 'close', None)
+            if close:
+                await asyncio.to_thread(close)
 
 
 if __name__ == '__main__':

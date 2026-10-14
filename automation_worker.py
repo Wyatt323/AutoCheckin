@@ -5,6 +5,7 @@ from telegram_credentials import resolve_credentials
 from outgoing_proxy import telegram_proxy_kwargs, install_network_guard
 from storage import read_document, write_document, database_enabled, parse_config_text
 from worker_health import heartbeat
+from checkin_logging import write_raw, output_to, install_json_output
 import asyncio
 import datetime as dt
 import json
@@ -14,6 +15,7 @@ import random
 import signal
 import sys
 import time
+import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -26,7 +28,124 @@ CHINA_TIME = dt.timezone(dt.timedelta(hours=8))
 
 
 def emit(message, level="info", kind="log", **metadata):
-    print(json.dumps({"type": kind, "level": level, "message": str(message), **metadata}, ensure_ascii=False), flush=True)
+    write_raw({"type": kind, "level": level, "message": str(message), **metadata})
+
+
+class CheckinControl:
+    """Run signers on the listener's existing clients; commands are local stdin only."""
+    def __init__(self, clients):
+        self.clients = clients
+        self.jobs = {}
+        self.completed = {}
+        self.closed = False
+        self.queue = asyncio.Queue(maxsize=100)
+        self.reader = None
+
+    def send(self, request_id, event):
+        write_raw({'type': 'checkin', 'requestId': request_id, 'event': event})
+
+    def finish(self, request_id, code):
+        self.jobs.pop(request_id, None)
+        self.completed[request_id] = None
+        if len(self.completed) > 2000:
+            self.completed.pop(next(iter(self.completed)))
+        self.send(request_id, {'type': 'finished', 'code': code})
+
+    def start(self):
+        loop = asyncio.get_running_loop()
+        owner = asyncio.current_task()
+        def accept(line):
+            if not self.closed and not self.queue.full():
+                self.queue.put_nowait(line)
+        def disconnected():
+            # The web process owns this pipe. Exit if it disappears, so an
+            # orphaned listener cannot keep the Telegram Session locked.
+            if not self.closed:
+                owner.cancel()
+        def read():
+            while not self.closed:
+                try:
+                    line = sys.stdin.buffer.readline(65537)
+                except OSError:
+                    line = b''
+                if not line:
+                    try:
+                        loop.call_soon_threadsafe(disconnected)
+                    except RuntimeError:
+                        pass
+                    return
+                if len(line) > 65536:
+                    continue
+                try:
+                    loop.call_soon_threadsafe(accept, line)
+                except RuntimeError:
+                    return
+        # Daemon reader does not hold up shutdown while stdin remains open on Windows.
+        threading.Thread(target=read, daemon=True, name='checkin-control').start()
+        self.reader = asyncio.create_task(self.listen())
+
+    async def listen(self):
+        while True:
+            line = await self.queue.get()
+            try:
+                self.dispatch(json.loads(line))
+            except (ValueError, TypeError, KeyError):
+                continue
+
+    def dispatch(self, command):
+        if self.closed or not isinstance(command, dict):
+            return
+        request_id = command.get('id')
+        if not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{8,80}', request_id):
+            return
+        if command.get('type') == 'cancel_checkin':
+            if request_id in self.jobs:
+                self.jobs[request_id]['task'].cancel()
+            return
+        if command.get('type') != 'checkin' or request_id in self.jobs or request_id in self.completed:
+            return
+        accounts = command.get('accounts')
+        busy = {account for job in self.jobs.values() for account in job['accounts']}
+        bot = command.get('bot')
+        valid = isinstance(accounts, list) and 1 <= len(accounts) <= 100 and all(isinstance(a, str) and a in self.clients for a in accounts)
+        valid = valid and len(set(accounts)) == len(accounts) and not busy.intersection(accounts)
+        valid = valid and (bot is None or isinstance(bot, str) and len(accounts) == 1 and 1 <= len(bot) <= 100)
+        valid = valid and isinstance(command.get('scheduled'), bool)
+        if not valid:
+            self.send(request_id, {'type': 'checkin_log', 'stream': 'stderr', 'text': '签到账号不可用或已有签到任务，本次未执行'})
+            self.finish(request_id, 1)
+            return
+        task = asyncio.create_task(self.execute(request_id, accounts, bot, command['scheduled']))
+        self.jobs[request_id] = {'task': task, 'accounts': accounts}
+        def cancelled_before_start(task):
+            if request_id in self.jobs:
+                self.finish(request_id, 130 if task.cancelled() else 1)
+        task.add_done_callback(cancelled_before_start)
+
+    async def execute(self, request_id, accounts, bot, scheduled):
+        code = 1
+        try:
+            # Import/config loading can be expensive; leave pushed packet events runnable.
+            signer = await asyncio.to_thread(__import__, 'allinone')
+            with output_to(lambda event: self.send(request_id, event)):
+                succeeded = await signer.main(bot=bot, scheduled=scheduled, parallel=True,
+                    clients={account: self.clients[account] for account in accounts}, accounts=accounts)
+                code = 0 if succeeded else 1
+        except asyncio.CancelledError:
+            code = 130
+        except Exception as error:
+            self.send(request_id, {'type': 'checkin_log', 'stream': 'stderr', 'text': f'签到执行失败：{error}'})
+        finally:
+            self.finish(request_id, code)
+
+    async def close(self):
+        self.closed = True
+        tasks = [job['task'] for job in self.jobs.values()]
+        if self.reader:
+            tasks.append(self.reader)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def emit_rule(rule, category, message, level="info", state=None):
@@ -195,6 +314,7 @@ async def main():
     last_health = None
     in_flight = set()
     retry_after = {}
+    checkins = None
 
     def account_error(session, message):
         for category, entries in [('message', schedules), ('forward', forwards), ('red_packet', red_packets)]:
@@ -366,7 +486,11 @@ async def main():
                     labels = '、'.join(f"{group['title']} ({chat})" for chat,group in groups.items() if rule in group['rules'])
                     emit_rule(rule, 'red_packet', f"[{rule.get('name') or rule['id']}] 开始监听 /red 红包指令 · {labels} · Bot {rule.get('botUsername') or '不限'} · 启用漏收备用检测", state='running')
 
-        emit(f"自动化运行中：{len(schedules)} 条定时消息，{active_forwards} 条转发监听，{active_packets} 条红包监听", kind="ready")
+        if os.environ.get('AUTOCHECKIN_CONTROL') == '1':
+            checkins = CheckinControl(clients)
+            checkins.start()
+        emit(f"自动化运行中：{len(schedules)} 条定时消息，{active_forwards} 条转发监听，{active_packets} 条红包监听", kind="ready",
+             checkinAccounts=list(clients) if checkins else [])
 
         async def send_schedule(rule, key):
             try:
@@ -402,7 +526,7 @@ async def main():
                 continue
             public_plans = [{k: v for k, v in plan.items() if k != "signature"} for plan in planned.values()]
             if public_plans != last_plans:
-                print(json.dumps({"type": "planned", "planned": public_plans}, ensure_ascii=False), flush=True)
+                write_raw({"type": "planned", "planned": public_plans})
                 last_plans = public_plans
             for rule in schedules:
                 if rule["account"] not in clients:
@@ -430,6 +554,8 @@ async def main():
                 task.add_done_callback(schedule_tasks.discard)
             await asyncio.sleep(1)
     finally:
+        if checkins:
+            await checkins.close()
         for task in health_tasks:
             task.cancel()
         await asyncio.gather(*health_tasks, return_exceptions=True)
@@ -470,6 +596,8 @@ async def run_until_stopped():
 
 if __name__ == "__main__":
     try:
+        if os.environ.get('AUTOCHECKIN_CONTROL') == '1':
+            install_json_output(passthrough=True)
         install_network_guard()
         sys.exit(asyncio.run(run_until_stopped()))
     except KeyboardInterrupt:
