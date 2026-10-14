@@ -102,7 +102,7 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         called=[]
         async def execute(signer,bot):
             called.append(bot); signer.result='🎉 签到成功'; return True
-        with patch.object(allinone,'TelegramClient',return_value=Client()), patch.object(allinone,'install_handlers'), patch.object(allinone,'get_account_bots',AsyncMock(return_value=['@first_bot','@own_bot','@last_bot'])), patch.object(allinone,'run_signer_once',execute), patch.object(allinone,'get_bot_display_name',AsyncMock(return_value='Bot')), patch.object(allinone,'mark_all_read',AsyncMock()), patch.object(allinone.asyncio,'sleep',AsyncMock()) as sleep, patch.object(allinone.random,'randint',return_value=10) as randint:
+        with patch.object(allinone,'TelegramClient',return_value=Client()), patch.object(allinone,'install_handlers',return_value=AsyncMock()), patch.object(allinone,'get_account_bots',AsyncMock(return_value=['@first_bot','@own_bot','@last_bot'])), patch.object(allinone,'run_signer_once',execute), patch.object(allinone,'get_bot_display_name',AsyncMock(return_value='Bot')), patch.object(allinone,'mark_all_read',AsyncMock()), patch.object(allinone.asyncio,'sleep',AsyncMock()) as sleep, patch.object(allinone.random,'randint',return_value=10) as randint:
             with contextlib.redirect_stdout(io.StringIO()): await allinone.run_user(user,'',[],[],{},scheduled=True)
             self.assertEqual(called,['@first_bot','@last_bot'])
             randint.assert_called_once_with(5,15); sleep.assert_awaited_once_with(10)
@@ -122,7 +122,7 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         executed=[]
         async def execute(signer,bot):
             executed.append(bot);signer.result='🎉 签到成功';return True
-        with patch.object(allinone,'TelegramClient',return_value=client), patch.object(allinone,'install_handlers'), patch.object(allinone,'get_account_bots',AsyncMock(return_value=['@own_bot'])), patch.object(allinone,'run_signer_once',execute), patch.object(allinone,'get_bot_display_name',AsyncMock(return_value='own_bot')), patch.object(allinone,'mark_all_read',AsyncMock()), patch.object(allinone,'emit_bot_result') as result:
+        with patch.object(allinone,'TelegramClient',return_value=client), patch.object(allinone,'install_handlers',return_value=AsyncMock()), patch.object(allinone,'get_account_bots',AsyncMock(return_value=['@own_bot'])), patch.object(allinone,'run_signer_once',execute), patch.object(allinone,'get_bot_display_name',AsyncMock(return_value='own_bot')), patch.object(allinone,'mark_all_read',AsyncMock()), patch.object(allinone,'emit_bot_result') as result:
             with contextlib.redirect_stdout(io.StringIO()) as output:
                 completed=await allinone.run_user(user,'',[],['@own_bot'],{})
             self.assertTrue(completed);self.assertEqual(executed,['@own_bot'])
