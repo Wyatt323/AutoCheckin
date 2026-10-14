@@ -32,6 +32,17 @@ const wait=async fn=>{for(let i=0;i<200;i++){if(fn())return;await new Promise(re
     await notifier.stop();
     notifier=await createTelegramNotifications({dataDir:root,fetchImpl,now:()=>clock});
     await notifier.notifyRun(run);await notifier.pump();assert.equal(calls.length,1,'restart retains delivered run id');
+    await notifier.notifyHealth({id:'health:incident:alert:0',text:'离线健康告警',kind:'health_alert'});
+    await wait(()=>notifier.view().deliveries.find(job=>job.id==='health:incident:alert:0')?.state==='sent');
+    assert.equal(calls.at(-1).metadata.account,null,'health alerts use the workspace default route');
+    assert.equal(notifier.view().deliveries.find(job=>job.id==='health:incident:alert:0').kind,'health_alert');
+    const healthCalls=calls.length;
+    await notifier.stop();notifier=await createTelegramNotifications({dataDir:root,fetchImpl,now:()=>clock});
+    await notifier.notifyHealth({id:'health:incident:alert:0',text:'离线健康告警',kind:'health_alert'});await notifier.pump();
+    assert.equal(calls.length,healthCalls,'restart retains delivered health notification IDs');
+    await notifier.notifyHealth({id:'health:incident:recovered',text:'离线恢复通知',kind:'health_recovery'});
+    await wait(()=>notifier.view().deliveries.find(job=>job.id==='health:incident:recovered')?.state==='sent');
+    assert.equal(notifier.view().deliveries.find(job=>job.id==='health:incident:recovered').kind,'health_recovery');
     mode='429';await notifier.notifyRun({...run,id:'retry'});await wait(()=>notifier.view().deliveries.find(job=>job.id==='retry')?.error);
     assert.equal(notifier.view().deliveries.find(job=>job.id==='retry').state,'pending');
     clock+=5000;mode='ok';await notifier.pump();assert.equal(notifier.view().deliveries.find(job=>job.id==='retry').state,'sent');

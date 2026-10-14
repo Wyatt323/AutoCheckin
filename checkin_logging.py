@@ -9,6 +9,12 @@ _account = contextvars.ContextVar('checkin_account', default=None)
 _sink = None
 
 
+def emit_health(message='', kind='health', **metadata):
+    if _sink is not None:
+        _sink.write(json.dumps({'type': kind, **metadata}, ensure_ascii=False) + '\n')
+        _sink.flush()
+
+
 def emit_result(account, completed):
     if _sink is not None:
         _sink.write(json.dumps({'type':'account_result', 'account':account,

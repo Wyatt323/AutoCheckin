@@ -4,7 +4,8 @@
 from telegram_credentials import resolve_credentials
 from outgoing_proxy import telegram_proxy_kwargs, ai_http_client, install_network_guard
 from storage import read_document, parse_config_text
-from checkin_logging import account_log, emit_result, emit_bot_result, install_json_output
+from checkin_logging import account_log, emit_result, emit_bot_result, emit_health, install_json_output
+from worker_health import heartbeat
 import asyncio
 import json
 import random
@@ -685,9 +686,10 @@ async def mark_all_read(client, bots):
 
 
 def install_handlers(client, signers):
-    @client.on(events.NewMessage)
-    @client.on(events.MessageEdited)
-    async def handler(event):
+    pending = set()
+    closing = False
+
+    async def process(event):
         sender = await event.get_sender()
         if not sender:
             return
@@ -739,6 +741,39 @@ def install_handlers(client, signers):
 
         await signer.click_robot()
 
+    @client.on(events.NewMessage)
+    @client.on(events.MessageEdited)
+    async def handler(event):
+        # Completed/inactive signers need no sender lookup, including during
+        # read acknowledgements and disconnect at the end of the account run.
+        if closing or not any(not signer.done and signer.active for signer in signers.values()):
+            return
+        task = asyncio.current_task()
+        pending.add(task)
+        try:
+            await process(event)
+        except ConnectionError:
+            if not closing:
+                print('⚠️ 签到消息处理时连接中断，等待自动重连或本轮超时')
+        except Exception as error:
+            if not closing:
+                print(f'⚠️ 签到消息处理失败：{error}')
+        finally:
+            pending.discard(task)
+
+    async def stop():
+        nonlocal closing
+        closing = True
+        remove = getattr(client, 'remove_event_handler', None)
+        if callable(remove):
+            remove(handler)
+        tasks = [task for task in pending if task is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    return stop
+
 
 async def login_by_qr(client):
     print("\\n📱 当前 session 未登录，准备使用 Telegram 扫码登录")
@@ -779,7 +814,8 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
         **telegram_proxy_kwargs(user),
     )
     signers = {}
-    install_handlers(client, signers)
+    stop_handlers = install_handlers(client, signers)
+    health_task = None
 
     try:
         await client.connect()
@@ -789,6 +825,7 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
             except FloodWaitError as e:
                 print(f"❌ Telegram 暂时禁止登录，还需等待 {e.seconds} 秒（约 {e.seconds / 3600:.1f} 小时）")
                 return False
+        health_task = asyncio.create_task(heartbeat(client, session_name, 'checkin', emit_health))
         print(f"\n====== 👤 开始用户 {user_name} ({session_name}) ======")
         mode = "Bot 独立定时" if scheduled and only_bot else "账号整体定时" if scheduled else "手动签到"
         print(f"执行方式：{mode}" + (f" · {only_bot}" if only_bot else ""))
@@ -864,6 +901,10 @@ async def run_user(user, ai_model, ai_clients, bots, bot_commands, dialog_folder
         return not stopped_by_limit
     finally:
         try:
+            await stop_handlers()
+            if health_task:
+                health_task.cancel()
+                await asyncio.gather(health_task, return_exceptions=True)
             await mark_all_read(client, signers.keys())
         finally:
             await client.disconnect()

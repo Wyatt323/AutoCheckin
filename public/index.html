@@ -22,6 +22,7 @@
   <script src="/users.js" defer></script>
   <script src="/audit.js" defer></script>
   <script src="/notifications.js" defer></script>
+  <script src="/health.js" defer></script>
 </head>
 <body>
   <button class="navigation-backdrop" id="navigation-backdrop" type="button" aria-label="关闭菜单" tabindex="-1" hidden></button>
@@ -35,6 +36,7 @@
         <button class="nav-item" data-view="features"><span class="nav-icon" data-icon="features">⊞</span> 功能中心</button>
         <button class="nav-item" data-view="ai"><span class="nav-icon" data-icon="ai">✧</span> AI 管理</button>
         <button class="nav-item" data-view="notifications"><span class="nav-icon" data-icon="message">✉</span> TG 通知</button>
+        <button class="nav-item" data-view="health"><span class="nav-icon" data-icon="dashboard">◫</span> 运行健康监控</button>
         <button class="nav-item" id="nav-users" data-view="users" hidden><span class="nav-icon" data-icon="account">♙</span> 用户管理</button>
         <button class="nav-item" id="nav-global-settings" data-view="global-settings" hidden><span class="nav-icon" data-icon="edit">⚙</span> <span id="global-settings-nav-label">全局设置</span></button>
         <button class="nav-item" id="nav-admin-global-settings" data-view="admin-global-settings" hidden><span class="nav-icon" data-icon="edit">⚙</span> 管理员全局设置</button>
@@ -117,14 +119,29 @@
           <section class="panel global-telegram settings-panel"><div class="panel-head"><div><h3>签到使用的 AI 服务</h3><p id="system-ai-summary"></p></div></div><label class="field"><span>选择 AI 提供商</span><select id="system-provider-choice" aria-label="AI 提供商"></select><small>可选择单个提供商，或依次尝试当前默认列表。未设置个人服务时自动继承管理员配置，保存后生效。</small></label><div class="bottom-save"><button class="primary-btn save-btn">保存选择</button></div></section>
         </section>
         <section class="view" id="view-notifications">
-          <div class="page-heading"><div><span class="kicker">TELEGRAM NOTIFICATIONS</span><h1>TG 通知</h1><p>定时签到任务结束后，通过通知 Bot 推送运行结果。</p></div></div>
+          <div class="page-heading"><div><span class="kicker">TELEGRAM NOTIFICATIONS</span><h1>TG 通知</h1><p>通过通知 Bot 接收定时签到结果与健康异常、恢复通知。</p></div></div>
           <section class="panel global-telegram"><div class="panel-head"><div><h2>通知设置</h2><p>账号定时、Bot 独立定时结束后推送汇总；显示 Bot 备注，优先列出未完成项目。</p></div></div>
-            <form id="notification-form"><label class="system-choice"><input id="notification-enabled" type="checkbox"><span><strong>启用定时任务结果通知</strong><small>成功、失败或停止时均发送；手动签到不发送。</small></span></label>
+            <form id="notification-form"><label class="system-choice"><input id="notification-enabled" type="checkbox"><span><strong>启用 TG 通知</strong><small>定时签到成功、失败或停止时发送；健康告警需在运行健康监控页面开启，手动签到不发送结果通知。</small></span></label>
               <div class="field-grid"><label class="field"><span>通知 Bot Token</span><input id="notification-token" type="password" autocomplete="new-password" placeholder="从 @BotFather 获取"><small>保存后不回显，留空保留已有 Token。</small></label><label class="field"><span>接收 Chat ID</span><input id="notification-chat" placeholder="你的数字用户 ID、群组 ID 或 @频道用户名"><small>私聊需先向通知 Bot 发送 /start；群组或频道需授予 Bot 发消息权限。</small></label></div>
               <div class="bottom-save notification-actions"><button class="outline-btn" id="notification-test" type="button">发送测试通知</button><button class="primary-btn" type="submit">保存通知设置</button></div><p id="notification-error" role="alert" hidden></p>
             </form>
           </section>
           <section class="panel table-panel"><div class="panel-head"><div><h3>通知发送记录</h3><p>保留最近 20 条显示记录，可查看发送结果与失败原因。</p></div><button class="outline-btn" id="notification-refresh" type="button">↻ 刷新状态</button></div><div class="table-wrap record-table-wrap"><table class="record-table" aria-label="通知发送记录"><thead><tr><th scope="col">时间 · 北京时间</th><th scope="col">账号 / 类型</th><th scope="col">发送状态</th><th scope="col">说明</th></tr></thead><tbody id="notification-deliveries"><tr class="table-empty-row"><td colspan="4">尚无通知记录。</td></tr></tbody></table></div></section>
+        </section>
+        <section class="view" id="view-health">
+          <div class="page-heading"><div><span class="kicker">RUNTIME HEALTH</span><h1>运行健康监控</h1><p>查看账号连接、出口代理与任务心跳，持续异常时通知你。</p></div><button class="outline-btn" id="health-check" type="button">立即检查</button></div>
+          <div class="health-toolbar"><label class="field" id="health-scope-field" hidden><span>查看范围</span><select id="health-scope" aria-label="健康监控范围"><option value="mine">我的工作空间</option><option value="all">系统全部用户</option></select></label><p id="health-summary" role="status">正在读取状态…</p></div>
+          <div class="stats"><article class="stat-card"><span>Telegram 账号</span><strong id="health-account-count">—</strong><small>连接状态与最近检查</small></article><article class="stat-card"><span>持续异常</span><strong id="health-issue-count">—</strong><small>达到告警阈值</small></article><article class="stat-card"><span>使用中的代理</span><strong id="health-proxy-count">—</strong><small>检查 Telegram HTTPS 连通性</small></article><article class="stat-card"><span>执行中的任务</span><strong id="health-task-count">—</strong><small>心跳来自实际任务进程</small></article></div>
+          <section class="panel global-telegram" id="health-settings-panel"><div class="panel-head"><div><h2>检查与告警设置</h2><p>只影响当前用户。短暂重连会先观察，群里暂时没有消息不会被视为掉线。</p></div></div><form id="health-settings-form">
+            <div class="health-switches"><label class="system-choice"><input type="checkbox" id="health-enabled"><span><strong>启用定期健康检查</strong><small>运行中的账号复用现有连接；空闲账号定期检查。</small></span></label><label class="system-choice"><input type="checkbox" id="health-alertsEnabled"><span><strong>TG 异常告警</strong><small>使用 TG 通知页面保存的 Bot 和接收会话。</small></span></label><label class="system-choice"><input type="checkbox" id="health-recoveryNotifications"><span><strong>异常恢复后通知</strong><small>只针对已加入告警队列的异常发送恢复通知。</small></span></label></div>
+            <div class="field-grid"><label class="field"><span>检查间隔 · 秒</span><input id="health-intervalSeconds" type="number" required min="30" max="3600"><small>代理与空闲账号每 30–3600 秒检查一次。</small></label><label class="field"><span>连续失败次数</span><input id="health-failureThreshold" type="number" required min="1" max="10"><small>达到次数且持续超过观察时间才告警。</small></label><label class="field"><span>异常观察时间 · 秒</span><input id="health-graceSeconds" type="number" required min="30" max="600"><small>30–600 秒，避免短暂网络抖动误报。</small></label><label class="field"><span>重复告警间隔 · 分钟</span><input id="health-alertCooldownMinutes" type="number" required min="1" max="1440"><small>同一持续异常在此时间内只通知一次。</small></label><label class="field"><span>自动化进程最大恢复次数</span><input id="health-maxRestarts" type="number" required min="0" max="10"><small>0 表示不自动重启；稳定运行两分钟后重新计数。不会自动重跑已结束的签到任务。</small></label></div>
+            <div class="bottom-save"><small id="health-notification-hint"></small><button class="primary-btn" type="submit">保存监控设置</button></div>
+          </form></section>
+          <p id="health-error" role="alert" hidden></p>
+          <section class="panel table-panel"><div class="panel-head"><div><h3>账号连接</h3><p>运行中显示连接心跳；空闲时显示最近检查结果，检查不会发送 Telegram 消息。</p></div></div><div class="table-wrap record-table-wrap"><table class="record-table" aria-label="账号健康状态"><thead><tr><th>账号</th><th>连接状态</th><th>最近心跳 / 检查</th><th>说明</th></tr></thead><tbody id="health-accounts"></tbody></table></div></section>
+          <section class="panel table-panel"><div class="panel-head"><div><h3>出口代理</h3><p>只检查默认出口及账号使用的代理，失败不会回退直连。</p></div></div><div class="table-wrap record-table-wrap"><table class="record-table" aria-label="代理健康状态"><thead><tr><th>代理</th><th>连通状态</th><th>延迟 / 检查时间</th><th>说明</th></tr></thead><tbody id="health-proxies"></tbody></table></div></section>
+          <section class="panel table-panel"><div class="panel-head"><div><h3>任务心跳</h3><p>正常暂停监听以执行签到、登录或群清理时，不触发异常告警。</p></div><button class="outline-btn" id="health-restart" type="button" hidden>重新连接自动化</button></div><div class="table-wrap record-table-wrap"><table class="record-table" aria-label="任务健康状态"><thead><tr><th>任务</th><th>运行状态</th><th>最近心跳</th><th>说明</th></tr></thead><tbody id="health-tasks"></tbody></table></div></section>
+          <section class="panel table-panel"><div class="panel-head"><div><h3>异常与恢复记录</h3><p>保留最近 100 条记录；告警发送结果可在 TG 通知页面查看。</p></div></div><div class="table-wrap record-table-wrap"><table class="record-table" aria-label="健康事件记录"><thead><tr><th>时间 · 北京时间</th><th>类型</th><th>对象</th><th>说明</th></tr></thead><tbody id="health-events"></tbody></table></div></section>
         </section>
         <section class="view" id="view-users">
           <div class="page-heading"><div><span class="kicker">WORKSPACE USERS</span><h1>用户管理</h1><p>仅管理员可创建用户。每位用户拥有独立的 Telegram 账号、任务配置和运行日志。</p></div></div>

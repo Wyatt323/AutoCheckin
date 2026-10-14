@@ -21,6 +21,7 @@ COPY --chown=node:node server.js database.js storage.py bot_discovery.py admin_a
 COPY --chown=node:node public ./public
 COPY --chown=node:node cleanup.js cleanup_worker.py ./
 COPY --chown=node:node red_packet.py ./
+COPY --chown=node:node health_monitor.js health_worker.py worker_health.py ./
 COPY --chown=node:node outgoing_proxy.js outgoing_proxy.py ./
 COPY --chown=node:node docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh \

@@ -7,8 +7,15 @@ function createAutomation() {
   let desired = false;
   let retryTimer = null;
   let stopping = null;
+  let recoveryTimer = null;
+  let sessionOwners = [];
+  let stableSince = null;
+  const accountHealth = new Map();
   let state = { status: 'idle', startedAt: null, message: '尚未配置自动化规则', lines: [], planned: [], redPackets: Object.create(null) };
   let lastPacketNotice = '';
+  state.retryAttempts = 0;
+  state.autoRestartBlocked = false;
+  state.lastHeartbeatAt = null;
 
   function configure(options) { context = options; }
   function getState() {
@@ -44,7 +51,9 @@ function createAutomation() {
   }
 
   function start() {
-    if (!context || processHandle || stopping) return;
+    if (!context || processHandle || stopping || retryTimer) return;
+    if(state.autoRestartBlocked)return;
+    state.retryLimit=context.retryLimit?.() ?? 3;
     clearTimeout(retryTimer);
     retryTimer = null;
     const config = context.readConfig();
@@ -98,6 +107,7 @@ function createAutomation() {
     state.status = 'starting';
     state.redPackets = Object.create(null);
     state.startedAt = new Date().toISOString();
+    state.lastHeartbeatAt = state.startedAt;
     state.message = `使用 ${python.version} 启动自动化`;
     line(state.message);
     packetNotice(`${state.message}，正在连接账号与监听群组`);
@@ -114,6 +124,9 @@ function createAutomation() {
       return;
     }
     processHandle = worker;
+    sessionOwners = [...sessions];
+    accountHealth.clear();
+    stableSince = null;
     for (const [level, pipe] of [['info', worker.stdout], ['error', worker.stderr]]) {
       let buffer = '';
       pipe.setEncoding('utf8');
@@ -127,9 +140,18 @@ function createAutomation() {
           if (level === 'error') { line(part, 'error'); packetNotice(`自动化进程错误：${part}`,'error','failed'); continue; }
           try {
             const event = JSON.parse(part);
-            if (event.type === 'planned') { state.planned = Array.isArray(event.planned) ? event.planned.map(({account, ruleId, date, time}) => ({account, ruleId, date, time})) : []; }
+            if(event.type==='health') {
+              state.lastHeartbeatAt=new Date().toISOString();
+              if(sessionOwners.includes(event.account))accountHealth.set(event.account,event.status);
+              context.onHealth?.(event);
+              if(state.status==='running' && sessionOwners.every(account=>accountHealth.get(account)==='online')) {
+                stableSince ??= Date.now();
+                if(Date.now()-stableSince>=120000)state.retryAttempts=0;
+              } else stableSince=null;
+            }
+            else if (event.type === 'planned') { state.planned = Array.isArray(event.planned) ? event.planned.map(({account, ruleId, date, time}) => ({account, ruleId, date, time})) : []; }
             else if (event.type === 'red_packet_status' && typeof event.account === 'string' && Array.isArray(event.groups)) { state.redPackets[event.account] = {groups:event.groups}; }
-            else if (event.type === 'ready' && desired) { state.status = 'running'; state.message = event.message || '监听中'; }
+            else if (event.type === 'ready' && desired) { state.status = 'running'; state.runningSince=new Date().toISOString();state.message = event.message || '监听中'; }
             else if (event.type === 'fatal') { state.status = 'failed'; state.message = event.message || '自动化启动失败'; line(state.message, 'error'); packetNotice(state.message,'error','failed'); }
             else line(event.message || part, event.level || 'info', event);
           } catch { line(part); }
@@ -141,7 +163,9 @@ function createAutomation() {
     worker.on('error', error => { if (processHandle !== worker) return; state.status = 'failed'; state.message = error.message; line(error.message, 'error'); packetNotice(`自动化进程错误：${error.message}`,'error','failed'); });
     worker.on('close', code => {
       if (processHandle !== worker) return;
+      clearTimeout(recoveryTimer);recoveryTimer=null;
       processHandle = null;
+      sessionOwners = [];
       if (!desired) {
         state.status = 'paused';
         state.message = '自动化已暂停';
@@ -151,7 +175,14 @@ function createAutomation() {
       if (code !== 2) state.message = `自动化进程退出（代码 ${code}），15 秒后重试`;
       line(`自动化进程退出（代码 ${code}）`, 'error');
       packetNotice(state.message || `自动化进程退出（代码 ${code}）`,'error','failed');
-      if (code !== 2) { retryTimer = setTimeout(start, 15000); retryTimer.unref?.(); }
+      if (code !== 2) {
+        state.retryLimit=context.retryLimit?.() ?? 3;
+        if(state.retryAttempts>=state.retryLimit) {
+          state.autoRestartBlocked=true;
+          state.message=`自动化连续异常，已达到 ${state.retryLimit} 次恢复上限；请检查后手动重启`;
+          packetNotice(state.message,'error','failed');
+        } else {state.retryAttempts++;retryTimer = setTimeout(()=>{retryTimer=null;start();}, 15000); retryTimer.unref?.();}
+      }
     });
   }
 
@@ -199,9 +230,19 @@ function createAutomation() {
 
   async function restart() {
     await stop();
+    state.retryAttempts=0;state.autoRestartBlocked=false;
     start();
   }
 
-  return { configure, getState, start, stop, restart };
+  function recover() {
+    if(!processHandle || state.status!=='running' || stopping)return;
+    state.status='recovering';state.message='健康检查发现连接异常，正在恢复自动化';
+    const worker=processHandle;
+    recoveryTimer=setTimeout(()=>{if(processHandle===worker)worker.kill('SIGKILL');},5000);
+    recoveryTimer.unref?.();
+    worker.kill('SIGTERM');
+  }
+
+  return { configure, getState, start, stop, restart, recover, ownedAccounts:()=>sessionOwners.slice() };
 }
 module.exports = { ...createAutomation(), createAutomation };

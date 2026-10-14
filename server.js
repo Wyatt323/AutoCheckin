@@ -85,7 +85,8 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     if (!proxy) throw Error('账号选择的出口代理已不可用');
     return outgoingNetwork.withProxy(proxy,()=>outgoingNetwork.fetch(url,options));
   }});
-  let history, profiles, login, scheduler, chatResolver, cleanup;
+  let history, profiles, login, scheduler, chatResolver, cleanup, health;
+  const healthProbes = new Map();
   const activeRuns = new Map(), reservedAccounts = new Set(), nextRunAt = new Map(), launches = new Set();
   const shutdownController = new AbortController();
   let latestRun, shuttingDown = false, editingConfig = false;
@@ -421,6 +422,39 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     history.changed();
   }
 
+  function automationAccounts() {
+    return automation.ownedAccounts();
+  }
+  async function probeHealthAccount(account) {
+    if(accountBusy(account) || automationAccounts().includes(account) || healthProbes.has(account))return null;
+    const python=pythonCommand();
+    if(!python)return {status:'offline',detail:'未找到 Python，无法检查账号连接'};
+    reservedAccounts.add(account);
+    return new Promise(resolve=>{
+      let child,result,buffer='',timeout;
+      const finish=()=>{
+        clearTimeout(timeout);healthProbes.delete(account);reservedAccounts.delete(account);
+        resolve(result || {status:'offline',detail:'账号检查进程失败或超时'});
+        if(!shuttingDown){automation.start();scheduler?.tick();}
+      };
+      try {
+        child=spawn(python.name,[...python.prefix,'-u','health_worker.py','--account',account],{cwd:ROOT,
+          env:{...process.env,...workerEnv,AUTOCHECKIN_DATA_DIR:DATA_ROOT,PYTHONIOENCODING:'utf-8'},windowsHide:true,stdio:['ignore','pipe','pipe']});
+      }catch{finish();return;}
+      healthProbes.set(account,child);
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data',chunk=>{
+        buffer+=chunk;const lines=buffer.split(/\r?\n/);buffer=lines.pop();
+        for(const line of lines)try{const event=JSON.parse(line);if(event.type==='health' && event.account===account && ['online','offline','login_required','rate_limited'].includes(event.status))result={status:event.status,detail:String(event.detail || '').slice(0,250)};}catch{}
+        if(buffer.length>65536)buffer='';
+      });
+      child.stderr.resume();
+      child.on('error',()=>{result={status:'offline',detail:'账号检查进程无法启动'};});
+      child.once('close',finish);
+      timeout=setTimeout(()=>{result={status:'offline',detail:'账号连接检查超时'};child.kill('SIGKILL');},40000);
+    });
+  }
+
   async function startRun(account = null, trigger = 'manual', bot = null) {
     const python = pythonCommand();
     if (!python) throw new Error('未找到 Python。安装 Python 及脚本依赖后，重新启动服务。');
@@ -456,6 +490,9 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     function output(line, stream) {
       try {
         const event = JSON.parse(line);
+        if(event.type==='health' && accounts.has(event.account)) {
+          run.lastHeartbeatAt=new Date().toISOString();health.observe(event);return;
+        }
         if(event.type==='bot_result') {
           if(!accounts.has(event.account) || typeof event.bot!=='string' || !['success','already','timeout','failed','skipped','unknown'].includes(event.status))return;
           const entry={account:event.account,bot:event.bot.slice(0,100),name:String(event.name || event.bot).slice(0,200),note:String(event.note || '').slice(0,200),status:event.status,result:String(event.result || '').slice(0,200)};
@@ -563,7 +600,17 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     }
   }
   login = createLoginController({ workerEnv, root: ROOT, dataDir: DATA_ROOT, readConfig:effectiveConfig, pythonCommand, isBusy: () => busy() || shuttingDown, stopAutomation: () => automation.stop(), resumeAutomation: () => { if (!shuttingDown) automation.start(); }, onComplete:async account => { if (database) await database.refresh(`profile:${discoveryKey(account)}`); } });
-  automation.configure({ workerEnv, root: ROOT, dataDir: DATA_ROOT, store:database, readConfig, pythonCommand, onEvent:event => history.appendEvent(event), canRun: () => !busy() && !login.active() && !shuttingDown });
+  health=await require('./health_monitor').createHealthMonitor({dataDir:DATA_ROOT,store:database,
+    readAccounts:()=>viewConfig(readConfig()).users.map(user=>({session:user.session,name:user.name,sessionReady:user.sessionReady,proxyId:user.proxyId})),
+    readProxies:()=>{const settings=systemSettings.read();return settings.proxies.filter(proxy=>proxy.id===settings.default_proxy_id || (readConfig().telegram?.users || []).some(user=>user.proxy_id===proxy.id));},
+    runtime:()=>({automation:automation.getState(),hasAutomation:['schedules','forwards','forwardPins','redPackets'].some(key=>(readConfig().automations?.[key] || []).some(rule=>rule.enabled!==false)),
+      rules:[['schedules','message'],['forwards','forward'],['forwardPins','forward'],['redPackets','red_packet']].flatMap(([key,category])=>(readConfig().automations?.[key] || []).filter(rule=>rule.enabled!==false).map(rule=>({id:rule.id,name:rule.name,account:rule.account,category}))),
+      runs:[...activeRuns.values()].map(job=>job.run),ownedAccounts:[...reservedAccounts,...automationAccounts()],
+      lastRuns:Object.fromEntries(history.snapshot({category:'checkin'}).records.flatMap(run=>(run.accounts || (run.account ? [run.account] : [])).map(account=>[account,{state:run.accountStates?.[account] || run.state,time:run.finishedAt || run.startedAt}])))}),
+    probeAccount:probeHealthAccount,notificationReady:()=>notifications.view().enabled,
+    notify:event=>notifications.notifyHealth(event),recoverAutomation:()=>{if(!busy() && !login.active() && !shuttingDown)automation.recover();},
+    testProxy:async proxy=>{if(networkChanging() || shuttingDown)return {skipped:true};const started=performance.now();const response=await outgoingNetwork.withProxy(proxy,()=>outgoingNetwork.fetch('https://api.telegram.org/bot0:0/getMe',{redirect:'error'}));return {ok:response.status<500 && response.status!==407,latencyMs:Math.round(performance.now()-started)};}});
+  automation.configure({ workerEnv, root: ROOT, dataDir: DATA_ROOT, store:database, readConfig, pythonCommand, onEvent:event => {history.appendEvent(event);health.observe(event);}, onHealth:event=>health.observe(event),retryLimit:()=>health.retryLimit(),canRun: () => !busy() && !login.active() && !shuttingDown });
   scheduler = createScheduler({ root: DATA_ROOT, store:database, readConfig, parallelAccounts:true, runAccount: async (account, bot, occurrence) => {
     try {await launchRun(account, 'scheduled', bot);}
     catch(error) {
@@ -577,7 +624,8 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
   for(const record of history.snapshot({category:'checkin'}).records)if(record.trigger==='scheduled' && record.lines.some(line=>line.text==='服务重启，本次任务已中断'))await notifications.notifyRun(record).catch(()=>console.error('中断任务通知入队失败'));
   return {
     ownSettings, systemSettings,
-    start() { notifications.start(); automation.start(); scheduler.start(); },
+    healthView:()=>health.view(),
+    start() { notifications.start(); automation.start(); scheduler.start(); health.start(); },
     canChangeNetwork:() => reservedAccounts.size === 0 && !editingConfig && !login.active() && !shuttingDown,
     usesProxy:id => (readConfig().telegram?.users || []).some(user=>user.proxy_id===id),
     usesProvider:id => readConfig().ai?.use_system!==false && readConfig().ai?.system_provider_id===id,
@@ -608,6 +656,15 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     },
     async handle(req,res,url,authUser) {
         if (shuttingDown) return send(res,403,{error:'当前用户工作空间已关闭'});
+        if(url.pathname==='/api/health') {
+          if(req.method==='GET')return send(res,200,{health:health.view()});
+          if(req.method==='PUT')return send(res,200,{health:await health.update(await bodyJson(req))});
+          return send(res,405,{error:'不支持的请求'});
+        }
+        if(url.pathname==='/api/health/check' && req.method==='POST') {
+          void health.tick(true).catch(()=>console.error('手动健康检查失败'));
+          return send(res,202,{health:health.view()});
+        }
         if (url.pathname.startsWith('/api/features/zero-speakers')) {
           cleanup ||= require('./cleanup').createCleanupController({root:ROOT,dataDir:DATA_ROOT,store:database,workerEnv,history,readConfig,pythonCommand,
             acquire:account => {
@@ -732,6 +789,8 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
       await login.shutdown();
       await chatResolver?.shutdown();
       await automation.stop();
+      for(const child of healthProbes.values())child.kill('SIGKILL');
+      await health.stop();
       await notifications.stop();
       await history.flush();
     }
@@ -816,6 +875,14 @@ http.createServer(async (req, res) => {
       res.writeHead(302,{Location:user.mustChangePassword ? '/password' : '/','Cache-Control':'no-store'}); return res.end();
     }
     if (url.pathname === '/password' && !user) { res.writeHead(302,{Location:'/login'}); return res.end(); }
+    if(url.pathname==='/api/admin/health') {
+      if(user.role!=='admin')return send(res,403,{error:'仅管理员可查看系统健康状态'});
+      if(req.method!=='GET')return send(res,405,{error:'仅支持查看'});
+      const users=[{id:'admin',username:auth.adminUsername()},...auth.list()];
+      const workspaces=[];
+      for(const owner of users){const workspace=await workspaceFor(owner);workspaces.push({user:{id:owner.id,username:owner.username},health:workspace.healthView()});}
+      return send(res,200,{workspaces});
+    }
     if (url.pathname === '/api/admin/audit/users' || url.pathname.startsWith('/api/admin/audit/users/')) {
       if (user.role !== 'admin') return send(res,403,{error:'仅管理员可查看后台审计'});
       if (req.method !== 'GET') return send(res,405,{error:'审计功能仅支持查看'});
@@ -948,7 +1015,7 @@ http.createServer(async (req, res) => {
     }
     if (req.method !== 'GET') return send(res, 405, { error: '不支持的请求' });
     const file = url.pathname === '/' ? 'index.html' : ['/login','/password'].includes(url.pathname) ? 'auth.html' : url.pathname.slice(1);
-    if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'features.js', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css', 'run-log.js', 'checkin-results.js', 'run-log.css', 'ui-controls.js', 'users.js', 'audit.js', 'notifications.js', 'ui-controls.css', 'theme.css', 'favicon.svg'].includes(file)) return send(res, 404, { error: '页面不存在' });
+    if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'features.js', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css', 'run-log.js', 'checkin-results.js', 'run-log.css', 'ui-controls.js', 'users.js', 'audit.js', 'notifications.js', 'health.js', 'ui-controls.css', 'theme.css', 'favicon.svg'].includes(file)) return send(res, 404, { error: '页面不存在' });
     const target = file==='checkin-results.js' ? path.join(ROOT,'checkin_results.js') : path.join(PUBLIC, file);
     res.writeHead(200, { 'Content-Type': types[path.extname(file)], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     fs.createReadStream(target).pipe(res);

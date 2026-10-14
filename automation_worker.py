@@ -4,6 +4,7 @@
 from telegram_credentials import resolve_credentials
 from outgoing_proxy import telegram_proxy_kwargs, install_network_guard
 from storage import read_document, write_document, database_enabled, parse_config_text
+from worker_health import heartbeat
 import asyncio
 import datetime as dt
 import json
@@ -187,9 +188,11 @@ async def main():
     schedule_tasks = set()
     connected_clients = []
     packet_monitors = []
+    health_tasks = []
     persisted = load_state()
     sent, planned, claimed = (persisted[name] for name in ("sent", "planned", "claimed"))
     last_plans = None
+    last_health = None
     in_flight = set()
     retry_after = {}
 
@@ -214,16 +217,19 @@ async def main():
             try:
                 await client.connect()
                 if not await client.is_user_authorized():
+                    emit('', kind='health', source='automation', account=session, status='login_required', detail='Telegram 登录已失效，请重新登录')
                     account_error(session, f"账号 {session} 尚未登录，请先在账号管理中完成登录")
                     await client.disconnect()
                     connected_clients.remove(client)
                     continue
             except Exception as error:
+                emit('', kind='health', source='automation', account=session, status='offline', detail='Telegram 连接失败，请检查代理与网络')
                 account_error(session, f"账号 {session} 连接失败：{error}")
                 await client.disconnect()
                 connected_clients.remove(client)
                 continue
             clients[session] = client
+            health_tasks.append(asyncio.create_task(heartbeat(client, session, 'automation', emit)))
             emit(f"账号 {session} 已连接")
 
         if not clients:
@@ -378,6 +384,9 @@ async def main():
                 in_flight.discard(key)
 
         while True:
+            if last_health is None or time.monotonic()-last_health >= 10:
+                emit('', kind='health', source='automation', status='running')
+                last_health = time.monotonic()
             now = dt.datetime.now(CHINA_TIME)
             # Commit plans before exposing or dispatching; failed writes dispatch nothing.
             try:
@@ -421,6 +430,9 @@ async def main():
                 task.add_done_callback(schedule_tasks.discard)
             await asyncio.sleep(1)
     finally:
+        for task in health_tasks:
+            task.cancel()
+        await asyncio.gather(*health_tasks, return_exceptions=True)
         for monitor in packet_monitors:
             await monitor.close()
         tasks = [*forward_tasks, *schedule_tasks]

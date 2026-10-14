@@ -114,6 +114,7 @@ async function createTelegramNotifications({dataDir,store=null,fetchImpl=fetch,n
     view,update,pump,
     redact:text => data.settings.token ? String(text).split(data.settings.token).join('[已隐藏]') : String(text),
     notifyRun:(record,name)=>record.trigger==='scheduled' ? enqueue(record.id,formatRunResult(record,name),{account:record.account}) : Promise.resolve(false),
+    notifyHealth:({id,text,kind})=>enqueue(id,text,{account:null,kind}),
     test:async()=>{if(!data.settings.enabled)throw Error('请先保存并启用 TG 通知');return enqueue(randomUUID(),'AutoCheckin 测试通知\nTG 通知连接已配置。',{kind:'test'});},
     start(){if(!timer && !closed){timer=setInterval(()=>{void pump();},pollMs);timer.unref();void pump();}},
     async stop(){closed=true;clearInterval(timer);timer=null;activeController?.abort();if(pumping)await new Promise(resolve=>idleResolve=resolve);await queue;}

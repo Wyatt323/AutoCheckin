@@ -110,6 +110,16 @@ async function createDatabase({ dataDir, parseConfig, pool: suppliedPool } = {})
       }
       await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb)',['migration:red-packets-v1',JSON.stringify({at:new Date().toISOString()})]);
     }
+    const healthMigrated=await client.query("SELECT key FROM autocheckin_documents WHERE key = 'migration:health-state-v1'");
+    if(!healthMigrated.rows.length) {
+      const directories=[['',dataDir]],tenants=path.join(dataDir,'.user-workspaces');
+      if(fs.existsSync(tenants))for(const entry of fs.readdirSync(tenants,{withFileTypes:true}))if(entry.isDirectory() && /^[a-f0-9-]{36}$/.test(entry.name))directories.push(['tenant:'+entry.name+':',path.join(tenants,entry.name)]);
+      for(const [prefix,directory] of directories) {
+        const file=path.join(directory,'.health-state.json');
+        if(fs.existsSync(file))await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb) ON CONFLICT(key) DO NOTHING',[prefix+'health-state',fs.readFileSync(file,'utf8')]);
+      }
+      await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb)',['migration:health-state-v1',JSON.stringify({at:new Date().toISOString()})]);
+    }
     await client.query('COMMIT');
     if (importedCount !== null) console.log(`旧数据迁移完成：${importedCount} 项；源文件已保留。`);
     for (const row of (await client.query('SELECT key, value FROM autocheckin_documents')).rows) documents.set(row.key, row.value);

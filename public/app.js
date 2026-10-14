@@ -148,12 +148,13 @@ function navigate(view, keepAccount = false, logAccount = null) {
   if (view === 'activity' && typeof setRunLogScope === 'function') setRunLogScope(logAccount);
   $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
   $$('.view').forEach(item => item.classList.toggle('active', item.id === `view-${view==='admin-global-settings' ? 'global-settings' : view}`));
-  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', features:'功能中心', ai:'AI 管理', activity:'运行日志', users:'用户管理', 'global-settings':'全局设置','admin-global-settings':'管理员全局设置', audit:'后台审计',notifications:'TG 通知' })[view];
+  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', features:'功能中心', ai:'AI 管理', activity:'运行日志', users:'用户管理', 'global-settings':'全局设置','admin-global-settings':'管理员全局设置', audit:'后台审计',notifications:'TG 通知',health:'运行健康监控' })[view];
   window.location.hash = view === 'activity' && logAccount ? `activity?account=${encodeURIComponent(logAccount)}` : view;
   schedulePeerLookup();
   if (view === 'activity') renderRun();
   if (view === 'audit' && typeof loadAuditUsers === 'function') loadAuditUsers();
   if (view === 'notifications' && typeof loadNotificationSettings === 'function') loadNotificationSettings();
+  if (view === 'health' && typeof loadHealth === 'function') loadHealth();
   if (view === 'ai' && typeof loadAISettings === 'function') loadAISettings().catch(error=>toast(error.message,true));
   if (['global-settings','admin-global-settings'].includes(view) && typeof loadSystemSettings === 'function') loadSystemSettings().catch(error=>toast(error.message,true));
   if (view === 'features' && typeof renderFeatureCenter === 'function') renderFeatureCenter();
@@ -823,7 +824,7 @@ $('#today').textContent = new Date().toLocaleDateString('zh-CN', { year:'numeric
     if (hash === 'features' && params.get('plugin') === 'checkin') {
       const index = config.users.findIndex(user => user.session === params.get('account'));
       openCheckinFeature(index < 0 ? null : index, params.get('section'));
-    } else if (['overview','bots','accounts','features','ai','automation','activity','users','global-settings','admin-global-settings','audit','notifications'].includes(hash)) navigate(hash, false, hash === 'activity' ? params.get('account') : null);
+    } else if (['overview','bots','accounts','features','ai','automation','activity','users','global-settings','admin-global-settings','audit','notifications','health'].includes(hash)) navigate(hash, false, hash === 'activity' ? params.get('account') : null);
     if (!pythonVersion) toast('未检测到 Python，配置可编辑，运行需安装 Python 环境', true);
     const statePollTimer = setInterval(() => { if (!document.hidden) poll(); }, 2000);
     document.addEventListener('visibilitychange', () => {

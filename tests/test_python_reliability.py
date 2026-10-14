@@ -128,10 +128,58 @@ class SignerTests(unittest.IsolatedAsyncioTestCase):
     async def test_connection_failure_disconnects(self):
         client = types.SimpleNamespace(connect=AsyncMock(side_effect=RuntimeError('offline connect')), disconnect=AsyncMock())
         user = {'name': 'test', 'session': 'test', 'api_id': 1, 'api_hash': 'dummy'}
-        with patch.object(signer, 'TelegramClient', return_value=client), patch.object(signer, 'install_handlers'):
+        with patch.object(signer, 'TelegramClient', return_value=client), patch.object(signer, 'install_handlers', return_value=AsyncMock()):
             with self.assertRaises(RuntimeError):
                 await signer.run_user(user, 'mock', [], [], {})
         client.disconnect.assert_awaited_once()
+
+    async def test_handler_shutdown_cancels_sender_lookup_before_disconnect(self):
+        handlers, order = [], []
+        class Client:
+            def on(self, event):
+                def register(handler):
+                    handlers.append(handler)
+                    return handler
+                return register
+            def remove_event_handler(self, handler):
+                order.append('remove')
+        entered = asyncio.Event()
+        async def sender():
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                order.append('callback_finished')
+        item = signer.BotSigner(None, [], 'mock', '@bot')
+        item.active = True
+        stop = signer.install_handlers(Client(), {'@bot':item})
+        event = types.SimpleNamespace(get_sender=AsyncMock(side_effect=sender))
+        task = asyncio.create_task(handlers[0](event))
+        await asyncio.wait_for(entered.wait(), 1)
+        await stop()
+        self.assertTrue(task.cancelled())
+        self.assertEqual(order, ['remove','callback_finished'])
+        await handlers[0](event)
+        self.assertEqual(event.get_sender.await_count, 1, 'late callbacks never query a disconnected client')
+
+    async def test_completed_signers_skip_sender_and_connection_error_is_handled(self):
+        handlers=[]
+        class Client:
+            def on(self, event):
+                def register(handler):
+                    handlers.append(handler)
+                    return handler
+                return register
+        item = signer.BotSigner(None, [], 'mock', '@bot')
+        item.active = True
+        item.done = True
+        signer.install_handlers(Client(), {'@bot':item})
+        event = types.SimpleNamespace(get_sender=AsyncMock(side_effect=ConnectionError('disconnected')))
+        await handlers[0](event)
+        event.get_sender.assert_not_awaited()
+        item.done = False
+        await handlers[0](event)
+        event.get_sender.assert_awaited_once()
 
     async def test_captcha_memory_download_and_configured_length(self):
         now = dt.datetime.now(dt.timezone.utc)

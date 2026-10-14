@@ -4,6 +4,7 @@ config.json
 .system-settings.json*
 .personal-settings.json*
 .notifications.json*
+.health-state.json*
 .user-workspaces/
 .account-profiles/
 .bot-discovery/
