@@ -46,19 +46,25 @@ const {scopedStore} = require('../database');
     fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
     const original={telegram:{api_id:123,api_hash:'admin-only',users:[{name:'legacy',session:'legacy',bot_groups:{button:[],command:[]}}]},ai:{providers:[]},automations:{schedules:[],forwards:[]}};
     fs.writeFileSync(path.join(root,'config.json'),JSON.stringify(original));
-    fs.writeFileSync(path.join(root,'allinone.py'),`import os,time,json
-print(json.dumps(dict(type='checkin_log',account='shared',text=os.environ.get('AUTOCHECKIN_DOCUMENT_PREFIX','ADMIN'))),flush=True)
-with open(os.path.join(os.environ['AUTOCHECKIN_DATA_DIR'],'config.json')) as handle: key=json.load(handle)['telegram']['api_hash']
-print('credential '+key+' system-secret system-ai-secret',flush=True)
-print(json.dumps(dict(type='bot_result',account='shared',bot='@example_bot',name='example_bot',note='system-secret',status='success',result='system-ai-secret')),flush=True)
-time.sleep(3)
-print(json.dumps(dict(type='account_result',account='shared',state='completed')),flush=True)
+    fs.writeFileSync(path.join(root,'allinone.py'),`raise AssertionError('listener-owned sessions must use shared checkin')
 `);
-    fs.writeFileSync(path.join(root,'automation_worker.py'),`import os,time,json
+    fs.writeFileSync(path.join(root,'automation_worker.py'),`import os,time,json,sys
 with open(os.path.join(os.environ['AUTOCHECKIN_DATA_DIR'],'worker.pid'),'w') as handle: handle.write(str(os.getpid()))
 print(json.dumps(dict(type='log',category='message',account='shared',state='completed',message=os.environ.get('AUTOCHECKIN_DOCUMENT_PREFIX','ADMIN'))),flush=True)
-print(json.dumps(dict(type='ready')),flush=True)
-time.sleep(60)
+# Keep the listener alive and route per-user checkin events by request ID.
+print(json.dumps(dict(type='ready',checkinAccounts=['shared'])),flush=True)
+for line in sys.stdin:
+ command=json.loads(line)
+ assert command['type']=='checkin' and command['accounts']==['shared'],command
+ def emit(event):
+  print(json.dumps(dict(type='checkin',requestId=command['id'],event=event)),flush=True)
+ emit(dict(type='checkin_log',account='shared',text=os.environ.get('AUTOCHECKIN_DOCUMENT_PREFIX','ADMIN')))
+ with open(os.path.join(os.environ['AUTOCHECKIN_DATA_DIR'],'config.json')) as handle: key=json.load(handle)['telegram']['api_hash']
+ emit(dict(type='checkin_log',account='shared',text='credential '+key+' system-secret system-ai-secret'))
+ emit(dict(type='bot_result',account='shared',bot='@example_bot',name='example_bot',note='system-secret',status='success',result='system-ai-secret'))
+ time.sleep(3)
+ emit(dict(type='account_result',account='shared',state='completed'))
+ emit(dict(type='finished',code=0))
 `);
     const socket=net.createServer();await new Promise(resolve=>socket.listen(0,'127.0.0.1',resolve));const port=socket.address().port;await new Promise(resolve=>socket.close(resolve));
     const base=`http://127.0.0.1:${port}`;

@@ -12,17 +12,23 @@ const { spawn } = require('node:child_process');
     const config = { telegram:{users:['alpha','beta'].map(session => ({name:session,session,api_id:123,api_hash:'offline',bots:['@example_bot']}))}, ai:{providers:[]}, automations:{schedules:[{id:'offline_message',account:'alpha',enabled:true}],forwards:[{id:'offline_forward',account:'beta',enabled:true}]} };
     fs.writeFileSync(path.join(root,'config.json'),JSON.stringify(config));
     for (const account of ['alpha','beta']) fs.writeFileSync(path.join(root,account+'.session'),'offline fake session');
-    fs.writeFileSync(path.join(root,'automation_worker.py'), `import json,time
+    fs.writeFileSync(path.join(root,'automation_worker.py'), `import json,sys
 for account,category,state in [('alpha','message','completed'),('beta','forward','failed')]:
  print(json.dumps(dict(type='log',account=account,category=category,state=state,ruleId='offline',level='error' if state=='failed' else 'info',message=account+' '+category+' event')),flush=True)
-print(json.dumps(dict(type='ready')),flush=True)
-time.sleep(60)
+# Both sessions belong to this listener, so checkins arrive through stdin.
+print(json.dumps(dict(type='ready',checkinAccounts=['alpha','beta'])),flush=True)
+for line in sys.stdin:
+ command=json.loads(line)
+ assert command['type']=='checkin',command
+ assert sorted(command['accounts'])==['alpha','beta'],command
+ def emit(event):
+  print(json.dumps(dict(type='checkin',requestId=command['id'],event=event)),flush=True)
+ for account,state in [('alpha','completed'),('beta','failed')]:
+  emit(dict(type='checkin_log',account=account,stream='stdout',text=account+' checkin'))
+  emit(dict(type='account_result',account=account,state=state))
+ emit(dict(type='finished',code=1))
 `);
-    fs.writeFileSync(path.join(root,'allinone.py'), `import json
-for account,state in [('alpha','completed'),('beta','failed')]:
- print(json.dumps(dict(type='checkin_log',account=account,stream='stdout',text=account+' checkin')),flush=True)
- print(json.dumps(dict(type='account_result',account=account,state=state)),flush=True)
-raise SystemExit(1)
+    fs.writeFileSync(path.join(root,'allinone.py'), `raise AssertionError('listener-owned sessions must use shared checkin')
 `);
     const socket = net.createServer(); await new Promise(resolve => socket.listen(0,'127.0.0.1',resolve));
     const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
