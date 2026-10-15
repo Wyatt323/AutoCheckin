@@ -38,7 +38,8 @@ const {spawn}=require('node:child_process');
     await page.waitForFunction(()=>!document.querySelector('#login-dialog').open);
     assert.equal(await page.locator('#login-password').inputValue(), '');
     assert.equal(await page.locator('#login-qr').getAttribute('src'), null);
-    await page.waitForFunction(()=>document.querySelector('[data-account-index="0"] .account-health').textContent.includes('正常'));
+    await page.waitForFunction(()=>{const health=document.querySelector('[data-account-index="0"] .account-health');return health.classList.contains('ready') && health.textContent.includes('已登录');});
+    assert.equal((await (await fetch(base+'/api/state')).json()).config.users[0].sessionReady,true,'successful login refreshes session readiness');
     await page.locator('[data-login-account="1"]').click(); await page.locator('#login-qr:not([hidden])').waitFor();
     await page.locator('#login-cancel').click();
     for(let i=0;i<40;i++){status=await(await fetch(base+'/api/login/status')).json(); if(!status.login.active)break; await new Promise(r=>setTimeout(r,100));}
