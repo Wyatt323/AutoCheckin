@@ -8,7 +8,7 @@ const {spawn}=require('node:child_process');
   let server,browser;
   const stop=async(signal='SIGTERM')=>{if(server){const done=new Promise(resolve=>server.once('close',resolve));server.kill(signal);await done;server=null;}};
   try {
-    for(const file of ['server.js','cleanup.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'])fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
+    for(const file of ['server.js','cleanup.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','account_security.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'])fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
     fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
     fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({telegram:{api_id:123,api_hash:'offline',users:['admin_account','second_account'].map(session=>({name:session==='admin_account' ? '管理员TG' : '第二个TG账号',session,bot_groups:{button:[],command:[]}}))},ai:{providers:[]},automations:{schedules:[],forwards:[]}}));
     fs.writeFileSync(path.join(root,'admin_account.session'),'fake');
@@ -98,7 +98,7 @@ for _ in range(900):
         if(new URL(route.request().url()).pathname==='/api/accounts/chats/resolve') {const {peers}=route.request().postDataJSON();return route.fulfill({contentType:'application/json',body:JSON.stringify({results:peers.map(value=>({value,status:'ok',title:'测试交流群 '+value,id:'-100123',type:'group'}))})});}
         return route.continue();
       });
-      await page.goto(base+'/#features');assert.equal(await page.locator('.feature-plugin-card').count(),4);
+      await page.goto(base+'/#features');assert.equal(await page.locator('.feature-plugin-card').count(),5);
       await page.locator('#open-zero-speakers').click();const card=page.locator('[data-cleanup-rule="cleanup_admin_001"]');
       await card.locator('[data-rule-toggle]').click();
       await card.locator('[data-feature-peer-name]').filter({hasText:'测试交流群'}).waitFor();

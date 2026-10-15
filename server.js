@@ -85,8 +85,8 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     if (!proxy) throw Error('账号选择的出口代理已不可用');
     return outgoingNetwork.withProxy(proxy,()=>outgoingNetwork.fetch(url,options));
   }});
-  let history, profiles, login, scheduler, chatResolver, cleanup, health;
-  const healthProbes = new Map();
+  let history, profiles, login, scheduler, chatResolver, cleanup, health, security;
+  const healthProbes = new Map(), securityBusyAccounts = new Set();
   const activeRuns = new Map(), reservedAccounts = new Set(), nextRunAt = new Map(), launches = new Set();
   const shutdownController = new AbortController();
   let latestRun, shuttingDown = false, editingConfig = false;
@@ -472,6 +472,22 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
   function automationAccounts() {
     return automation.ownedAccounts();
   }
+  async function executeSecurity(account,action,options={}) {
+    if(accountBusy(account))return {skipped:true,detail:'账号正在运行任务、登录或保存配置，待空闲后再检查'};
+    const user=viewConfig(readConfig()).users.find(user=>user.session===account);
+    if(!user)throw Error('账号不存在');
+    if(!user.sessionReady)return {status:'login_required',detail:'账号尚未登录，请先登录 Telegram'};
+    reservedAccounts.add(account);
+    securityBusyAccounts.add(account);
+    try {
+      if(automationAccounts().includes(account))return await automation.requestSecurity({account,action,...options,signal:shutdownController.signal});
+      const python=pythonCommand();if(!python)throw Error('未找到 Python');
+      return await require('./account_security').runSecurityWorker({root:ROOT,dataDir:DATA_ROOT,workerEnv,python,account,action,...options,signal:shutdownController.signal});
+    }finally{
+      securityBusyAccounts.delete(account);reservedAccounts.delete(account);
+      if(!shuttingDown){automation.start();scheduler?.tick();}
+    }
+  }
   async function probeHealthAccount(account) {
     if(accountBusy(account) || automationAccounts().includes(account) || healthProbes.has(account))return null;
     const python=pythonCommand();
@@ -678,6 +694,9 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     notify:event=>notifications.notifyHealth(event),recoverAutomation:()=>{if(!busy() && !login.active() && !shuttingDown)automation.recover();},
     testProxy:async proxy=>{if(networkChanging() || shuttingDown)return {skipped:true};const started=performance.now();const response=await outgoingNetwork.withProxy(proxy,()=>outgoingNetwork.fetch('https://api.telegram.org/bot0:0/getMe',{redirect:'error'}));return {ok:response.status<500 && response.status!==407,latencyMs:Math.round(performance.now()-started)};}});
   automation.configure({ workerEnv, root: ROOT, dataDir: DATA_ROOT, store:database, readConfig, pythonCommand, onEvent:event => {history.appendEvent(event);health.observe(event);}, onHealth:event=>health.observe(event),retryLimit:()=>health.retryLimit(),canRun: () => !busy() && !login.active() && !shuttingDown });
+  security=await require('./account_security').createAccountSecurity({dataDir:DATA_ROOT,store:database,
+    readAccounts:()=>viewConfig(readConfig()).users.map(({session,name,sessionReady})=>({session,name,sessionReady})),
+    execute:executeSecurity,notify:event=>notifications.notifyHealth(event),notificationReady:()=>notifications.view().enabled});
   scheduler = createScheduler({ root: DATA_ROOT, store:database, readConfig, parallelAccounts:true, runAccount: async (account, bot, occurrence) => {
     try {await launchRun(account, 'scheduled', bot, occurrence.ruleId);}
     catch(error) {
@@ -692,7 +711,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
   return {
     ownSettings, systemSettings,
     healthView:()=>health.view(),
-    start() { notifications.start(); automation.start(); scheduler.start(); health.start(); },
+    start() { notifications.start(); automation.start(); scheduler.start(); health.start(); security.start(); },
     canChangeNetwork:() => reservedAccounts.size === 0 && !editingConfig && !login.active() && !shuttingDown,
     usesProxy:id => (readConfig().telegram?.users || []).some(user=>user.proxy_id===id),
     usesProvider:id => readConfig().ai?.use_system!==false && readConfig().ai?.system_provider_id===id,
@@ -723,6 +742,33 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     },
     async handle(req,res,url,authUser) {
         if (shuttingDown) return send(res,403,{error:'当前用户工作空间已关闭'});
+        if(url.pathname==='/api/account-security') {
+          if(req.method==='GET')return send(res,200,{security:security.view()});
+          if(req.method==='PUT'){const input=await bodyJson(req);return send(res,200,{security:await security.update(input,input.account || '')});}
+          return send(res,405,{error:'不支持的请求'});
+        }
+        if(url.pathname==='/api/account-security/check' && req.method==='POST') {
+          const input=await bodyJson(req);
+          return send(res,202,{security:security.startCheck(input.account || '')});
+        }
+        if(['/api/account-security/trust','/api/account-security/terminate'].includes(url.pathname) && req.method==='POST') {
+          const input=await bodyJson(req);
+          if(url.pathname.endsWith('/terminate') && input.confirm!==true)throw Error('请先确认下线此设备');
+          const method=url.pathname.endsWith('/trust') ? 'trust' : 'terminate';
+          return send(res,200,{security:await security[method](input.account,input.deviceId)});
+        }
+        if(url.pathname==='/api/features/spam') {
+          if(req.method==='GET')return send(res,200,{spam:security.spamView()});
+          if(req.method==='PUT')return send(res,200,{spam:await security.saveSpamRule(await bodyJson(req))});
+          if(req.method==='DELETE')return send(res,200,{spam:await security.deleteSpamRule(url.searchParams.get('ruleId'))});
+          return send(res,405,{error:'不支持的请求'});
+        }
+        if(url.pathname==='/api/features/spam/run' && req.method==='POST') {
+          const input=await bodyJson(req);
+          const rule=security.spamView().rules.find(rule=>rule.id===input.ruleId);
+          if(input.mode==='appeal' && !rule)throw Error('请先保存申诉规则');
+          return send(res,202,{spam:await security.startSpam(rule?.account || input.account,input.mode || 'check',input)});
+        }
         if(url.pathname==='/api/health') {
           if(req.method==='GET')return send(res,200,{health:health.view()});
           if(req.method==='PUT')return send(res,200,{health:await health.update(await bodyJson(req))});
@@ -803,7 +849,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
         }
         if (req.method === 'GET' && url.pathname === '/api/runs') return send(res, 200, history.snapshot({account:url.searchParams.get('account') || '', category:url.searchParams.get('category') || '',ruleId:url.searchParams.get('ruleId') || ''}));
         if (req.method === 'GET' && url.pathname === '/api/state') {
-          const state = { user: authUser, run:publicRun(latestRun), activeRuns:[...activeRuns.values()].map(job => publicRun(job.run)), busyAccounts:[...reservedAccounts], cleanupRuns:cleanup?.view() || history.snapshot({category:'plugin'}).records.filter(run=>run.plugin==='zeroSpeakers').slice(-20).map(publicRun), automation: automation.getState(), checkinScheduler: scheduler.getState(), python: pythonCommand()?.version || null };
+          const state = { user: authUser, run:publicRun(latestRun), activeRuns:[...activeRuns.values()].map(job => publicRun(job.run)), busyAccounts:[...reservedAccounts], securityBusyAccounts:[...securityBusyAccounts], accountSecurity:security.accountSummaries(), cleanupRuns:cleanup?.view() || history.snapshot({category:'plugin'}).records.filter(run=>run.plugin==='zeroSpeakers').slice(-20).map(publicRun), automation: automation.getState(), checkinScheduler: scheduler.getState(), python: pythonCommand()?.version || null };
           // Routine polling needs status only; initial load and explicit refresh keep the full response.
           if (url.searchParams.get('config') !== '0') state.config = viewConfig(readConfig());
           return send(res, 200, state);
@@ -852,6 +898,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
       shuttingDown = true;
       shutdownController.abort();
       scheduler.stop();
+      await security.stop();
       await cleanup?.shutdown();
       await Promise.allSettled([...launches]);
       await Promise.all([...activeRuns.values()].map(async job => {
@@ -1092,7 +1139,7 @@ http.createServer(async (req, res) => {
     }
     if (req.method !== 'GET') return send(res, 405, { error: '不支持的请求' });
     const file = url.pathname === '/' ? 'index.html' : ['/login','/password'].includes(url.pathname) ? 'auth.html' : url.pathname.slice(1);
-    if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'features.js', 'rule-cards.js', 'rule-cards.css', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css', 'run-log.js', 'checkin-results.js', 'run-log.css', 'ui-controls.js', 'users.js', 'audit.js', 'notifications.js', 'health.js', 'ui-controls.css', 'theme.css', 'favicon.svg'].includes(file)) return send(res, 404, { error: '页面不存在' });
+    if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'features.js', 'rule-cards.js', 'rule-cards.css', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css', 'run-log.js', 'checkin-results.js', 'run-log.css', 'ui-controls.js', 'users.js', 'audit.js', 'notifications.js', 'health.js', 'account-security.js', 'account-security.css', 'spam-submit.js', 'ui-controls.css', 'theme.css', 'favicon.svg'].includes(file)) return send(res, 404, { error: '页面不存在' });
     const target = file==='checkin-results.js' ? path.join(ROOT,'checkin_results.js') : path.join(PUBLIC, file);
     res.writeHead(200, { 'Content-Type': types[path.extname(file)], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     fs.createReadStream(target).pipe(res);

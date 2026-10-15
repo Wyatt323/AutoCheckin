@@ -49,7 +49,7 @@ const path = require('node:path');
     await page.locator('.account-tile-main[data-open-account="0"]').click();
     assert.equal(await page.locator('#account-detail').getByRole('button',{name:/签到/}).count(),0,'account details also have no checkin button');
     await page.locator('[data-view="features"]').click();
-    assert.equal(await page.locator('#feature-catalog .feature-plugin-card').count(),4);
+    assert.equal(await page.locator('#feature-catalog .feature-plugin-card').count(),5);
     await screenshot('checkin-feature-catalog');
     await page.locator('#open-checkin').click();
     assert.equal(await page.locator('#checkin-account-choice').inputValue(),'0');

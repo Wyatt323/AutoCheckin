@@ -5,7 +5,7 @@ const {spawn}=require('node:child_process');
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'health-api-'));let server,browser;
   const stop=async()=>{if(server){const done=new Promise(resolve=>server.once('close',resolve));server.kill();await done;server=null;}};
   try {
-    for(const file of ['server.js','health_monitor.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'])fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
+    for(const file of ['server.js','health_monitor.js','account_security.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'])fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
     fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
     fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({telegram:{api_id:123,api_hash:'offline-secret',users:['first','idle'].map(session=>({name:session,session,bot_groups:{button:[],command:[]}}))},ai:{providers:[]},automations:{redPackets:[{id:'health_red_rule',name:'红包任务',enabled:true,account:'first',groups:['-100123']} ]}}));
     for(const account of ['first','idle'])fs.writeFileSync(path.join(root,account+'.session'),'offline');

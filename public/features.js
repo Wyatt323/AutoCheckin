@@ -2,6 +2,7 @@ let featureEditorOpen = false;
 let cleanupEditorOpen = false;
 let checkinEditorOpen = false;
 let redPacketEditorOpen = false;
+let spamEditorOpen = false;
 let checkinAccountIndex = null;
 let checkinSection = 'bots';
 let cleanupRuns = [], cleanupStarting = new Set();
@@ -27,6 +28,7 @@ function peerRule(input) {
 
 function readFeatureEditors() {
   if (!config) return;
+  window.readSpamEditors?.();
   document.querySelectorAll('[data-feature-rule]').forEach(card => {
     const rule = featureRule(card.dataset.featureRule);
     if (!rule) return;
@@ -58,10 +60,11 @@ function renderFeatureCenter() {
   config.automations.forwardPins ||= [];
   config.automations.redPackets ||= [];
   config.plugins ||= {};config.plugins.zeroSpeakers ||= [];
-  const editorOpen = featureEditorOpen || cleanupEditorOpen || checkinEditorOpen || redPacketEditorOpen;
+  const editorOpen = featureEditorOpen || cleanupEditorOpen || checkinEditorOpen || redPacketEditorOpen || spamEditorOpen;
   $('#view-features').setAttribute('aria-labelledby', checkinEditorOpen ? 'checkin-plugin-title' : featureEditorOpen ? 'forward-pin-title' : cleanupEditorOpen ? 'zero-speakers-title' : redPacketEditorOpen ? 'red-packet-title' : 'feature-center-title');
   $('#feature-center-heading').hidden = editorOpen;
   $('#feature-catalog').hidden = editorOpen;
+  if(typeof renderSpamCenter==='function')renderSpamCenter();
   renderCheckinCenter();
   $('#forward-pin-editor').hidden = !featureEditorOpen;
   const rules = featureRules(), enabled = rules.filter(rule => rule.enabled !== false).length;
@@ -92,7 +95,7 @@ function syncCheckinRoute() {
   const query = new URLSearchParams({plugin:'checkin',section:checkinSection});
   const account = config.users[checkinAccountIndex]?.session;
   if (account) query.set('account',account);
-  history.replaceState(null,'',checkinEditorOpen ? `#features?${query}` : '#features');
+  history.replaceState(null,'',checkinEditorOpen ? `#features?${query}` : spamEditorOpen ? '#features?plugin=spam' : '#features');
 }
 
 function openCheckinFeature(index = null, section = 'bots') {
@@ -101,7 +104,7 @@ function openCheckinFeature(index = null, section = 'bots') {
   if (index !== null && config.users[index]) checkinAccountIndex = index;
   checkinSection = section === 'checkins' ? 'checkins' : 'bots';
   checkinEditorOpen = true;
-  featureEditorOpen = cleanupEditorOpen = redPacketEditorOpen = false;
+  spamEditorOpen = featureEditorOpen = cleanupEditorOpen = redPacketEditorOpen = false;
   navigate('features');
   window.scrollTo({top:0,behavior:'smooth'});
 }
@@ -242,7 +245,7 @@ async function resolveFeaturePeers() {
   }
 }
 
-$('#open-forward-pin').addEventListener('click',() => {readEditors();checkinEditorOpen=redPacketEditorOpen=false;featureEditorOpen=true;cleanupEditorOpen=false;renderFeatureCenter();});
+$('#open-forward-pin').addEventListener('click',() => {readEditors();spamEditorOpen=false;checkinEditorOpen=redPacketEditorOpen=false;featureEditorOpen=true;cleanupEditorOpen=false;renderFeatureCenter();});
 $('#close-forward-pin').addEventListener('click',() => {readEditors();featureEditorOpen=false;renderFeatureCenter();});
 $('#add-forward-pin').addEventListener('click',() => {
   readEditors();
@@ -312,7 +315,7 @@ function renderCleanupStatus(runs = cleanupRuns) {
     const report=card.querySelector('[data-cleanup-report]');report.hidden=!progress.reportReady;report.href=run ? '/api/features/zero-speakers/report?id='+encodeURIComponent(run.id) : '#';
   });
 }
-$('#open-zero-speakers').addEventListener('click',()=>{readEditors();checkinEditorOpen=redPacketEditorOpen=false;featureEditorOpen=false;cleanupEditorOpen=true;renderFeatureCenter();});
+$('#open-zero-speakers').addEventListener('click',()=>{readEditors();spamEditorOpen=false;checkinEditorOpen=redPacketEditorOpen=false;featureEditorOpen=false;cleanupEditorOpen=true;renderFeatureCenter();});
 $('#close-zero-speakers').addEventListener('click',()=>{readEditors();cleanupEditorOpen=false;renderFeatureCenter();});
 $('#add-zero-speakers').addEventListener('click',()=>{
   readEditors();if(!config.users.length){toast('先添加 Telegram 账号',true);return;}
@@ -381,7 +384,7 @@ function renderRedPacketStatus() {
     element.innerHTML=`<strong>${escapeHtml(label)}</strong><small>已接收 ${sum('received')} 条实时消息 · /red ${sum('commands')} 次 · 红包按钮 ${sum('packets')} 个 · 备用检查 ${sum('fallbackChecks')} 次${last ? ' · 最近接收 '+escapeHtml(formatDate(new Date(last*1000).toISOString())) : ''}</small><small>运行状态对应已保存规则。未收到指令时，也会检测新红包按钮；无实时消息时每 5 秒补充检查新消息。</small>`;
   });
 }
-$('#open-red-packet').addEventListener('click',() => {readEditors();checkinEditorOpen=featureEditorOpen=cleanupEditorOpen=false;redPacketEditorOpen=true;renderFeatureCenter();});
+$('#open-red-packet').addEventListener('click',() => {readEditors();spamEditorOpen=false;checkinEditorOpen=featureEditorOpen=cleanupEditorOpen=false;redPacketEditorOpen=true;renderFeatureCenter();});
 $('#close-red-packet').addEventListener('click',() => {readEditors();redPacketEditorOpen=false;renderFeatureCenter();});
 $('#add-red-packet').addEventListener('click',() => {
   readEditors();

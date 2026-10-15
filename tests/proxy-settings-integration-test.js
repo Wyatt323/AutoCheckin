@@ -21,7 +21,7 @@ const {spawn,spawnSync}=require('node:child_process');
         });
       };socket.on('data',connect);
     });await new Promise(resolve=>proxyServer.listen(0,'127.0.0.1',resolve));
-    for(const file of ['server.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'])fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
+    for(const file of ['server.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','account_security.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'])fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
     fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
     fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({telegram:{api_id:123,api_hash:'offline',users:[{name:'offline',session:'offline',bot_groups:{button:['@test_bot'],command:[]}}]},ai:{providers:[]},automations:{schedules:[{id:'message_offline_001',enabled:true,account:'offline',target:'@test_group',repeat:'daily',time:'09:00',message:'test'}],forwards:[]}}));
     fs.writeFileSync(path.join(root,'offline.session'),'fake session');

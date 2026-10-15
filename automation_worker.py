@@ -37,6 +37,7 @@ class CheckinControl:
         self.clients = clients
         self.jobs = {}
         self.completed = {}
+        self.security_jobs = {}
         self.closed = False
         self.queue = asyncio.Queue(maxsize=100)
         self.reader = None
@@ -102,6 +103,20 @@ class CheckinControl:
             if request_id in self.jobs:
                 self.jobs[request_id]['task'].cancel()
             return
+        if command.get('type') == 'cancel_security':
+            if request_id in self.security_jobs:
+                self.security_jobs[request_id].cancel()
+            return
+        if command.get('type') == 'account_security':
+            account, action = command.get('account'), command.get('action')
+            if account not in self.clients or action not in {'inspect', 'terminate', 'spam_check', 'spam_appeal'} or request_id in self.security_jobs:
+                return
+            if len(self.security_jobs) >= 30:
+                return
+            task = asyncio.create_task(self.security(request_id, account, action, command.get('hash'), command.get('appealText', ''), command.get('pledge', False)))
+            self.security_jobs[request_id] = task
+            task.add_done_callback(lambda done: self.security_jobs.pop(request_id, None))
+            return
         if command.get('type') != 'checkin' or request_id in self.jobs or request_id in self.completed:
             return
         accounts = command.get('accounts')
@@ -140,12 +155,22 @@ class CheckinControl:
 
     async def close(self):
         self.closed = True
-        tasks = [job['task'] for job in self.jobs.values()]
+        tasks = [job['task'] for job in self.jobs.values()] + list(self.security_jobs.values())
         if self.reader:
             tasks.append(self.reader)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def security(self, request_id, account, action, device_hash, appeal_text='', pledge=False):
+        from account_security import operate, error_result
+        try:
+            result = await asyncio.wait_for(operate(self.clients[account], action, device_hash, appeal_text, pledge), 110 if action.startswith('spam_') else 55)
+        except asyncio.CancelledError:
+            result = {'status': 'unavailable', 'detail': '账号防护检查已取消'}
+        except Exception as error:
+            result = error_result(error)
+        write_raw({'type': 'account_security', 'requestId': request_id, 'account': account, 'result': result})
 
 
 def emit_rule(rule, category, message, level="info", state=None):
@@ -490,7 +515,7 @@ async def main():
             checkins = CheckinControl(clients)
             checkins.start()
         emit(f"自动化运行中：{len(schedules)} 条定时消息，{active_forwards} 条转发监听，{active_packets} 条红包监听", kind="ready",
-             checkinAccounts=list(clients) if checkins else [])
+             checkinAccounts=list(clients) if checkins else [], securityAccounts=list(clients) if checkins else [])
 
         async def send_schedule(rule, key):
             try:
