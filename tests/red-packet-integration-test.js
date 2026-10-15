@@ -87,6 +87,7 @@ time.sleep(60)
       await page.goto(base+'/#features');assert.equal(await page.locator('#feature-catalog .feature-plugin-card').count(),4);
       await screenshot('red-packet-catalog');await page.locator('#open-red-packet').click();
       const card=page.locator('[data-red-packet-rule="red_rule_001"]');
+      await card.locator('[data-rule-toggle]').click();
       await card.locator('[data-feature-peer-name]').first().filter({hasText:'first的群组 @group_one'}).waitFor();
       await card.locator('[data-red-packet-runtime]').filter({hasText:'已接收 12 条实时消息'}).waitFor();
       const runtime=await card.locator('[data-red-packet-runtime]').innerText();
@@ -97,16 +98,17 @@ time.sleep(60)
       await card.locator('[data-red-packet-add-group]').click();await card.locator('[data-red-packet-group]').last().fill('@new_group');
       await card.locator('[data-feature-peer-name]').last().filter({hasText:'second的群组 @new_group'}).waitFor();
       assert.equal(await card.locator('[data-red-packet-group]').last().evaluate(input=>input===document.activeElement),true);
-      await card.locator('summary').click();await card.locator('[data-red-packet-words="successKeywords"]').fill('入账完成\n已经领取过');
+      await card.locator('.red-packet-options summary').click();await card.locator('[data-red-packet-words="successKeywords"]').fill('入账完成\n已经领取过');
       await card.locator('[data-red-packet-field="watchSeconds"]').fill('180');
       await card.locator('[data-red-packet-field="retryInterval"]').fill('0.8');
       await page.waitForTimeout(2200);assert.equal(await card.locator('[data-red-packet-group]').last().inputValue(),'@new_group','polling preserves unsaved edits');
       await page.locator('#red-packet-editor .save-btn').click();await page.locator('#toast').filter({hasText:'配置已保存'}).waitFor();
       const saved=(await state(admin)).config.automations.redPackets[0];assert.equal(saved.account,'second');assert.equal(saved.watchSeconds,180);assert.equal(saved.retryInterval,0.8);assert.deepEqual(saved.successKeywords,['入账完成','已经领取过']);assert.equal(saved.groups.length,3);
       await card.locator('[data-red-packet-runtime]').filter({hasText:'已接收 12 条实时消息'}).waitFor();
-      await card.locator('summary').click();
+      await card.locator('[data-rule-toggle]').click();
+      await card.locator('.red-packet-options summary').click();
       await page.waitForFunction(()=>!document.querySelector('#toast').classList.contains('show'));await screenshot('red-packet-desktop');
-      await card.locator('summary').click();await screenshot('red-packet-options');
+      await card.locator('.red-packet-options summary').click();await screenshot('red-packet-options');
       for(const width of [1440,1024,390,320]){
         await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`fits ${width}px`);
         if(width===390)await screenshot('red-packet-mobile');

@@ -100,6 +100,7 @@ for _ in range(900):
       });
       await page.goto(base+'/#features');assert.equal(await page.locator('.feature-plugin-card').count(),4);
       await page.locator('#open-zero-speakers').click();const card=page.locator('[data-cleanup-rule="cleanup_admin_001"]');
+      await card.locator('[data-rule-toggle]').click();
       await card.locator('[data-feature-peer-name]').filter({hasText:'测试交流群'}).waitFor();
       assert.equal(await card.locator('.ui-select-trigger').count(),1);
       const groupInput=card.locator('[data-cleanup-field="group"]'),originalGroup=await groupInput.inputValue();

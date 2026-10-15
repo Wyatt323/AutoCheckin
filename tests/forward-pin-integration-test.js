@@ -96,6 +96,7 @@ const {createHash} = require('node:crypto');
       });
       await page.goto(base+'/#features');await page.locator('#open-forward-pin').click();
       const first=page.locator('[data-feature-rule="forward_pin_001"]');
+      await first.locator('[data-rule-toggle]').click();
       try {
         await first.locator('[data-feature-source]').first().locator('..').locator('[data-feature-peer-name]').filter({hasText:'first:@source_one'}).waitFor({timeout:10000});
       } catch (error) {
@@ -136,6 +137,7 @@ const {createHash} = require('node:crypto');
       await page.evaluate(() => navigate('features'));
       for(const width of [1440,1024,390,320]) {await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`plugin fits ${width}px`);}
       if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR) {
+        await first.locator('[data-rule-toggle]').click();
         await page.locator('[data-feature-rule]').first().locator('[data-feature-peer-name]').first().filter({hasText:'second:@source_one'}).waitFor();
         await page.waitForFunction(() => !document.querySelector('#toast').classList.contains('show'));
         await page.setViewportSize({width:1440,height:1100});await page.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,'forward-pin-plugin-desktop.png'),fullPage:true});

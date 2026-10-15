@@ -42,7 +42,7 @@ const {applySystemConfig,mergeSettings}=require('../system_settings');
    const {chromium}=require(process.env.PLAYWRIGHT_MODULE);browser=await chromium.launch({headless:true,args:['--no-sandbox'],executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined});const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.route('**/*',route=>route.request().url().startsWith(base)?route.continue():route.abort());
    await authenticatePage(page, base); await page.goto(base+'/#accounts');await page.locator('#account-list .account-tile').first().waitFor();assert.equal(await page.locator('#global-api-id').count(),0);assert.equal(await page.locator('[data-section="forwards"]').count(),0);
    const clickSave=async selector=>{const response=page.waitForResponse(r=>r.url()===base+'/api/config'&&r.request().method()==='POST');await page.locator(selector).first().click();const res=await response;assert.equal(res.status(),200);await page.waitForTimeout(100);};
-   await page.locator('#nav-global-settings').click();await page.locator('#system-api-id').waitFor();
+   await page.locator('#nav-global-settings').click();await page.locator('#system-api-id').waitFor();await page.waitForFunction(()=>document.querySelector('#system-api-id')?.value==='789');
    assert.equal(await page.inputValue('#system-api-id'),'789');assert.equal(await page.inputValue('#system-api-hash'),'');
    await page.fill('#system-api-id','999');await page.fill('#system-api-hash','browser-secret');
    const updated=page.waitForResponse(r=>r.url()===base+'/api/settings' && r.request().method()==='PUT');
