@@ -51,6 +51,7 @@ const path = require('node:path');
     await page.waitForTimeout(800);
     assert.equal(lookups.length, 0, 'Account settings never resolve hidden message rules');
     await page.locator('[data-account-section="messages"]').click();
+    await page.locator('#schedule-list [data-rule-toggle]').click();
     const badge = page.locator('#schedule-list [data-peer-name]').first();
     await badge.filter({ hasText:'first:@source_channel' }).waitFor();
     const source = page.locator('#schedule-list input[data-field="target"]');
@@ -70,6 +71,7 @@ const path = require('node:path');
     await page.waitForRequest(request => request.url().endsWith('/api/accounts/chats/resolve'));
     await page.locator('#account-back').click();
     await page.locator('[data-open-account="1"][data-section="messages"]').click();
+    await page.locator('#schedule-list [data-rule-toggle]').click();
     await badge.filter({ hasText:'second:@source_channel' }).waitFor();
     assert.ok(!(await badge.textContent()).includes('first'), 'slow old-account response cannot overwrite current account');
 

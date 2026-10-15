@@ -349,6 +349,53 @@ function autoSelect(kind, index, field, label) {
   return `<button type="button" class="auto-select-trigger" data-auto-select="${kind}" data-index="${index}" data-field="${field}" role="combobox" aria-label="${label}" aria-haspopup="listbox" aria-expanded="false"><span>${escapeHtml(label)}</span></button>`;
 }
 
+function ruleTimeSummary(rule) {
+  if (rule.repeat === 'once') return `仅一次 · ${(rule.time || '待设置时间').replace('T', ' ')}`;
+  return rule.timeMode === 'random'
+    ? `每天随机 ${rule.rangeStart || '09:00:00'}–${rule.rangeEnd || '10:30:00'}`
+    : `每天 ${rule.time || '待设置时间'}`;
+}
+
+function refreshRuleCards() {
+  if (!config) return;
+  const peerLabel = (account, value) => peerNames.get(peerKey(account, value || ''))?.title || value || '待设置';
+  $$('#schedule-list [data-auto-kind="schedules"]').forEach(card => {
+    const rule = config.automations.schedules[Number(card.dataset.index)];
+    if (rule) RuleCards.enhance(card, {key:`message:${rule.id}`,title:`定时消息 ${Number(card.dataset.index) + 1}`,
+      summary:`${accountLabel(rule.account)} · ${peerLabel(rule.account, rule.target)} · ${ruleTimeSummary(rule)}（北京时间）`});
+  });
+  $$('#checkin-config-editor [data-checkin-index]').forEach(card => {
+    const user = config.users[Number(card.closest('[data-checkin-account]').dataset.checkinAccount)];
+    const rule = user?.checkinSchedules[Number(card.dataset.checkinIndex)];
+    if (rule) RuleCards.enhance(card, {key:`checkin:${user.session}:${rule.id}`,title:`签到任务 ${Number(card.dataset.checkinIndex) + 1}`,
+      summary:`${accountLabel(user.session)} · ${ruleTimeSummary(rule)}（北京时间）`});
+  });
+  const groups = [
+    ['[data-feature-rule]', 'featureRule', config.automations.forwardPins || [], 'forward', '转发规则'],
+    ['[data-cleanup-rule]', 'cleanupRule', config.plugins?.zeroSpeakers || [], 'cleanup', '清理规则'],
+    ['[data-red-packet-rule]', 'redPacketRule', config.automations.redPackets || [], 'packet', '红包规则']
+  ];
+  for (const [selector, attribute, rules, kind, label] of groups) $$(selector).forEach(card => {
+    const index = rules.findIndex(rule => rule.id === card.dataset[attribute]), rule = rules[index];
+    if (!rule) return;
+    const detail = kind === 'forward'
+      ? `${rule.sources?.filter(Boolean).length || 0} 个来源 → ${peerLabel(rule.account, rule.target)} · ${rule.keywords?.length ? rule.keywords.length+' 个关键词' : '全部新消息'}${rule.pinAfterForward ? ' · 转发后置顶' : ''}`
+      : kind === 'cleanup' ? `${peerLabel(rule.account, rule.group)} · 手动检测`
+      : `${rule.groups?.filter(Boolean).length || 0} 个群组 · ${(rule.groups || []).filter(Boolean).slice(0,2).map(value => peerLabel(rule.account,value)).join('、') || '待设置群组'} · ${rule.botUsername || '/red 自动领取'}`;
+    RuleCards.enhance(card, {key:`${kind}:${rule.id}`,title:rule.name || `${label} ${index + 1}`,summary:`${accountLabel(rule.account)} · ${detail}`});
+  });
+}
+
+document.addEventListener('rulecardtoggle', () => {
+  closeModeMenu();closeAutoSelect();window.UIControls?.close();
+  schedulePeerLookup(0);
+  if (typeof scheduleFeatureLookup === 'function') scheduleFeatureLookup(0);
+});
+for (const type of ['input','change']) document.addEventListener(type, event => {
+  if (!config || !event.target.closest('.rule-card')) return;
+  readEditors();refreshRuleCards();
+});
+
 function renderAutomation() {
   const account = config.users[selectedAccountIndex]?.session;
   const schedules = config.automations.schedules.map((item, index) => ({ item, index })).filter(entry => entry.item.account === account);
@@ -356,6 +403,7 @@ function renderAutomation() {
     <article class="automation-card" data-auto-kind="schedules" data-index="${index}"><div class="automation-card-head"><div class="automation-card-symbol">${lineIcon('clock')}</div><div><strong>定时消息 ${index + 1}</strong><small>${item.repeat === 'once' ? '指定时间发送一次' : '每天定时发送'}</small></div><div class="automation-card-actions"><label class="auto-switch"><input type="checkbox" data-field="enabled" ${item.enabled !== false ? 'checked' : ''}><i></i>启用</label><button class="delete-btn" data-delete="schedule" data-index="${index}">删除</button></div></div>
     <div class="auto-field-grid"><div class="auto-field"><span>发送频率</span>${autoSelect('schedules', index, 'repeat', item.repeat === 'once' ? '发送一次' : '每天发送')}</div>${scheduleTimeFields(item, 'message')}${peerField('target', '目标群组 / 频道', item.target)}<label class="auto-field wide"><span>消息内容</span><textarea data-field="message" maxlength="4000" placeholder="输入要定时发送的消息">${escapeHtml(item.message || '')}</textarea><small>仅发送纯文本；一次性任务过期超过 5 分钟后不会补发。</small></label></div></article>`).join('') : '<div class="automation-empty">当前账号还没有定时消息。添加规则后，保存即可启用。</div>';
   renderPlannedTimes();
+  refreshRuleCards();
   schedulePeerLookup();
 }
 
@@ -377,6 +425,7 @@ function paintPeerNames() {
     badge.textContent = entry?.status === 'ok' ? entry.title : entry?.message || (config?.users[selectedAccountIndex]?.sessionReady ? '等待查询…' : '请先登录此账号');
     badge.title = entry?.status === 'ok' ? `${entry.type === 'channel' ? '频道' : '群组'}：${entry.title} · ID ${entry.id}` : entry?.message || '使用当前账号查询会话名称';
   }
+  refreshRuleCards();
 }
 function schedulePeerLookup(delay = 250) {
   clearTimeout(peerLookupTimer);
@@ -388,7 +437,7 @@ async function resolvePeerNames() {
   if (peerLookupRunning || !peerLookupVisible()) return;
   const account = config?.users[selectedAccountIndex]?.session;
   if (!account || !config?.users[selectedAccountIndex]?.sessionReady) return;
-  const peers = [...new Set(peerFields().map(input => input.value.trim()).filter(Boolean))].filter(value => {
+  const peers = [...new Set(peerFields().filter(input => !input.closest('[inert]')).map(input => input.value.trim()).filter(Boolean))].filter(value => {
     const entry = peerNames.get(peerKey(account, value));
     return !entry || entry.expires <= Date.now();
   }).slice(0, 4);
@@ -553,6 +602,7 @@ async function saveConfig() {
     rememberSavedCheckinSettings();
     automationState = data.automation;
     checkinSchedulerState = data.checkinScheduler;
+    RuleCards.collapseAll();
     renderConfig();
     renderAutomationState();
     renderCheckinStatus();
@@ -689,7 +739,9 @@ document.addEventListener('click', event => {
     readEditors();
     const index = Number(addCheckin.dataset.addCheckin);
     config.users[index].checkinSchedules ||= [];
-    config.users[index].checkinSchedules.push({ id:crypto.randomUUID(), enabled:true, repeat:'daily', time:'09:00' });
+    const rule = { id:crypto.randomUUID(), enabled:true, repeat:'daily', time:'09:00' };
+    config.users[index].checkinSchedules.push(rule);
+    RuleCards.open(`checkin:${config.users[index].session}:${rule.id}`);
     renderConfig();
     document.querySelector(`#checkin-config-editor .checkin-rule:last-child input[data-field="time"]`)?.focus();
   }
@@ -798,7 +850,7 @@ window.addEventListener('scroll', () => { closeModeMenu(); closeAutoSelect(); },
 window.addEventListener('resize', () => { closeModeMenu(); closeAutoSelect(); });
 $('#add-account').addEventListener('click', () => { readEditors(); config.users.push({ sourceIndex:-1, name:'', session:'', apiId:'', apiHash:'', hasApiHash:false, sessionReady:false, dialogFolder:'', bots:[], checkinSchedules:[] }); openAccount(config.users.length - 1); $('#account-editor .account-fields input')?.focus(); });
 $('#account-back').addEventListener('click', () => navigate('accounts'));
-$('#add-schedule').addEventListener('click', () => { readEditors(); config.automations.schedules.push({ id:crypto.randomUUID(), enabled:true, account:config.users[selectedAccountIndex]?.session || '', target:'', repeat:'daily', time:'09:00', message:'' }); renderAutomation(); $('#schedule-list article:last-child input[data-field="target"]')?.focus(); });
+$('#add-schedule').addEventListener('click', () => { readEditors(); const rule = { id:crypto.randomUUID(), enabled:true, account:config.users[selectedAccountIndex]?.session || '', target:'', repeat:'daily', time:'09:00', message:'' }; config.automations.schedules.push(rule); RuleCards.open(`message:${rule.id}`); renderAutomation(); $('#schedule-list article:last-child input[data-field="target"]')?.focus(); });
 $('#restart-automation').addEventListener('click', async () => {
   try { const data = await api('/api/automation/restart', { method:'POST', body:'{}' }); automationState = data.automation; renderAutomationState(); toast('自动化已重新启动'); }
   catch (error) { toast(error.message, true); }

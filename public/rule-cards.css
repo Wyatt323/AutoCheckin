@@ -1,0 +1,36 @@
+.rule-card > .automation-card-head,
+.rule-card > .checkin-rule-head { margin-bottom:0; gap:16px; align-items:center; }
+.rule-card-toggle { display:flex; align-items:center; flex:1; min-width:0; gap:12px; padding:3px 0; border:0; border-radius:8px; background:transparent; box-shadow:none; color:var(--ink); text-align:left; cursor:pointer; }
+.rule-card-toggle:hover,.rule-card-toggle:active { background:transparent; box-shadow:none; transform:none; }
+.rule-card-toggle:focus-visible { outline:2px solid var(--ink); outline-offset:5px; }
+.rule-card-heading { display:block; flex:1; min-width:0; }
+.rule-card-toggle .rule-card-heading strong { display:block; font-size:15px; color:var(--ink); line-height:1.6; overflow-wrap:anywhere; }
+.rule-card-toggle .rule-card-heading small { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; margin-top:4px; color:var(--muted); font-size:12px; font-weight:400; line-height:1.7; overflow-wrap:anywhere; }
+.rule-toggle-affordance { display:flex; align-items:center; flex:none; gap:6px; color:var(--muted); font-size:12px; font-weight:600; white-space:nowrap; }
+.rule-toggle-affordance svg { width:18px; height:18px; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; transition:transform .24s ease; }
+.rule-card[data-expanded="true"] .rule-toggle-affordance svg { transform:rotate(180deg); }
+.rule-card-body { display:grid; grid-template-rows:0fr; opacity:0; transition:grid-template-rows .24s ease,opacity .18s ease; }
+.rule-card[data-expanded="true"] > .rule-card-body { grid-template-rows:1fr; opacity:1; }
+.rule-card-content { min-height:0; overflow:clip; }
+.rule-card-content::before { content:""; display:block; height:22px; }
+.rule-card-content > :last-child { margin-bottom:3px; }
+.rule-list-tools { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; padding:2px 2px 4px; }
+.rule-list-tools > small { color:var(--muted); font-size:12px; }
+.rule-list-tools > div { display:flex; gap:16px; }
+.rule-list-tools button { padding:5px 0; background:transparent; border:0; box-shadow:none; cursor:pointer; }
+.rule-list-tools button:disabled { opacity:.4; cursor:default; }
+.rule-card[data-expanded="false"] > .cleanup-rule-runtime { margin-top:14px; padding:12px 14px; }
+.rule-card[data-expanded="false"] > .cleanup-rule-runtime strong { font-size:13px; }
+.rule-card[data-expanded="false"] > [data-red-packet-runtime] small:last-child { display:none; }
+.rule-card[data-expanded="false"] > [data-red-packet-runtime] small { overflow-wrap:anywhere; }
+@media(max-width:720px) {
+  .rule-card > .automation-card-head,.rule-card > .checkin-rule-head { flex-wrap:wrap; gap:14px; }
+  .rule-card-toggle { flex-basis:100%; }
+  .rule-card > .automation-card-head > .automation-card-actions,
+  .rule-card > .checkin-rule-head > .automation-card-actions { flex-basis:100%; margin-left:0; justify-content:flex-end; gap:14px; }
+  .rule-card-toggle .automation-card-symbol { width:34px; height:34px; }
+  .rule-toggle-affordance { gap:2px; font-size:11px; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .rule-card-body,.rule-toggle-affordance svg { transition:none; }
+}

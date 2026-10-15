@@ -82,6 +82,7 @@ function renderFeatureCenter() {
       </div>
     </article>`).join('') : `<div class="automation-empty">${config.users.length ? '还没有规则。点击“添加规则”配置你的监听来源。' : '请先在账号管理中添加并登录 Telegram 账号，再配置插件。'}</div>`;
   renderFeatureStatus();
+  refreshRuleCards();
   scheduleFeatureLookup();
   syncCheckinRoute();
 }
@@ -138,6 +139,7 @@ function renderCheckinCenter() {
   }
   renderCheckinStatus();
   renderRun();
+  refreshRuleCards();
 }
 
 function readCheckinEditors() {
@@ -192,6 +194,7 @@ function paintFeaturePeerNames() {
     badge.textContent = entry?.status === 'ok' ? entry.title : entry?.message || waiting;
     badge.title = entry?.status === 'ok' ? `${entry.title} · ID ${entry.id}` : entry?.message || waiting;
   });
+  refreshRuleCards();
 }
 
 function scheduleFeatureLookup(delay = 250) {
@@ -207,7 +210,7 @@ async function resolveFeaturePeers() {
   let blockedByTask = false;
   const peers = [];
   for (const input of $$(featurePeerSelector)) {
-    if (input.closest('[hidden]')) continue;
+    if (input.closest('[hidden],[inert]')) continue;
     const rule = peerRule(input), value = input.value.trim();
     if (!value || !rule?.account || !config.users.some(user => user.session === rule.account && user.sessionReady)) continue;
     if (runBusy(rule.account)) {blockedByTask=true;continue;}
@@ -244,7 +247,8 @@ $('#close-forward-pin').addEventListener('click',() => {readEditors();featureEdi
 $('#add-forward-pin').addEventListener('click',() => {
   readEditors();
   if (!config.users.length) {toast('先添加 Telegram 账号',true);return;}
-  config.automations.forwardPins.push({id:crypto.randomUUID(),enabled:true,name:'',account:(config.users.find(user => user.sessionReady) || config.users[0]).session,sources:[''],target:'',keywords:[],pinAfterForward:false});
+  const rule = {id:crypto.randomUUID(),enabled:true,name:'',account:(config.users.find(user => user.sessionReady) || config.users[0]).session,sources:[''],target:'',keywords:[],pinAfterForward:false};
+  config.automations.forwardPins.push(rule);RuleCards.open(`forward:${rule.id}`);
   renderFeatureCenter();$('#forward-pin-rules [data-feature-rule]:last-child [data-feature-field="name"]')?.focus();
 });
 $('#feature-forward-logs').addEventListener('click',() => {
@@ -317,7 +321,8 @@ $('#open-zero-speakers').addEventListener('click',()=>{readEditors();checkinEdit
 $('#close-zero-speakers').addEventListener('click',()=>{readEditors();cleanupEditorOpen=false;renderFeatureCenter();});
 $('#add-zero-speakers').addEventListener('click',()=>{
   readEditors();if(!config.users.length){toast('先添加 Telegram 账号',true);return;}
-  config.plugins.zeroSpeakers.push({id:crypto.randomUUID(),name:'',account:(config.users.find(user=>user.sessionReady) || config.users[0]).session,group:''});
+  const rule = {id:crypto.randomUUID(),name:'',account:(config.users.find(user=>user.sessionReady) || config.users[0]).session,group:''};
+  config.plugins.zeroSpeakers.push(rule);RuleCards.open(`cleanup:${rule.id}`);
   renderFeatureCenter();$('#zero-speakers-rules [data-cleanup-rule]:last-child input')?.focus();
 });
 $('#zero-speakers-rules').addEventListener('input',onFeaturePeerInput);
@@ -389,7 +394,8 @@ $('#close-red-packet').addEventListener('click',() => {readEditors();redPacketEd
 $('#add-red-packet').addEventListener('click',() => {
   readEditors();
   if (!config.users.length) {toast('先添加 Telegram 账号',true);return;}
-  config.automations.redPackets.push({id:crypto.randomUUID(),enabled:true,name:'',account:(config.users.find(user => user.sessionReady) || config.users[0]).session,groups:[''],botUsername:'',watchSeconds:120,retryInterval:0.5,buttonKeywords:[],successKeywords:[],emptyKeywords:[]});
+  const rule = {id:crypto.randomUUID(),enabled:true,name:'',account:(config.users.find(user => user.sessionReady) || config.users[0]).session,groups:[''],botUsername:'',watchSeconds:120,retryInterval:0.5,buttonKeywords:[],successKeywords:[],emptyKeywords:[]};
+  config.automations.redPackets.push(rule);RuleCards.open(`packet:${rule.id}`);
   renderFeatureCenter();$('#red-packet-rules [data-red-packet-rule]:last-child [data-red-packet-field="name"]')?.focus();
 });
 $('#red-packet-logs').addEventListener('click',() => {
