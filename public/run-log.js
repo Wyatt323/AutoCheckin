@@ -15,6 +15,7 @@ function filterRunLogs(records, filter, accounts = []) {
     const summaries = new Map();
     const category = run.category || 'checkin';
     if (filter.category && category !== filter.category) continue;
+    if (filter.ruleId && run.ruleId !== filter.ruleId) continue;
     if (filter.account === '__all__' && run.account) continue;
     for (const line of run.lines || []) {
       const account = line.account || run.account;
@@ -51,7 +52,7 @@ function runLogGroupsHtml(rows, accountLabel) {
 }
 if (typeof module !== 'undefined') module.exports = { beijingParts, filterRunLogs };
 if (typeof document !== 'undefined') {
-  let runRecords = [], modalRunId = null, lastRevision = -1, polling = false, logScope = null, lastQuery = null;
+  let runRecords = [], modalRunId = null, lastRevision = -1, polling = false, logScope = null, logRuleScope = null, lastQuery = null;
   const categories = {checkin:'定时任务', message:'定时消息', forward:'监听转发',plugin:'功能插件',red_packet:'抢红包'};
   const dialog = document.createElement('dialog');
   dialog.id = 'run-log-dialog';
@@ -72,17 +73,22 @@ if (typeof document !== 'undefined') {
   filters.addEventListener('submit', event => { event.preventDefault(); renderHistory(); refreshRunLogs(); });
   filters.addEventListener('input', renderHistory);
   filters.addEventListener('change', renderHistory);
-  filters.addEventListener('reset', () => { setTimeout(() => { $('#log-filter-account').value = logScope || ''; renderHistory(); if (typeof UIControls !== 'undefined') UIControls.refresh(); }, 0); });
-  window.setRunLogScope = account => {
+  filters.addEventListener('reset', () => { setTimeout(() => { $('#log-filter-account').value = logScope || ''; $('#log-filter-category').value = logRuleScope?.category || ''; renderHistory(); if (typeof UIControls !== 'undefined') UIControls.refresh(); }, 0); });
+  window.setRunLogScope = (account, rule = null) => {
     logScope = account || null;
+    logRuleScope = rule;
     filters.reset();
     updateAccounts();
     const select = $('#log-filter-account');
     select.value = logScope || '';
     select.disabled = Boolean(logScope);
+    const category = $('#log-filter-category');
+    category.value = rule?.category || '';category.disabled = Boolean(rule);
     const user = config?.users.find(user => user.session === logScope);
-    $('#log-page-title').textContent = logScope ? `${user?.name || logScope} · 运行日志` : '运行日志';
-    $('#log-page-description').textContent = logScope ? '仅显示当前账号的签到、消息、转发与功能插件运行记录。' : '查看全部账号的签到、消息、转发与功能插件运行记录。';
+    $('#log-page-title').textContent = rule ? `${rule.title} · 规则日志` : logScope ? `${user?.name || logScope} · 运行日志` : '运行日志';
+    $('#log-page-description').textContent = rule ? '仅显示此规则的运行记录，自动更新；其他规则的日志不会显示在这里。' : logScope ? '仅显示当前账号的签到、消息、转发与功能插件运行记录。' : '查看全部账号的签到、消息、转发与功能插件运行记录。';
+    accountDialog.querySelector('.kicker').textContent = rule ? 'RULE ACTIVITY' : 'ACCOUNT ACTIVITY';
+    $('#log-scope-hint').textContent = rule?.category === 'checkin' ? '只显示此签到计划的调度记录。旧版未记录规则标识的日志及手动签到请到运行日志查看。' : rule ? '按规则标识筛选所有保留记录；时间以北京时间显示。' : '定时任务包含账号与 Bot 签到（含手动执行）；按每条日志的北京时间筛选。';
     $('#log-back').hidden = !logScope || accountDialog.contains(historyContent);
     $('#log-error').hidden = true;
     // Drop the previous account's result immediately; revision alone is not a scope identity.
@@ -96,6 +102,14 @@ if (typeof document !== 'undefined') {
     setRunLogScope(account);
     if (typeof UIControls !== 'undefined') UIControls.refresh();
     accountDialog.showModal();
+    refreshRunLogs();
+  };
+  window.openRuleLogs = rule => {
+    if (typeof UIControls !== 'undefined') UIControls.close();
+    accountDialog.append(historyContent);
+    setRunLogScope(rule.account, rule);
+    if (typeof UIControls !== 'undefined') UIControls.refresh();
+    if (!accountDialog.open || accountDialog.classList.contains('ui-dialog-closing')) accountDialog.showModal();
     refreshRunLogs();
   };
   const closeAccountLogs = () => {
@@ -142,7 +156,7 @@ if (typeof document !== 'undefined') {
     }
   }
   function renderHistory() {
-    const filter = { date: $('#log-filter-date').value, start: $('#log-filter-start').value, end: $('#log-filter-end').value, account: logScope || $('#log-filter-account').value, status: $('#log-filter-status').value, category:$('#log-filter-category').value };
+    const filter = { date: $('#log-filter-date').value, start: $('#log-filter-start').value, end: $('#log-filter-end').value, account: logScope || $('#log-filter-account').value, status: $('#log-filter-status').value, category:logRuleScope?.category || $('#log-filter-category').value,ruleId:logRuleScope?.id };
     const rows = filterRunLogs(runRecords, filter, config?.users || []);
     $('#log-count').textContent = `${rows.length} 行 · ${new Set(rows.map(row => row.runId)).size} 条记录`;
     const invalid = filter.start && filter.end && filter.start > filter.end;
@@ -166,7 +180,14 @@ if (typeof document !== 'undefined') {
     if (!dialog.open || dialog.classList.contains('ui-dialog-closing')) dialog.showModal();
     renderModal(); refreshRunLogs();
   };
-  const currentQuery = () => (accountDialog.open || currentView === 'activity') && logScope && !dialog.open ? `?account=${encodeURIComponent(logScope)}` : '';
+  const currentQuery = () => {
+    const query = new URLSearchParams();
+    if ((accountDialog.open || currentView === 'activity') && !dialog.open) {
+      if (logScope) query.set('account',logScope);
+      if (logRuleScope) {query.set('category',logRuleScope.category);query.set('ruleId',logRuleScope.id);}
+    }
+    return query.size ? `?${query}` : '';
+  };
   window.refreshRunLogs = async () => {
     if (polling || (!dialog.open && !accountDialog.open && currentView !== 'activity')) return;
     polling = true;

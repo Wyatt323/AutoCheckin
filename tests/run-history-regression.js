@@ -36,8 +36,9 @@ try {
     {time:'2026-10-06T00:00:01Z', text:'beta only', account:'beta'},
     {time:'2026-10-06T00:00:02Z', text:'unknown batch', account:null}
   ];
-  reloaded.appendEvent({account:'alpha', category:'message', message:'message sent', state:'completed'});
-  reloaded.appendEvent({account:'beta', category:'forward', message:'forward failed', level:'error'});
+  batch.ruleId='checkin_rule_1';
+  reloaded.appendEvent({account:'alpha', category:'message',ruleId:'message_rule_1', message:'message sent', state:'completed'});
+  reloaded.appendEvent({account:'beta', category:'forward',ruleId:'forward_rule_1', message:'forward failed', level:'error'});
   reloaded.flush();
   const alpha = reloaded.snapshot({account:'alpha'}).records;
   assert.deepEqual(alpha.flatMap(record => record.lines.map(line => line.text)), ['alpha only', 'message sent']);
@@ -46,6 +47,11 @@ try {
   assert.equal(reloaded.snapshot({category:'forward'}).records[0].state, 'failed');
   assert.equal(reloaded.snapshot({account:'__all__'}).records.length, 1);
   const restored = createRunHistory(root);
+  assert.deepEqual(restored.snapshot({ruleId:'message_rule_1'}).records.map(run=>run.ruleId),['message_rule_1']);
+  assert.equal(restored.snapshot({account:'beta',ruleId:'message_rule_1'}).records.length,0);
+  assert.equal(restored.snapshot({ruleId:'checkin_rule_1'}).records[0].id,batch.id);
+  assert.equal(filterRunLogs(restored.snapshot().records,{ruleId:'message_rule_1'}).length,1);
+  assert.equal(filterRunLogs(restored.snapshot().records,{ruleId:'missing_rule'}).length,0);
   assert.equal(restored.snapshot({account:'alpha',category:'message'}).records[0].lines[0].text, 'message sent');
   assert.equal(restored.latest().id, batch.id, 'automation events do not replace the latest check-in task');
   for(let i=0;i<MAX_EVENTS+1;i++) restored.appendEvent({account:'alpha',category:'forward',message:`event ${i}`});

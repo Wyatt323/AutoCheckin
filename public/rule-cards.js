@@ -61,6 +61,10 @@
       card.dataset.ruleKey = key;
       card.classList.add('rule-card');
       setExpanded(card, expanded.get(key) === true, false);
+      const footer = document.createElement('div');
+      footer.className = 'rule-card-footer';
+      footer.innerHTML = '<small data-rule-save-status role="status"></small><div class="rule-card-buttons"><button type="button" class="outline-btn" data-rule-logs>规则日志</button><button type="button" class="primary-btn" data-rule-save>保存规则</button></div>';
+      card.append(footer);
     }
     const heading = card.querySelector('[data-rule-title]');
     if (heading.textContent !== title) heading.textContent = title;
@@ -96,6 +100,12 @@
   window.RuleCards = {
     enhance,
     open: key => expanded.set(key, true),
+    collapse(key) {
+      expanded.set(key, false);
+      document.querySelectorAll('[data-rule-key]').forEach(card => {
+        if (card.dataset.ruleKey === key) {setExpanded(card, false);updateTools(card.parentElement);}
+      });
+    },
     collapseAll() {
       expanded.clear();
       document.querySelectorAll('[data-rule-key]').forEach(card => setExpanded(card, false, false));

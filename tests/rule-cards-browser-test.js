@@ -5,7 +5,8 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   const {chromium}=require(process.env.PLAYWRIGHT_MODULE);
   const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined});
   try {
-    const page=await browser.newPage({viewport:{width:1440,height:1100},reducedMotion:'reduce'}),errors=[],saves=[];
+    const page=await browser.newPage({viewport:{width:1440,height:1100},reducedMotion:'reduce'}),errors=[],saves=[],queries=[];
+    let saveFailure=false,releaseSave=null,holdSave=false;
     page.on('pageerror',error=>errors.push(error.message));
     let stored={telegram:{apiId:'',hasApiHash:false},model:'',providers:[],users:['Labubu','second'].map((session,index)=>({
       name:session,session,sourceIndex:index,sessionReady:true,apiId:'',hasApiHash:false,botSource:'configured',dialogFolder:'',
@@ -20,6 +21,21 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
       const url=new URL(route.request().url()),json=body=>route.fulfill({contentType:'application/json',body:JSON.stringify(body)});
       if(url.pathname==='/api/state')return json(url.searchParams.get('config')==='0' ? status : {...status,config:stored});
       if(url.pathname==='/api/config'){stored=route.request().postDataJSON();saves.push(structuredClone(stored));return json({...status,config:stored});}
+      if(url.pathname==='/api/rules'){
+        const input=route.request().postDataJSON();
+        if(saveFailure)return route.fulfill({status:400,contentType:'application/json',body:JSON.stringify({error:'offline validation error'})});
+        if(holdSave)await new Promise(resolve=>releaseSave=resolve);
+        const list=input.kind==='checkin' ? stored.users.find(user=>user.session===input.account).checkinSchedules : input.kind==='cleanup' ? stored.plugins.zeroSpeakers : stored.automations[({packet:'redPackets',forward:'forwardPins',message:'schedules'})[input.kind]];
+        const index=list.findIndex(rule=>rule.id===input.id);
+        if(route.request().method()==='DELETE')list.splice(index,1);
+        else if(index<0)list.push(input.rule);else list[index]=input.rule;
+        saves.push(input);return json({...status,rule:input.rule || null});
+      }
+      if(url.pathname==='/api/runs'){
+        queries.push(url.search);
+        // Deliberately return unrelated records too: browser filters must still isolate the rule.
+        return json({revision:1,records:['packet_1','packet_2'].map((ruleId,index)=>({id:'run_'+index,ruleId,account:'Labubu',category:'red_packet',state:'completed',trigger:'automatic',lines:[{time:'2026-10-15T00:00:00Z',stream:'system',text:'only '+ruleId}]}))});
+      }
       if(url.pathname==='/api/accounts/chats/resolve')return json({results:route.request().postDataJSON().peers.map(value=>({value,status:'ok',title:value==='-1001234567' ? '示例红包群' : '示例频道',id:-1001234567,type:'group'}))});
       if(url.pathname.startsWith('/api/'))return json({login:{active:false,state:'idle'},records:[],revision:0});
       const file=url.pathname==='/' ? 'index.html' : url.pathname.slice(1);
@@ -31,7 +47,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     const screenshot=async name=>{if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,name+'.png'),fullPage:true});};
     const toggle=card=>card.locator('[data-rule-toggle]');
     const isOpen=async(card,value)=>assert.equal(await toggle(card).getAttribute('aria-expanded'),String(value));
-    const save=async selector=>{await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/config')&&r.request().method()==='POST'),page.locator(selector+' .save-btn:visible').first().click()]);await page.locator('#toast').filter({hasText:'配置已保存'}).waitFor();};
+    const save=async card=>{await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/rules')&&r.request().method()==='POST'),card.locator('[data-rule-save]').click()]);await card.locator('[data-rule-save]').waitFor({state:'visible'});await page.waitForFunction(()=>!savingConfig);};
     const catalog=async close=>{await page.locator(close).click();await page.locator('#feature-catalog').waitFor();};
     const noOverflow=async()=>assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'rules fit mobile viewport');
     await page.goto('https://autocheckin-offline.test/#features');
@@ -63,7 +79,10 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     await page.locator('#add-red-packet').click();
     const added=packets.locator('[data-red-packet-rule]').last();await isOpen(added,true);await isOpen(first,false);
     await added.locator('[data-red-packet-field="name"]').fill('新规则');await added.locator('[data-red-packet-group]').fill('@new_group');
-    await save('#red-packet-editor');await isOpen(added,false);
+    await save(added);await isOpen(added,false);
+    assert.equal(stored.automations.redPackets[0].name,'牛币群红包','saving new rule leaves another draft uncommitted');
+    assert.equal(await first.locator('[data-red-packet-field="name"]').inputValue(),'牛币群红包 · 已修改','another draft survives rerender');
+    await save(first);await isOpen(first,false);
     assert.equal(stored.automations.redPackets[0].name,'牛币群红包 · 已修改');assert.equal(stored.automations.redPackets[0].enabled,false);
     assert.equal(stored.automations.redPackets[0].watchSeconds,180);assert.deepEqual(stored.automations.redPackets[0].buttonKeywords,['领取红包','领取']);
     assert.deepEqual(stored.automations.redPackets[0].groups,['-1001234567','@another_group']);
@@ -73,13 +92,13 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     assert.match(await toggle(forward).innerText(),/重要通知同步/);await toggle(forward).click();
     await forward.locator('[data-feature-add-keyword]').click();await isOpen(forward,true);
     await forward.locator('[data-feature-keyword]').last().fill('测试');await toggle(forward).click();await toggle(forward).click();
-    assert.equal(await forward.locator('[data-feature-keyword]').last().inputValue(),'测试');await save('#forward-pin-editor');await isOpen(forward,false);
+    assert.equal(await forward.locator('[data-feature-keyword]').last().inputValue(),'测试');await save(forward);await isOpen(forward,false);
     await catalog('#close-forward-pin');await page.locator('#open-zero-speakers').click();
     const cleanup=page.locator('[data-cleanup-rule]').first();await isOpen(cleanup,false);
     assert.ok(await cleanup.locator('[data-cleanup-run]').isVisible(),'cleanup actions remain visible when folded');
     await toggle(cleanup).click();await cleanup.locator('[data-cleanup-field="name"]').fill('检查任务草稿');
     await toggle(cleanup).click();await toggle(cleanup).click();assert.equal(await cleanup.locator('[data-cleanup-field="name"]').inputValue(),'检查任务草稿');
-    await save('#zero-speakers-editor');await isOpen(cleanup,false);
+    await save(cleanup);await isOpen(cleanup,false);
     await catalog('#close-zero-speakers');await page.locator('#open-checkin').click();await page.locator('[data-checkin-section="checkins"]').click();
     const checkin=page.locator('.checkin-rule').first();await isOpen(checkin,false);await toggle(checkin).click();
     await page.selectOption('.checkin-rule [data-field="timeMode"]','random');await isOpen(checkin,true);
@@ -88,7 +107,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     await page.selectOption('#checkin-account-choice','1');await isOpen(checkin,false);
     await page.selectOption('#checkin-account-choice','0');await isOpen(checkin,false);
     await toggle(checkin).click();assert.equal(await checkin.locator('[data-field="rangeEnd"]').inputValue(),'12:13:14');
-    await save('#checkin-plugin-editor');await isOpen(checkin,false);
+    await save(checkin);await isOpen(checkin,false);
     assert.equal(stored.users[1].checkinSchedules[0].time,'09:30:15','other account schedules are untouched');
     await page.locator('#checkin-account-settings').click();await page.locator('[data-account-section="messages"]').click();
     const message=page.locator('#schedule-list article').first();await isOpen(message,false);await toggle(message).click();
@@ -97,10 +116,24 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     await message.locator('[data-field="time"]').fill('2029-01-02T10:20:31');
     await message.locator('[data-field="message"]').fill('修改消息\n完整保留');
     await toggle(message).click();await toggle(message).click();assert.equal(await message.locator('[data-field="message"]').inputValue(),'修改消息\n完整保留');
-    await save('#account-detail');await isOpen(message,false);assert.equal(stored.automations.schedules[0].message,'修改消息\n完整保留');
+    await save(message);await isOpen(message,false);assert.equal(stored.automations.schedules[0].message,'修改消息\n完整保留');
     await page.setViewportSize({width:390,height:844});await noOverflow();await toggle(message).click();await noOverflow();
     await page.locator('[data-view="features"]').click();await page.locator('#close-checkin').click();await page.locator('#open-red-packet').click();
     await noOverflow();await screenshot('rule-cards-mobile-collapsed');
+    await first.locator('[data-rule-logs]').click();
+    await page.locator('#account-log-dialog[open]').waitFor();
+    await page.waitForFunction(()=>document.querySelector('#log-console').textContent.includes('only packet_1'));
+    assert.doesNotMatch(await page.locator('#log-console').innerText(),/packet_2/);
+    assert.ok(queries.some(query=>query.includes('ruleId=packet_1')&&query.includes('category=red_packet')));
+    assert.equal(await page.locator('#log-filter-category').isDisabled(),true);
+    await page.locator('#log-filters button[type="reset"]').click();
+    await page.waitForTimeout(50);
+    assert.equal(await page.locator('#log-filter-category').inputValue(),'red_packet');
+    await page.locator('#account-log-close').click();await page.locator('#account-log-dialog[open]').waitFor({state:'hidden'});
+    await packets.locator('[data-red-packet-rule]').nth(1).locator('[data-rule-logs]').click();
+    await page.waitForFunction(()=>document.querySelector('#log-console').textContent.includes('only packet_2'));
+    assert.doesNotMatch(await page.locator('#log-console').innerText(),/packet_1/);
+    await page.locator('#account-log-close').click();await page.locator('#account-log-dialog[open]').waitFor({state:'hidden'});
     await toggle(first).click();await noOverflow();await screenshot('rule-cards-mobile-expanded');
     await page.setViewportSize({width:1440,height:1100});await screenshot('rule-cards-desktop-expanded');
     await page.emulateMedia({reducedMotion:'no-preference'});
@@ -108,7 +141,27 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     await toggle(first).click();await page.waitForTimeout(300);
     assert.equal(await first.locator('.rule-card-body').evaluate(el=>el.getBoundingClientRect().height),0);
     await page.reload();await page.locator('#open-red-packet').click();await isOpen(first,false);
+    await toggle(first).click();
+    await first.locator('[data-red-packet-field="name"]').fill('未通过校验的草稿');saveFailure=true;
+    await first.locator('[data-rule-save]').click();await page.locator('#toast').filter({hasText:'offline validation error'}).waitFor();
+    await isOpen(first,true);assert.equal(await first.locator('[data-red-packet-field="name"]').inputValue(),'未通过校验的草稿');
+    saveFailure=false;holdSave=true;
+    const saving=save(first);
+    await first.locator('[data-rule-save-status]').filter({hasText:'正在保存…'}).waitFor();
+    while(!releaseSave)await new Promise(resolve=>setTimeout(resolve,10));
+    await first.locator('[data-red-packet-field="name"]').fill('请求期间继续编辑');
+    holdSave=false;releaseSave();await saving;
+    await isOpen(first,true);
+    assert.equal(await first.locator('[data-red-packet-field="name"]').inputValue(),'请求期间继续编辑');
+    assert.equal(stored.automations.redPackets[0].name,'未通过校验的草稿');
+    assert.match(await first.locator('[data-rule-save-status]').innerText(),/未保存/);
+    const second=packets.locator('[data-red-packet-rule]').nth(1);
+    await second.locator('[data-red-packet-remove]').click();await page.locator('.ui-confirm-dialog[open] .primary-btn').click();
+    await page.waitForFunction(()=>!document.querySelector('[data-red-packet-rule="packet_2"]'));
+    assert.equal(stored.automations.redPackets.length,2,'deleting a saved rule persists without saving other drafts');
+    assert.equal(stored.automations.redPackets[0].name,'未通过校验的草稿');
+    assert.equal(await first.locator('[data-red-packet-field="name"]').inputValue(),'请求期间继续编辑');
     assert.deepEqual(errors,[]);
-    console.log('Rule cards PASS: all five editors, saved/new defaults, keyboard/inert, drafts and polling, rerenders/account switching, bulk controls, saved payloads, runtime visibility, animation and mobile layout');
+    console.log('Rule cards PASS: all five editors, scoped save/delete, sibling drafts, failed/in-flight save edits, rule log isolation/reset, folded actions, keyboard/inert, polling, animation and mobile layout');
   }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

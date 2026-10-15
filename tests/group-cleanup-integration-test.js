@@ -118,7 +118,7 @@ for _ in range(900):
       const secondActive=(await runs(admin)).find(run=>run.ruleId==='cleanup_admin_002' && run.state==='running');
       await request('/api/features/zero-speakers/stop',admin,{id:secondActive.id});await page.reload();await page.locator('#open-zero-speakers').click();
       await card.locator('[data-cleanup-runtime]').filter({hasText:'等待执行账号'}).waitFor();
-      await card.locator('[data-cleanup-log]').click();await page.locator('#run-log-output').filter({hasText:'正在查看0发言人数'}).waitFor();await page.locator('#run-log-close').click();
+      await card.locator('[data-rule-logs]').click();await page.locator('#log-console').filter({hasText:'正在查看0发言人数'}).waitFor();await page.locator('#account-log-close').click();
       for(const width of [1440,1024,390,320]) {await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`cleanup fits ${width}px`);}
       if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR) {
         await page.waitForFunction(()=>!document.querySelector('#toast').classList.contains('show'));

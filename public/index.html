@@ -92,24 +92,24 @@
             <button class="account-back" id="close-forward-pin" type="button">← 返回功能列表</button>
             <div class="page-heading"><div><span class="kicker">LISTEN · FORWARD · PIN</span><h2 id="forward-pin-title">监听转发并置顶</h2><p>每条规则选择一个执行账号，监听一个或多个来源，并转发到指定目标。</p></div><button class="outline-btn" id="add-forward-pin" type="button">＋ 添加规则</button></div>
             <div class="notice feature-plugin-notice"><span>ⓘ</span><div><p>关键词命中任意一个即可转发，忽略大小写；不填关键词则转发全部新消息，支持文字及媒体说明。</p><p>执行账号需能访问来源并向目标发送消息；开启置顶还需要目标会话的置顶权限。签到与监听可同时运行；登录或群清理时监听会暂停。</p></div></div>
-            <div class="feature-plugin-runtime"><span id="feature-runtime-status" role="status">读取运行状态…</span><button class="outline-btn" id="feature-forward-logs" type="button">查看转发日志</button></div>
+            <div class="feature-plugin-runtime"><span id="feature-runtime-status" role="status">读取运行状态…</span></div>
             <div id="forward-pin-rules" class="automation-list"></div>
-            <div class="bottom-save"><small>保存后自动应用规则，配置与日志仅属于当前用户。</small><button class="primary-btn save-btn" type="button">保存插件规则</button></div>
+            <p class="rule-page-hint">每条规则独立保存，在卡片内查看该规则的运行日志。</p>
           </section>
           <section id="red-packet-editor" hidden aria-labelledby="red-packet-title">
             <button class="account-back" id="close-red-packet" type="button">← 返回功能列表</button>
             <div class="page-heading"><div><span class="kicker">RED PACKET MONITOR</span><h2 id="red-packet-title">抢红包</h2><p>选择执行账号与监听群组，保存规则后开始监听。</p></div><button class="outline-btn" id="add-red-packet" type="button">＋ 添加规则</button></div>
             <div class="notice feature-plugin-notice"><span>ⓘ</span><div><p>发现 /red 后临时刷新，优先响应新消息与消息编辑；领取成功、已领取或红包领完后停止本轮，继续监听。</p><p>仅点击匹配的领取按钮。等待超时自动结束；遇到 Telegram 限流会等待。签到与监听可同时运行；登录或群清理时监听会暂停。</p></div></div>
-            <div class="feature-plugin-runtime"><span id="red-packet-runtime-status" role="status">读取运行状态…</span><button class="outline-btn" id="red-packet-logs" type="button">查看红包日志</button></div>
+            <div class="feature-plugin-runtime"><span id="red-packet-runtime-status" role="status">读取运行状态…</span></div>
             <div id="red-packet-rules" class="automation-list"></div>
-            <div class="bottom-save"><small>保存后自动应用规则，配置与日志仅属于当前用户。</small><button class="primary-btn save-btn" type="button">保存插件规则</button></div>
+            <p class="rule-page-hint">每条规则独立保存，在卡片内查看该规则的运行日志。</p>
           </section>
           <section id="zero-speakers-editor" hidden aria-labelledby="zero-speakers-title">
             <button class="account-back" id="close-zero-speakers" type="button">← 返回功能列表</button>
             <div class="page-heading"><div><span class="kicker">GROUP MEMBER CLEANUP</span><h2 id="zero-speakers-title">清理0发言群员</h2><p>保存规则后手动启动检测，清理操作由执行账号在 Telegram 群内确认。</p></div><button class="outline-btn" id="add-zero-speakers" type="button">＋ 添加规则</button></div>
             <div class="notice feature-plugin-notice"><span>ⓘ</span><div><p>按执行账号可访问且未删除的群历史判断“0发言”，无法确认不可见或已删除的历史。Excel 会注明检测范围；执行账号和管理员不清理。</p><p>需要群管理员及移除成员权限。报告发出后，由执行账号在同一群发送“是”或“否”，其他成员回复无效；30分钟未确认会自动取消。</p><p>检测与等待确认期间会占用此 TG 账号，消息自动化暂停；其他账号仍可签到。成员移出后解除个人限制，下次进群沿用群原有申请规则。</p></div></div>
             <div id="zero-speakers-rules" class="automation-list"></div>
-            <div class="bottom-save"><small>配置按用户独立保存；启动检测前自动保存当前配置。</small><button class="primary-btn save-btn" type="button">保存插件规则</button></div>
+            <p class="rule-page-hint">每条规则独立保存；启动检测前只保存本条规则。</p>
           </section>
         </section>
         <section class="view" id="view-ai">

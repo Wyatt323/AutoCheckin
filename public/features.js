@@ -251,9 +251,6 @@ $('#add-forward-pin').addEventListener('click',() => {
   config.automations.forwardPins.push(rule);RuleCards.open(`forward:${rule.id}`);
   renderFeatureCenter();$('#forward-pin-rules [data-feature-rule]:last-child [data-feature-field="name"]')?.focus();
 });
-$('#feature-forward-logs').addEventListener('click',() => {
-  navigate('activity');$('#log-filter-category').value='forward';$('#log-filter-category').dispatchEvent(new Event('change',{bubbles:true}));
-});
 $('#forward-pin-rules').addEventListener('click',async event => {
   const card = event.target.closest('[data-feature-rule]');
   if (!card) return;
@@ -265,8 +262,7 @@ $('#forward-pin-rules').addEventListener('click',async event => {
   const button = event.target.closest('button');
   if (!button) return;
   if (button.hasAttribute('data-feature-remove')) {
-    if (!await UIControls.confirm({title:'删除插件规则',message:'删除后需保存才会停止此规则。',confirmText:'删除规则'})) return;
-    config.automations.forwardPins=featureRules().filter(item => item.id !== rule.id);
+    await deleteRuleConfig(card);return;
   } else if (button.hasAttribute('data-feature-add-source')) {
     if (rule.sources.length >= 20) {toast('每条规则最多 20 个来源',true);return;} rule.sources.push('');
   } else if (button.hasAttribute('data-feature-remove-source')) {
@@ -295,7 +291,7 @@ function renderCleanupCenter() {
   $('#zero-speakers-editor').hidden=!cleanupEditorOpen;
   $('#zero-speakers-count').textContent=cleanupRules().length ? `${cleanupRules().length} 条规则 · 手动启动` : '尚无规则';
   $('#add-zero-speakers').disabled=!config.users.length;
-  $('#zero-speakers-rules').innerHTML=cleanupRules().map((rule,index)=>`<article class="automation-card feature-rule" data-cleanup-rule="${escapeHtml(rule.id)}"><div class="automation-card-head"><div class="automation-card-symbol">${lineIcon('account')}</div><div><strong>${escapeHtml(rule.name || `清理规则 ${index+1}`)}</strong><small>检测 → Excel 报告 → 群内确认 → 清理</small></div><div class="automation-card-actions"><button class="delete-btn" type="button" data-cleanup-remove>删除规则</button></div></div><div class="auto-field-grid"><label class="auto-field"><span>规则名称</span><input data-cleanup-field="name" value="${escapeHtml(rule.name || '')}" maxlength="80" placeholder="例如 交流群成员清理"></label><label class="auto-field"><span>执行 TG 账号</span>${cleanupAccountSelect(rule)}</label><label class="auto-field wide"><span>目标群组</span>${featurePeerInput(rule.group,'目标群组','data-cleanup-field="group"')}<small>支持普通群组和超级群组。请使用有移除成员权限的管理员账号。</small></label></div><div class="cleanup-rule-runtime" data-cleanup-runtime></div><div class="cleanup-rule-actions"><button class="primary-btn" type="button" data-cleanup-run>启动检测</button><button class="outline-btn" type="button" data-cleanup-log hidden>运行日志</button><button class="outline-btn" type="button" data-cleanup-stop hidden>停止任务</button><a class="outline-btn" data-cleanup-report hidden>下载 Excel</a></div></article>`).join('') || `<div class="automation-empty">${config.users.length ? '点击“添加规则”，选择账号与需要检测的群组。' : '请先添加并登录 Telegram 账号。'}</div>`;
+  $('#zero-speakers-rules').innerHTML=cleanupRules().map((rule,index)=>`<article class="automation-card feature-rule" data-cleanup-rule="${escapeHtml(rule.id)}"><div class="automation-card-head"><div class="automation-card-symbol">${lineIcon('account')}</div><div><strong>${escapeHtml(rule.name || `清理规则 ${index+1}`)}</strong><small>检测 → Excel 报告 → 群内确认 → 清理</small></div><div class="automation-card-actions"><button class="delete-btn" type="button" data-cleanup-remove>删除规则</button></div></div><div class="auto-field-grid"><label class="auto-field"><span>规则名称</span><input data-cleanup-field="name" value="${escapeHtml(rule.name || '')}" maxlength="80" placeholder="例如 交流群成员清理"></label><label class="auto-field"><span>执行 TG 账号</span>${cleanupAccountSelect(rule)}</label><label class="auto-field wide"><span>目标群组</span>${featurePeerInput(rule.group,'目标群组','data-cleanup-field="group"')}<small>支持普通群组和超级群组。请使用有移除成员权限的管理员账号。</small></label></div><div class="cleanup-rule-runtime" data-cleanup-runtime></div><div class="cleanup-rule-actions"><button class="primary-btn" type="button" data-cleanup-run>启动检测</button><button class="outline-btn" type="button" data-cleanup-stop hidden>停止任务</button><a class="outline-btn" data-cleanup-report hidden>下载 Excel</a></div></article>`).join('') || `<div class="automation-empty">${config.users.length ? '点击“添加规则”，选择账号与需要检测的群组。' : '请先添加并登录 Telegram 账号。'}</div>`;
   renderCleanupStatus();
 }
 function renderCleanupStatus(runs = cleanupRuns) {
@@ -311,9 +307,8 @@ function renderCleanupStatus(runs = cleanupRuns) {
     const counts=progress.total!==undefined ? `群成员 ${progress.total} 人 · 0发言 ${progress.zeroCount ?? '检测中'} 人${progress.eligibleCount!==undefined ? ' · 可清理 '+progress.eligibleCount+' 人' : ''}` : progress.scanned ? `已扫描 ${progress.scanned} 条历史消息` : '启动检测后，会先向群内发送检测提示。';
     card.querySelector('[data-cleanup-runtime]').innerHTML=`<strong>${escapeHtml(label)}</strong><small>${escapeHtml(counts)}${run ? ' · '+escapeHtml(formatDate(run.startedAt)) : ''}</small>${progress.removed ? `<small>已移出 ${Number(progress.removed)} 人 · 跳过 ${Number(progress.skipped || 0)} 人 · 失败 ${Number(progress.failed || 0)} 人</small>` : ''}`;
     card.querySelector('[data-cleanup-run]').disabled=active || cleanupStarting.has(rule?.id) || runBusy(rule?.account) || savingConfig || !config.users.some(user=>user.session===rule?.account && user.sessionReady);
-    const log=card.querySelector('[data-cleanup-log]');log.hidden=!run;log.dataset.runId=run?.id || '';
     const stop=card.querySelector('[data-cleanup-stop]');stop.hidden=!active;stop.disabled=run?.state==='stopping';stop.dataset.runId=run?.id || '';
-    card.querySelector('[data-cleanup-remove]').disabled=active;
+    card.querySelector('[data-cleanup-remove]').disabled=Boolean(active || savingConfig || runBusy() || (typeof loginState !== 'undefined' && loginState?.active));
     const report=card.querySelector('[data-cleanup-report]');report.hidden=!progress.reportReady;report.href=run ? '/api/features/zero-speakers/report?id='+encodeURIComponent(run.id) : '#';
   });
 }
@@ -334,18 +329,15 @@ $('#zero-speakers-rules').addEventListener('click',async event=>{
   const id=card.dataset.cleanupRule;
   try {
     if(button.hasAttribute('data-cleanup-remove')) {
-      if(!await UIControls.confirm({title:'删除清理规则',message:'删除配置后需保存。已生成的报告和运行记录仍会保留。',confirmText:'删除规则'}))return;
-      readEditors();config.plugins.zeroSpeakers=cleanupRules().filter(rule=>rule.id!==id);renderFeatureCenter();
+      await deleteRuleConfig(card);
     }else if(button.hasAttribute('data-cleanup-run')) {
       cleanupStarting.add(id);renderCleanupStatus();
       readEditors();
       if(runBusy()) {
         if(savedCleanupRules.get(id)!==cleanupSignature(cleanupRule(id)))throw Error('当前有其他任务运行，请先等待结束并保存此规则；已保存且未修改的规则可以并行启动。');
-      }else if(!await saveConfig())return;
+      }else if(!await saveRuleConfig(card))return;
       const data=await api('/api/features/zero-speakers/run',{method:'POST',body:JSON.stringify({ruleId:id})});
       cleanupRuns.push(data.run);renderCleanupStatus();await poll();toast('检测已启动，请在目标群查看报告并确认');
-    }else if(button.hasAttribute('data-cleanup-log')) {
-      const run=cleanupRuns.find(run=>run.id===button.dataset.runId);if(run)openRunLog(run);
     }else if(button.hasAttribute('data-cleanup-stop')) {
       if(!await UIControls.confirm({title:'停止清理任务',message:'确定停止本次任务？已经移出的成员不会重新加入，后续成员将停止处理。',confirmText:'停止任务'}))return;
       await api('/api/features/zero-speakers/stop',{method:'POST',body:JSON.stringify({id:button.dataset.runId})});await poll();
@@ -385,7 +377,7 @@ function renderRedPacketStatus() {
     const sum=key=>groups.reduce((value,group)=>value+Number(group[key] || 0),0);
     const last=Math.max(0,...groups.map(group=>Number(group.lastReceivedAt || 0)));
     const active=automationState?.status==='running' && groups.length;
-    const label=rule.enabled===false ? '规则已关闭 · 保存后生效' : active ? `已连接 ${groups.length} 个群组` : automationState?.status==='starting' ? '正在连接，请稍候' : '尚未确认群组连接，请查看红包日志';
+    const label=rule.enabled===false ? savedRuleSettings.get(`packet:${rule.id}`) === ruleSignature(rule) ? '规则已关闭' : '规则已关闭 · 保存后生效' : active ? `已连接 ${groups.length} 个群组` : automationState?.status==='starting' ? '正在连接，请稍候' : '尚未确认群组连接，请查看规则日志';
     element.innerHTML=`<strong>${escapeHtml(label)}</strong><small>已接收 ${sum('received')} 条实时消息 · /red ${sum('commands')} 次 · 红包按钮 ${sum('packets')} 个 · 备用检查 ${sum('fallbackChecks')} 次${last ? ' · 最近接收 '+escapeHtml(formatDate(new Date(last*1000).toISOString())) : ''}</small><small>运行状态对应已保存规则。未收到指令时，也会检测新红包按钮；无实时消息时每 5 秒补充检查新消息。</small>`;
   });
 }
@@ -398,16 +390,12 @@ $('#add-red-packet').addEventListener('click',() => {
   config.automations.redPackets.push(rule);RuleCards.open(`packet:${rule.id}`);
   renderFeatureCenter();$('#red-packet-rules [data-red-packet-rule]:last-child [data-red-packet-field="name"]')?.focus();
 });
-$('#red-packet-logs').addEventListener('click',() => {
-  navigate('activity');$('#log-filter-category').value='red_packet';$('#log-filter-category').dispatchEvent(new Event('change',{bubbles:true}));
-});
 $('#red-packet-rules').addEventListener('click',async event => {
   const button=event.target.closest('button'),card=event.target.closest('[data-red-packet-rule]');
   if (!button || !card) return;
   readEditors();const rule=redPacketRule(card.dataset.redPacketRule);if (!rule) return;
   if (button.hasAttribute('data-red-packet-remove')) {
-    if (!await UIControls.confirm({title:'删除红包规则',message:'删除后需保存才会停止此规则。',confirmText:'删除规则'})) return;
-    config.automations.redPackets=redPacketRules().filter(item => item.id!==rule.id);
+    await deleteRuleConfig(card);return;
   } else if (button.hasAttribute('data-red-packet-add-group')) {
     if (rule.groups.length>=20) {toast('每条规则最多 20 个群组',true);return;}rule.groups.push('');
   } else if (button.hasAttribute('data-red-packet-remove-group')) {

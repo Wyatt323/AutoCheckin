@@ -26,6 +26,7 @@ let openModeIndex = null;
 let automationState = null;
 let checkinSchedulerState = null;
 let savedCheckinSettings = new Map();
+let savedRuleSettings = new Map(), savingRuleKey = null;
 let openAutoSelect = null;
 let selectedAccountIndex = null;
 let accountSection = 'settings';
@@ -317,6 +318,7 @@ function checkinSettingsSignature(user) {
 
 function rememberSavedCheckinSettings() {
   savedCheckinSettings = new Map(config.users.map(user => [user.session, checkinSettingsSignature(user)]));
+  savedRuleSettings = new Map(allRuleContexts().map(context => [context.key, ruleSignature(context.rule)]));
   if(typeof rememberSavedCleanupSettings === 'function')rememberSavedCleanupSettings();
 }
 
@@ -384,7 +386,99 @@ function refreshRuleCards() {
       : `${rule.groups?.filter(Boolean).length || 0} 个群组 · ${(rule.groups || []).filter(Boolean).slice(0,2).map(value => peerLabel(rule.account,value)).join('、') || '待设置群组'} · ${rule.botUsername || '/red 自动领取'}`;
     RuleCards.enhance(card, {key:`${kind}:${rule.id}`,title:rule.name || `${label} ${index + 1}`,summary:`${accountLabel(rule.account)} · ${detail}`});
   });
+  renderRuleActions();
 }
+
+function allRuleContexts() {
+  if (!config) return [];
+  const result = [];
+  for (const [kind,list] of [['packet',config.automations.redPackets],['forward',config.automations.forwardPins],['message',config.automations.schedules],['cleanup',config.plugins?.zeroSpeakers]]) {
+    for (const rule of list || []) result.push({kind,id:rule.id,rule,list,key:`${kind}:${rule.id}`});
+  }
+  for (const user of config.users) for (const rule of user.checkinSchedules || []) {
+    result.push({kind:'checkin',id:rule.id,account:user.session,rule,list:user.checkinSchedules,key:`checkin:${user.session}:${rule.id}`});
+  }
+  return result;
+}
+// Stable key order avoids marking a rule dirty when a form reconstructs its object.
+function ruleSignature(rule) { return JSON.stringify(rule,Object.keys(rule).sort()); }
+function ruleContext(card) { return allRuleContexts().find(context => context.key === card?.dataset.ruleKey); }
+function renderRuleActions() {
+  const blocked = savingConfig || runBusy() || (typeof loginState !== 'undefined' && loginState?.active);
+  const contexts = new Map(allRuleContexts().map(context => [context.key,context]));
+  $$('[data-rule-key]').forEach(card => {
+    const context = contexts.get(card.dataset.ruleKey);if (!context) return;
+    const dirty = savedRuleSettings.get(context.key) !== ruleSignature(context.rule);
+    const label = savingRuleKey === context.key ? '正在保存…' : dirty ? '未保存 · 仅保存此规则' : '已保存';
+    const status = card.querySelector('[data-rule-save-status]');
+    if (status.textContent !== label) status.textContent = label;
+    status.dataset.dirty = String(dirty);
+    card.querySelector('[data-rule-save]').disabled = Boolean(blocked);
+    card.querySelectorAll('[data-feature-remove],[data-red-packet-remove],[data-cleanup-remove],[data-delete="schedule"],[data-delete="checkin"]').forEach(button => {button.disabled=Boolean(blocked);});
+  });
+}
+function rememberSavedRule(context, rule) {
+  if (rule) savedRuleSettings.set(context.key,ruleSignature(rule));else savedRuleSettings.delete(context.key);
+  if (context.kind === 'cleanup') {
+    if (rule) savedCleanupRules.set(context.id,cleanupSignature(rule));else savedCleanupRules.delete(context.id);
+  }
+  if (context.kind === 'checkin' && savedCheckinSettings.has(context.account)) {
+    const saved = JSON.parse(savedCheckinSettings.get(context.account));
+    saved.schedules = saved.schedules.filter(([id]) => id !== context.id);
+    if (rule) saved.schedules.push([rule.id,rule.enabled !== false]);
+    // Preserve configured order for the existing account-status comparison.
+    const order = context.list.map(item => item.id);
+    saved.schedules.sort((a,b) => order.indexOf(a[0])-order.indexOf(b[0]));
+    savedCheckinSettings.set(context.account,JSON.stringify(saved));
+  }
+}
+async function saveRuleConfig(card) {
+  if (savingConfig) return false;
+  readEditors();
+  const context = ruleContext(card);if (!context) return false;
+  const snapshot = structuredClone(context.rule);
+  savingConfig = true;savingRuleKey = context.key;renderRun();renderRuleActions();
+  try {
+    const data = await api('/api/rules',{method:'POST',body:JSON.stringify({kind:context.kind,id:context.id,account:context.account,rule:snapshot})});
+    readEditors();
+    const current = allRuleContexts().find(item => item.key === context.key);
+    const changed = current && ruleSignature(current.rule) !== ruleSignature(snapshot);
+    if (current && !changed) current.list[current.list.indexOf(current.rule)] = data.rule;
+    rememberSavedRule(context,data.rule);
+    automationState=data.automation;checkinSchedulerState=data.checkinScheduler;
+    if (!changed) RuleCards.collapse(context.key);
+    renderConfig();renderAutomationState();renderCheckinStatus();
+    toast(changed ? '规则已保存，后续修改尚未保存' : '规则已保存');
+    return true;
+  } catch (error) {toast(error.message,true);return false;}
+  finally {savingConfig=false;savingRuleKey=null;renderRun();renderRuleActions();}
+}
+async function deleteRuleConfig(card) {
+  if (savingConfig) return;
+  readEditors();const context=ruleContext(card);if (!context) return;
+  if (!await UIControls.confirm({title:'删除规则',message:'确定删除此规则？已保存的规则会立即移除，历史日志仍会保留。',confirmText:'删除规则'})) return;
+  if (savingConfig) return;
+  savingConfig=true;renderRun();renderRuleActions();
+  try {
+    if (savedRuleSettings.has(context.key)) {
+      const data=await api('/api/rules',{method:'DELETE',body:JSON.stringify({kind:context.kind,id:context.id,account:context.account})});
+      automationState=data.automation;checkinSchedulerState=data.checkinScheduler;
+    }
+    readEditors();
+    const current=allRuleContexts().find(item=>item.key===context.key);
+    if(current)current.list.splice(current.list.indexOf(current.rule),1);
+    rememberSavedRule(context,null);RuleCards.collapse(context.key);
+    renderConfig();renderAutomationState();renderCheckinStatus();toast('规则已删除');
+  }catch(error){toast(error.message,true);}
+  finally{savingConfig=false;renderRun();renderRuleActions();}
+}
+document.addEventListener('click',event=>{
+  const action=event.target.closest('[data-rule-save],[data-rule-logs]');if(!action)return;
+  const card=action.closest('[data-rule-key]');
+  if(action.hasAttribute('data-rule-save')){saveRuleConfig(card);return;}
+  readEditors();const context=ruleContext(card);if(!context)return;
+  openRuleLogs({id:context.id,category:({packet:'red_packet',forward:'forward',message:'message',cleanup:'plugin',checkin:'checkin'})[context.kind],title:card.querySelector('[data-rule-title]').textContent,account:context.account});
+});
 
 document.addEventListener('rulecardtoggle', () => {
   closeModeMenu();closeAutoSelect();window.UIControls?.close();
@@ -613,6 +707,7 @@ async function saveConfig() {
     savingConfig = false;
     $$('.save-btn').forEach(button => { button.disabled = runBusy() || (typeof loginState !== 'undefined' && loginState?.active); });
     renderRun();
+    renderRuleActions();
   }
 }
 
@@ -641,6 +736,7 @@ function renderRun() {
   $('#stat-status').textContent = runBusy() ? `${busyRunAccounts.size || startingAccounts.size} 个账号${cleanupBusy ? '任务运行中' : '签到中'}` : summary.label || statusText[summary.state] || summary.state;
   $('#stat-last').textContent = currentRun.startedAt ? `启动于 ${formatDate(currentRun.startedAt)}` : '尚无运行记录';
   const loggingIn = (typeof loginState !== 'undefined' && loginState?.active) || (typeof profileStarting !== 'undefined' && profileStarting);
+  renderRuleActions();
   const checkinUser = typeof checkinAccountIndex !== 'undefined' ? config?.users[checkinAccountIndex] : null;
   $('#checkin-run').disabled = !checkinUser?.sessionReady || runBusy(checkinUser?.session) || loggingIn || savingConfig;
   $('#checkin-run-all').disabled = !config?.users.length || runBusy() || loggingIn || savingConfig;
@@ -704,10 +800,10 @@ document.addEventListener('click', event => {
   if (nav) { navigate(nav.dataset.view || nav.dataset.go); return; }
   const del = event.target.closest('[data-delete]');
   if (del) {
+    if (['schedule','checkin'].includes(del.dataset.delete)) {deleteRuleConfig(del.closest('[data-rule-key]'));return;}
     readEditors();
     const field = ({ user:'users' })[del.dataset.delete];
     if (del.dataset.delete === 'bot') config.users[Number(del.dataset.accountIndex)].bots.splice(Number(del.dataset.index), 1);
-    else if (del.dataset.delete === 'checkin') config.users[Number(del.dataset.accountIndex)].checkinSchedules.splice(Number(del.dataset.index), 1);
     else if (field) {
       if (field === 'users') {
         const session = config.users[Number(del.dataset.index)].session;
@@ -723,7 +819,6 @@ document.addEventListener('click', event => {
       }
       config[field].splice(Number(del.dataset.index), 1);
     }
-    else if (del.dataset.delete === 'schedule') config.automations.schedules.splice(Number(del.dataset.index), 1);
     renderConfig();
   }
   const addBot = event.target.closest('[data-add-bot]');

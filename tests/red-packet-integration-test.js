@@ -70,6 +70,15 @@ time.sleep(60)
       own.automations.redPackets[0].account='first';assert.equal((await save(own,cookie)).status,400,'cannot use another user TG account');
     }
     for(const user of users)assert.equal((await state(user.cookie)).config.automations.redPackets[0].name,user.username);
+    for(const user of users){
+      const rule={...(await state(user.cookie)).config.automations.redPackets[0],name:user.username+' scoped'};
+      const response=await request('/api/rules',user.cookie,{kind:'packet',id:rule.id,rule});
+      assert.equal(response.status,200);
+      assert.equal((await state(user.cookie)).config.automations.redPackets[0].name,user.username+' scoped');
+      assert.equal((await request('/api/rules',user.cookie,{kind:'packet',id:rule.id,rule:{...rule,account:'first'}})).status,400);
+    }
+    assert.equal((await state(admin)).config.automations.redPackets[0].name,'牛逼群红包','scoped saves cannot modify another web user config');
+    assert.equal((await logs(users[0].cookie,'?category=red_packet&ruleId=red_rule_001')).length,0,'scoped query cannot read another web user logs');
     if(process.env.PLAYWRIGHT_MODULE){
       const {chromium}=require(process.env.PLAYWRIGHT_MODULE);
       browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined});
@@ -102,7 +111,7 @@ time.sleep(60)
       await card.locator('[data-red-packet-field="watchSeconds"]').fill('180');
       await card.locator('[data-red-packet-field="retryInterval"]').fill('0.8');
       await page.waitForTimeout(2200);assert.equal(await card.locator('[data-red-packet-group]').last().inputValue(),'@new_group','polling preserves unsaved edits');
-      await page.locator('#red-packet-editor .save-btn').click();await page.locator('#toast').filter({hasText:'配置已保存'}).waitFor();
+      await card.locator('[data-rule-save]').click();await page.locator('#toast').filter({hasText:'规则已保存'}).waitFor();
       const saved=(await state(admin)).config.automations.redPackets[0];assert.equal(saved.account,'second');assert.equal(saved.watchSeconds,180);assert.equal(saved.retryInterval,0.8);assert.deepEqual(saved.successKeywords,['入账完成','已经领取过']);assert.equal(saved.groups.length,3);
       await card.locator('[data-red-packet-runtime]').filter({hasText:'已接收 12 条实时消息'}).waitFor();
       await card.locator('[data-rule-toggle]').click();
@@ -115,11 +124,11 @@ time.sleep(60)
       }
       await page.setViewportSize({width:1440,height:1100});await page.locator('#add-red-packet').click();
       const added=page.locator('[data-red-packet-rule]').last();await added.locator('[data-red-packet-group]').fill('@other_group');await added.locator('.auto-switch').click();
-      await page.locator('#red-packet-editor .save-btn').click();await page.locator('#toast').filter({hasText:'配置已保存'}).waitFor();
+      await added.locator('[data-rule-save]').click();await page.locator('#toast').filter({hasText:'规则已保存'}).waitFor();
       await page.reload();await page.locator('#open-red-packet').click();assert.equal(await page.locator('[data-red-packet-rule]').count(),2);
-      await page.locator('[data-red-packet-rule]').last().locator('[data-red-packet-remove]').click();await page.getByRole('dialog',{name:'删除红包规则'}).getByRole('button',{name:'删除规则'}).click();
-      await page.locator('#red-packet-editor .save-btn').click();await page.locator('#toast').filter({hasText:'配置已保存'}).waitFor();
-      await page.locator('#red-packet-logs').click();assert.equal(await page.locator('#log-filter-category').inputValue(),'red_packet');
+      await page.locator('[data-red-packet-rule]').last().locator('[data-red-packet-remove]').click();await page.getByRole('dialog',{name:'删除规则',exact:true}).getByRole('button',{name:'删除规则'}).click();
+      await page.locator('#toast').filter({hasText:'规则已删除'}).waitFor();
+      await card.locator('[data-rule-logs]').click();assert.equal(await page.locator('#log-filter-category').inputValue(),'red_packet');
       assert.deepEqual(errors,[]);await browser.close();browser=null;
     }
     config=(await state(admin)).config;const expected=config.automations.redPackets;
@@ -128,7 +137,7 @@ time.sleep(60)
     const persisted=(await state(admin)).config.automations.redPackets;
     assert.deepEqual(persisted,expected.map(rule=>({...rule,enabled:false})),'rules survive restart');
     assert.ok((await logs()).some(run=>run.lines[0].text==='offline claim completed'),'logs survive restart without a worker');
-    for(const user of users){user.cookie=await login(user.username,user.username+'-secret');assert.equal((await state(user.cookie)).config.automations.redPackets[0].name,user.username);}
+    for(const user of users){user.cookie=await login(user.username,user.username+'-secret');assert.equal((await state(user.cookie)).config.automations.redPackets[0].name,user.username+' scoped');}
     console.log('Red packet API/UI PASS: validation, user isolation, durable rules/logs, themed controls, group names, keywords, save/delete/reload, responsive layout');
   }finally{
     await browser?.close();await stop();assert.ok(root.startsWith(tempBase+path.sep));fs.rmSync(root,{recursive:true,force:true,maxRetries:10,retryDelay:100});

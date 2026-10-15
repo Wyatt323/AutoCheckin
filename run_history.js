@@ -65,9 +65,10 @@ function createRunHistory(dataRoot, store = null) {
       changed();
     },
     latest: () => records.at(-1),
-    snapshot: ({ account = '', category = '' } = {}) => {
+    snapshot: ({ account = '', category = '', ruleId = '' } = {}) => {
       let selected = [...records, ...events].sort((a,b) => String(a.startedAt).localeCompare(String(b.startedAt)));
       if (category) selected = selected.filter(record => (record.category || 'checkin') === category);
+      if (ruleId) selected = selected.filter(record => record.ruleId === ruleId);
       if (account === '__all__') selected = selected.filter(record => !record.account);
       else if (account) selected = selected.flatMap(record => {
         const lines = record.lines.filter(line => (line.account || record.account) === account);

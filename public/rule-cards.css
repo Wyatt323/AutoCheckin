@@ -23,6 +23,12 @@
 .rule-card[data-expanded="false"] > .cleanup-rule-runtime strong { font-size:13px; }
 .rule-card[data-expanded="false"] > [data-red-packet-runtime] small:last-child { display:none; }
 .rule-card[data-expanded="false"] > [data-red-packet-runtime] small { overflow-wrap:anywhere; }
+.rule-card-footer { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-top:18px; padding-top:16px; border-top:1px solid var(--line,#e9e9e6); }
+.rule-card-footer > small { color:var(--muted); font-size:12px; }
+.rule-card-footer > small[data-dirty="true"] { color:#9b6a1f; }
+.rule-card-buttons { display:flex; align-items:center; gap:10px; margin-left:auto; }
+.rule-card-buttons button { min-height:38px; padding:8px 15px; font-size:12px; }
+.rule-page-hint { margin:18px 2px 0; font-size:12px; color:var(--muted); }
 @media(max-width:720px) {
   .rule-card > .automation-card-head,.rule-card > .checkin-rule-head { flex-wrap:wrap; gap:14px; }
   .rule-card-toggle { flex-basis:100%; }

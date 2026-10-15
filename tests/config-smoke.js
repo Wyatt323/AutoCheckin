@@ -30,7 +30,7 @@ async function main() {
     }));
     const port = await freePort();
     const base = `http://127.0.0.1:${port}`;
-    child = spawn(process.execPath, [path.join(directory, 'server.js')], { env: { ...process.env, PORT: String(port) }, stdio: 'ignore' });
+    child = spawn(process.execPath, [path.join(directory, 'server.js')], { env: { ...process.env, PORT: String(port), PYTHON_BIN:process.env.PYTHON_BIN || path.join(__dirname,'../.venv',process.platform==='win32'?'Scripts/python.exe':'bin/python') }, stdio: 'ignore' });
     let response;
     for (let attempt = 0; attempt < 30; attempt++) {
       try { response = await fetch(`${base}/api/state`); break; } catch { await new Promise(resolve => setTimeout(resolve, 100)); }
@@ -96,7 +96,63 @@ async function main() {
     invalidDate.users[1].checkinSchedules[0].time = '2027-02-30T10:15';
     const badDateResponse = await fetch(`${base}/api/config`, { method:'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify(invalidDate) });
     assert.equal(badDateResponse.status, 400);
-    console.log('按账号保存 Bot、旧配置迁移、自动化规则和密钥保留检查通过');
+    const disk=()=>JSON.parse(fs.readFileSync(path.join(directory,'config.json'),'utf8'));
+    const ruleRequest=(input,method='POST')=>fetch(`${base}/api/rules`,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
+    const baseline=disk();
+    const targets=[
+      ['packet',{id:'packet_test_001',name:'独立规则',enabled:false,account:'test',groups:['@test_group']}],
+      ['forward',{...refreshed.config.automations.forwardPins[0],name:'只保存此规则'}],
+      ['cleanup',{id:'cleanup_test_001',name:'检查',account:'test',group:'@test_group'}],
+      ['message',{...refreshed.config.automations.schedules[0],message:'单条消息'}],
+      ['checkin',{...refreshed.config.users[0].checkinSchedules[0],time:'13:15:17'}]
+    ];
+    for(const [kind,rule] of targets){
+      const before=disk(),response=await ruleRequest({kind,id:rule.id,account:kind==='checkin'?'test':undefined,rule});
+      assert.equal(response.status,200,await response.clone().text());
+      assert.equal((await response.json()).rule.id,rule.id);
+      const after=disk();
+      if(kind==='checkin')after.telegram.users[0].checkin_schedules=before.telegram.users[0].checkin_schedules;
+      else if(kind==='cleanup'){after.plugins=before.plugins;}
+      else {const field={packet:'redPackets',forward:'forwardPins',message:'schedules'}[kind];after.automations[field]=before.automations[field];}
+      assert.deepEqual(after,before,`${kind}: unrelated persistent data stays identical`);
+    }
+    assert.deepEqual(disk().ai,baseline.ai,'AI secrets remain unchanged');
+    assert.equal(disk().telegram.users[0].api_hash,'secret-hash');
+    const committed=disk();
+    for(const input of [{kind:'packet',id:'packet_test_001',rule:{...targets[0][1],account:'unknown'}},{kind:'packet',id:'packet_test_001',rule:{...targets[0][1],id:'mismatch'}},{kind:'unknown',id:'packet_test_001',rule:targets[0][1]}]){
+      assert.equal((await ruleRequest(input)).status,400);assert.deepEqual(disk(),committed,'failed save preserves disk');
+    }
+    for(const [kind,rule] of targets)assert.equal((await ruleRequest({kind,id:rule.id,account:kind==='checkin'?'test':undefined},'DELETE')).status,200);
+    assert.equal(disk().automations.redPackets.length,0);
+    assert.equal(disk().telegram.users[0].checkin_schedules.length,0);
+    assert.deepEqual(disk().telegram.users[1],baseline.telegram.users[1]);
+    assert.equal((await ruleRequest({kind:'packet',id:'packet_test_001'},'DELETE')).status,400);
+    // An offline scheduled execution is linked to its plan, including after reload.
+    fs.writeFileSync(path.join(directory,'test.session'),'offline fixture');
+    fs.writeFileSync(path.join(directory,'allinone.py'),'import time\nprint("offline scheduled task",flush=True)\ntime.sleep(1.5)\n');
+    const plan={id:'scoped_plan_001',enabled:true,repeat:'once',time:new Date(Date.now()+28800000+2000).toISOString().slice(0,19)};
+    assert.equal((await ruleRequest({kind:'checkin',id:plan.id,account:'test',rule:plan})).status,200);
+    let scheduled;
+    for(let i=0;i<100;i++){
+      const logs=await(await fetch(`${base}/api/runs?account=test&category=checkin&ruleId=${plan.id}`)).json();
+      scheduled=logs.records[0];
+      if(scheduled?.state==='running'){
+        assert.equal((await ruleRequest({kind:'checkin',id:plan.id,account:'test',rule:plan})).status,400,'running task prevents config changes');
+        break;
+      }
+      await new Promise(resolve=>setTimeout(resolve,100));
+    }
+    assert.equal(scheduled?.ruleId,plan.id);
+    assert.equal(scheduled?.trigger,'scheduled');
+    for(let i=0;i<50;i++){
+      const logs=await(await fetch(`${base}/api/runs?ruleId=${plan.id}`)).json();
+      if(logs.records[0]?.state==='completed')break;
+      await new Promise(resolve=>setTimeout(resolve,100));
+    }
+    const history=JSON.parse(fs.readFileSync(path.join(directory,'logs/run-history.json'),'utf8'));
+    assert.equal(history.records.find(run=>run.id===scheduled.id)?.ruleId,plan.id,'scheduled rule ID persists with history');
+    assert.equal(history.records.find(run=>run.id===scheduled.id)?.state,'completed');
+    console.log('配置检查通过：旧配置迁移、五类规则独立保存/删除、密钥保留、失败不改数据、签到计划日志归属');
   } finally {
     child?.kill();
     if (directory.startsWith(path.resolve(os.tmpdir()) + path.sep)) fs.rmSync(directory, { recursive: true, force: true });

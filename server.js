@@ -379,23 +379,70 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     delete original.bot_groups;
     delete original.bot_notes;
     original.automations = validateAutomations(input.automations, users);
-    const cleanupRules = input.plugins?.zeroSpeakers || [];
+    original.plugins = {...(original.plugins || {}), zeroSpeakers:validateCleanupRules(input.plugins?.zeroSpeakers || [], users)};
+    await persistConfig(original);
+    return viewConfig(original);
+  }
+
+  function validateCleanupRules(cleanupRules, users) {
     if (!Array.isArray(cleanupRules) || cleanupRules.length > 100) throw new Error('清理0发言群员规则格式不正确或超过 100 条');
     const cleanupIds = new Set();
-    original.plugins = {...(original.plugins || {}), zeroSpeakers:cleanupRules.map((item,index) => {
+    return cleanupRules.map((item,index) => {
       const label = `清理0发言群员规则 ${index + 1}`, id = String(item.id || '');
       if (!/^[A-Za-z0-9_-]{8,80}$/.test(id) || cleanupIds.has(id)) throw new Error(`${label} 标识无效或重复`);
       cleanupIds.add(id);
       if (!users.some(user => user.session === item.account)) throw new Error(`${label} 的账号不存在`);
       return {id,name:String(item.name || '').trim().slice(0,80),account:item.account,group:chatRef(item.group,`${label} 群组`)};
-    })};
+    });
+  }
+
+  async function persistConfig(original) {
     const temp = `${CONFIG}.tmp`;
     if (database) await database.write('config', original);
     else {
       fs.writeFileSync(temp, JSON.stringify(original, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
       fs.renameSync(temp, CONFIG);
     }
-    return viewConfig(original);
+  }
+
+  async function saveRule(input, remove = false) {
+    const kind = input.kind, id = nonempty(input.id, '规则 ID', 100);
+    if (!/^[A-Za-z0-9_-]{8,100}$/.test(id)) throw Error('规则 ID 无效');
+    const original = readConfig(), users = original.telegram?.users || original.users || [];
+    let rules, assign;
+    if (['packet','forward','message'].includes(kind)) {
+      const field = {packet:'redPackets',forward:'forwardPins',message:'schedules'}[kind];
+      rules = original.automations?.[field] || [];
+      assign = next => {
+        const validated = validateAutomations({...original.automations,[field]:next},users);
+        original.automations = {...original.automations,[field]:validated[field]};
+      };
+    } else if (kind === 'cleanup') {
+      rules = original.plugins?.zeroSpeakers || [];
+      assign = next => {original.plugins = {...original.plugins,zeroSpeakers:validateCleanupRules(next,users)};};
+    } else if (kind === 'checkin') {
+      const user = users.find(user => (user.session || user.name) === input.account);
+      if (!user) throw Error('执行账号不存在，请先保存账号配置');
+      rules = user.checkin_schedules || [];
+      assign = next => {
+        const view = viewConfig(original).users.find(item => item.session === input.account);
+        user.checkin_schedules = validateCheckinSchedules(next,user.name,view.dialogFolder ? 1 : view.bots.length);
+      };
+    } else throw Error('规则类型无效');
+    const index = rules.findIndex(rule => rule.id === id);
+    if (remove && index < 0) throw Error('规则不存在或已删除');
+    if (!remove && (!input.rule || typeof input.rule !== 'object' || Array.isArray(input.rule) || input.rule.id !== id)) throw Error('规则内容或 ID 不匹配');
+    const next = rules.slice();
+    if (remove) next.splice(index,1);
+    else if (index < 0) next.push(input.rule);
+    else next[index] = input.rule;
+    assign(next);
+    await persistConfig(original);
+    // Return only the saved rule. Other browser drafts must never be replaced.
+    const view = viewConfig(original);
+    const saved = kind === 'checkin' ? view.users.find(user => user.session === input.account).checkinSchedules
+      : kind === 'cleanup' ? view.plugins.zeroSpeakers : view.automations[{packet:'redPackets',forward:'forwardPins',message:'schedules'}[kind]];
+    return remove ? null : saved.find(rule => rule.id === id);
   }
 
   let pythonCache = { expires: 0, value: null };
@@ -455,7 +502,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     });
   }
 
-  async function startRun(account = null, trigger = 'manual', bot = null) {
+  async function startRun(account = null, trigger = 'manual', bot = null, ruleId = null) {
     const python = pythonCommand();
     if (!python) throw new Error('未找到 Python。安装 Python 及脚本依赖后，重新启动服务。');
     const config = viewConfig(readConfig());
@@ -466,6 +513,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     if (bot && (!account || !selected[0].bots.some(item => item.name.toLowerCase() === bot.toLowerCase()))) throw new Error('独立签到 Bot 不在此账号配置中');
     if (bot && selected[0].dialogFolder) throw new Error('当前使用分组轮询，配置列表的独立定时暂不生效');
     const run = history.create(account, trigger);
+    if (ruleId) run.ruleId = ruleId;
     latestRun = run;
     const addLine = (...args) => appendLine(run, ...args);
     run.accounts = selected.map(user => user.session);
@@ -577,7 +625,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     return run;
   }
 
-  async function reserveAndLaunch(account = null, trigger = 'manual', bot = null) {
+  async function reserveAndLaunch(account = null, trigger = 'manual', bot = null, ruleId = null) {
     if (shuttingDown || editingConfig || login.active()) throw new Error('配置保存、服务停止或登录任务正在运行');
     const users = viewConfig(readConfig()).users;
     const accounts = (account ? users.filter(user => user.session === account) : users).map(user => user.session);
@@ -594,7 +642,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
       // same Session twice, and do not pause listeners for unrelated accounts.
       if(accounts.some(session=>automationAccounts().includes(session)) && !['starting','running'].includes(automation.getState().status))await automation.stop();
       if (shuttingDown) throw new Error('当前用户工作空间已关闭');
-      const record = await startRun(account, trigger, bot);
+      const record = await startRun(account, trigger, bot, ruleId);
       started = true;
       return record;
     } finally {
@@ -603,8 +651,8 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     }
   }
 
-  function launchRun(account = null, trigger = 'manual', bot = null) {
-    const operation = reserveAndLaunch(account, trigger, bot);
+  function launchRun(account = null, trigger = 'manual', bot = null, ruleId = null) {
+    const operation = reserveAndLaunch(account, trigger, bot, ruleId);
     launches.add(operation);
     operation.finally(() => launches.delete(operation)).catch(() => {});
     return operation;
@@ -631,7 +679,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     testProxy:async proxy=>{if(networkChanging() || shuttingDown)return {skipped:true};const started=performance.now();const response=await outgoingNetwork.withProxy(proxy,()=>outgoingNetwork.fetch('https://api.telegram.org/bot0:0/getMe',{redirect:'error'}));return {ok:response.status<500 && response.status!==407,latencyMs:Math.round(performance.now()-started)};}});
   automation.configure({ workerEnv, root: ROOT, dataDir: DATA_ROOT, store:database, readConfig, pythonCommand, onEvent:event => {history.appendEvent(event);health.observe(event);}, onHealth:event=>health.observe(event),retryLimit:()=>health.retryLimit(),canRun: () => !busy() && !login.active() && !shuttingDown });
   scheduler = createScheduler({ root: DATA_ROOT, store:database, readConfig, parallelAccounts:true, runAccount: async (account, bot, occurrence) => {
-    try {await launchRun(account, 'scheduled', bot);}
+    try {await launchRun(account, 'scheduled', bot, occurrence.ruleId);}
     catch(error) {
       if(!shuttingDown) {
         const time=new Date().toISOString(), name=viewConfig(readConfig()).users.find(user=>user.session===account)?.name;
@@ -753,12 +801,22 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
           if (url.pathname === '/api/login/password') return send(res, 200, { login: login.password(input.id, input.password) });
           if (url.pathname === '/api/login/cancel') return send(res, 200, { login: login.cancel(input.id) });
         }
-        if (req.method === 'GET' && url.pathname === '/api/runs') return send(res, 200, history.snapshot({account:url.searchParams.get('account') || '', category:url.searchParams.get('category') || ''}));
+        if (req.method === 'GET' && url.pathname === '/api/runs') return send(res, 200, history.snapshot({account:url.searchParams.get('account') || '', category:url.searchParams.get('category') || '',ruleId:url.searchParams.get('ruleId') || ''}));
         if (req.method === 'GET' && url.pathname === '/api/state') {
           const state = { user: authUser, run:publicRun(latestRun), activeRuns:[...activeRuns.values()].map(job => publicRun(job.run)), busyAccounts:[...reservedAccounts], cleanupRuns:cleanup?.view() || history.snapshot({category:'plugin'}).records.filter(run=>run.plugin==='zeroSpeakers').slice(-20).map(publicRun), automation: automation.getState(), checkinScheduler: scheduler.getState(), python: pythonCommand()?.version || null };
           // Routine polling needs status only; initial load and explicit refresh keep the full response.
           if (url.searchParams.get('config') !== '0') state.config = viewConfig(readConfig());
           return send(res, 200, state);
+        }
+        if (['POST','DELETE'].includes(req.method) && url.pathname === '/api/rules') {
+          const input = await bodyJson(req);
+          if (busy() || login.active() || shuttingDown) throw Error('运行或登录期间不能修改配置');
+          editingConfig = true;
+          try {
+            const rule = await saveRule(input,req.method === 'DELETE');
+            await automation.restart();
+            return send(res,200,{rule,automation:automation.getState(),checkinScheduler:scheduler.getState()});
+          } finally {editingConfig=false;if (!shuttingDown) automation.start();}
         }
         if (req.method === 'POST' && url.pathname === '/api/config') {
           const input = await bodyJson(req);
