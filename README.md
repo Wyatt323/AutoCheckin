@@ -2,7 +2,7 @@
 
 Telegram 多账号签到与消息自动化工具，提供本地 Web 管理界面。Node.js 负责配置管理、日志与任务调度，Python / Telethon 负责 Telegram 操作。
 
-> **网页使用用户名和密码登录，不开放注册。管理员默认用户名为 `admin`，密码由 `ADMIN_PASSWORD` 配置，可在「用户管理」创建普通用户。公网访问必须使用 HTTPS 反向代理；默认仍只发布本机端口。** `config.json`、Telegram Session 和备份均包含敏感数据，请妥善保存。
+> **网页使用用户名和密码登录，不开放注册。管理员默认用户名为 `admin`，密码由 `ADMIN_PASSWORD` 配置，可在「用户管理」创建普通用户。默认监听所有 IPv4 网卡，Docker 发布 `8765` 端口，不限制访问域名或客户端 IP；公网访问必须使用 HTTPS 反向代理。** `config.json`、Telegram Session 和备份均包含敏感数据，请妥善保存。
 
 ## 功能
 
@@ -215,7 +215,7 @@ $env:ADMIN_PASSWORD="replace-with-a-long-random-password"
 node server.js
 ```
 
-打开 **http://127.0.0.1:8765**（不要替换成 `localhost`，服务会校验 Host）。首次启动自动从 `config.example.json` 创建空配置，不包含真实账号或密钥。
+打开 **http://127.0.0.1:8765**，也可使用 `localhost`、服务器 IP 或指向服务器的域名。首次启动自动从 `config.example.json` 创建空配置，不包含真实账号或密钥。
 
 Python 选择顺序：显式 `PYTHON_BIN` → 项目 `.venv` → 系统解释器。Windows 会优先尝试 `py -3`，Linux 优先 `python3`。
 
@@ -262,7 +262,7 @@ docker compose up -d --build
 docker compose logs -f autocheckin
 ```
 
-打开 **http://127.0.0.1:8765**，首次构建会安装 Node/Python 依赖。配置和记录保存在 PostgreSQL 命名卷 `postgres-data`；`./data:/data` 保留 Telegram Session 文件和首次迁移的旧文件。普通 `docker compose down` 会保留数据，`down -v` 会删除数据库卷，不应作为日常更新命令。
+打开 **http://服务器IP:8765**（本机也可用 `http://127.0.0.1:8765`）；Compose 默认发布 `8765:8765`，无需配置域名白名单。首次构建会安装 Node/Python 依赖。配置和记录保存在 PostgreSQL 命名卷 `postgres-data`；`./data:/data` 保留 Telegram Session 文件和首次迁移的旧文件。普通 `docker compose down` 会保留数据，`down -v` 会删除数据库卷，不应作为日常更新命令。
 
 更新代码：
 
@@ -374,11 +374,12 @@ PostgreSQL 模式保存调度触发和发送记录；文件模式分别保存到
 - `PGHOST` / `PGPORT` / `PGDATABASE` / `PGUSER` / `PGPASSWORD`：PostgreSQL 连接参数。设置 `PGHOST` 后启用数据库模式，也支持 `DATABASE_URL`。Compose 已自动配置，密码来自 `.env` 的 `POSTGRES_PASSWORD`。
 - `PORT`：监听端口，默认 `8765`。
 - `ADMIN_PASSWORD`：必填，只从环境读取，不通过配置 API 返回或保存。修改后重启服务，现有会话失效。
-- `TRUST_PROXY`：默认 `false`；仅明确设为 `true` 且请求来源是回环地址时信任单一 `X-Forwarded-Proto: https`。不信任转发 IP，代理下登录限流按代理统一计算。
+- `TRUST_PROXY`：默认 `false`；明确设为 `true` 后信任单一 `X-Forwarded-Proto: https`，支持独立服务器反代和 Docker bridge 来源。仅在上游反代会覆盖此头且已控制后端直接访问时开启；不信任 `X-Forwarded-Host`、`Forwarded` 或转发 IP，代理下登录限流按代理统一计算。Compose 可在 `.env` 设置此变量。
 - `AUTOCHECKIN_DATA_DIR`：配置、Session 和状态所在目录；本机默认项目目录，Compose 为 `/data`。
 - `PYTHON_BIN`：Python 解释器路径，例如 `/usr/bin/python3`。
-- `BIND_HOST`：监听地址，本机默认 `127.0.0.1`，容器使用 `0.0.0.0`。
-- `PUBLIC_HOST`：允许的请求 Host 中的主机名，默认 `127.0.0.1`。它不是公网认证开关，也不是完整 URL。
+- `BIND_HOST`：监听地址，默认 `0.0.0.0`，允许通过所有 IPv4 网卡访问；仅需本机访问可设为 `127.0.0.1`。
+- `STRICT_PUBLIC_HOST`：默认 `false`，不启用固定域名/端口白名单；设为 `true` 才恢复旧版 Host 精确限制，不影响密码认证或同源检查。
+- `PUBLIC_HOST` / `PUBLIC_PORT`：仅用于 `STRICT_PUBLIC_HOST=true` 时的请求 Host 限制，格式为 `${PUBLIC_HOST}:${PUBLIC_PORT}`（始终包含端口）；默认分别为 `127.0.0.1` 和 `PORT`。`PUBLIC_HOST` 不是完整 URL，也不是客户端 IP 白名单。
 
 Linux 指定端口示例：
 
@@ -392,7 +393,9 @@ PORT=9000 PYTHON_BIN=/usr/bin/python3 ADMIN_PASSWORD="replace-with-a-long-random
 ssh -N -L 8765:127.0.0.1:8765 user@服务器
 ```
 
-HTTPS 反代必须保留浏览器的 Origin，把上游 Host 设置为 `${PUBLIC_HOST}:${PORT}`（必须与浏览器访问地址一致），并设置 `X-Forwarded-Proto: https`。仅在反代通过回环地址连接 Node 时开启 `TRUST_PROXY=true`；不要把任意远端来源当成可信代理。Docker bridge 来源不属于回环地址，需采用保证本地来源的部署网络方式，不能靠伪造转发头绕过校验。
+HTTPS 反代必须保留浏览器的 `Origin` 和原始 `Host`（含非默认端口），覆盖设置 `X-Forwarded-Proto: https`，并在 AutoCheckin 设置 `TRUST_PROXY=true`。例如浏览器访问 `https://ack.wyattu.net`，转发给后端的 Host 应为 `ack.wyattu.net`，而不是后端 IP 或 `:8765`；无需设置 `PUBLIC_HOST`。反代可在独立服务器上，不需要在 AutoCheckin 主机安装 Nginx。服务按真实 Host 与协议校验修改请求的 Origin，忽略 `X-Forwarded-Host` / `Forwarded`，因此这些头不能绕过跨站校验。
+
+直接 HTTP 访问不需要 `TRUST_PROXY`。公开环境应使用 HTTPS 反代；开启代理信任时，请用防火墙/安全组限制后端直连来源为可信代理，并确保代理覆盖协议头，不透传客户端伪造值。这是部署建议，不是应用内置 IP 限制。若仅需本机发布，可自行把 Compose 端口改为 `127.0.0.1:8765:8765`。
 
 登录接口为 `/api/auth/login`，与 Telegram 的 `/api/login/*` 独立。会话采用随机令牌、HttpOnly / SameSite=Strict Cookie，可信 HTTPS 下附加 Secure；12 小时固定到期，不滑动延期，重启或退出登录立即失效。最多 256 个会话；登录错误每个可信连接 IP 15 分钟最多 10 次，最多跟踪 2048 个 IP。密码不写入浏览器存储，无“记住密码”。所有管理 API（包括 Telegram 登录状态/密码接口）和后台 HTML/JS 均需会话，只有登录页面、其资源和共享样式公开。
 
@@ -409,7 +412,7 @@ HTTPS 反代必须保留浏览器的 Origin，把上游 Host 设置为 `${PUBLIC
 
 ## 常见问题
 
-**页面返回 403**：确认使用 `http://127.0.0.1:8765` 或与你设置的 `PUBLIC_HOST` / `PORT` 完全一致的地址。
+**页面返回 403**：默认不限制域名/访问 IP；检查是否意外开启 `STRICT_PUBLIC_HOST`。HTTPS 反代需保留原始 Host / Origin，设置 `X-Forwarded-Proto: https` 并开启 `TRUST_PROXY=true`；不同源的修改请求仍会被拒绝。
 
 **未找到 Python / 缺少依赖**：用服务实际选择的解释器安装 `requirements.txt`，必要时设置 `PYTHON_BIN`，重启服务。解释器探测有短时间缓存。
 
