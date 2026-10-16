@@ -17,6 +17,13 @@ if '--profile-only' in sys.argv[2:]:
     save_profile()
     print(json.dumps({'type':'success'}), flush=True)
     sys.exit(0)
+if sys.argv[1]=='retry':
+    marker=Path(os.environ['AUTOCHECKIN_DATA_DIR'],'.offline-retry-once')
+    if not marker.exists():
+        marker.write_text('offline-only')
+        print(json.dumps({'type':'progress','phase':'connect'}),flush=True)
+        print(json.dumps({'type':'error','code':'proxy_unreachable','phase':'connect','message':'never-display-worker-secret'}),flush=True)
+        sys.exit(2)
 image=io.BytesIO()
 qrcode.make('offline-browser-test-only').save(image,format='PNG')
 print(json.dumps({'type':'QR','png':base64.b64encode(image.getvalue()).decode(),'expiresAt':'2099-01-01T00:00:00Z'}),flush=True)

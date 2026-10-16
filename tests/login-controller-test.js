@@ -34,6 +34,20 @@ function fake() {
   assert.equal(resumed,2);
   const failing = await login.start('offline'); child.stderr.write('api_hash secret tg://login?token=secret'); child.event({type:'error',message:'secret'}); child.emit('close',2);
   assert.equal(login.status().state,'error'); assert.ok(!JSON.stringify(login.status()).includes('secret'));
+  for (const [code,phase,message] of [['api_invalid','qr','API 凭据'],['proxy_unreachable','connect','代理'],['dependency_missing','dependencies','依赖'],['session_busy','session','占用']]) {
+    await login.start('offline');
+    child.event({type:'progress',phase,message:'secret'}); assert.equal(login.status().phase,phase);
+    child.event({type:'error',code,phase,message:'secret',hint:'secret'});
+    assert.equal(login.status().errorCode,code); assert.ok(login.status().message.includes(message));
+    assert.ok(login.status().phaseLabel); assert.ok(login.status().hint); assert.ok(!JSON.stringify(login.status()).includes('secret'));
+    child.event({type:'QR',png:'aGVsbG8='}); child.event({type:'success'});
+    assert.equal(login.status().state,'error','late events cannot replace the failure');
+    child.emit('close',2);
+  }
+  await login.start('offline'); child.event({type:'error',code:'rate_limited',retryAfterSeconds:90,phase:'qr'}); child.emit('close',2);
+  assert.equal(login.status().retryAfterSeconds,90); assert.ok(login.status().hint.includes('90')); assert.equal(login.status().retryable,false);
+  await login.start('offline'); child.event({type:'error',code:'tg://secret',phase:'secret',message:'secret'}); child.emit('close',2);
+  assert.equal(login.status().errorCode,'unknown'); assert.ok(!JSON.stringify(login.status()).includes('secret'));
   await login.start('offline'); const shutdown = login.shutdown(); child.emit('close',null); await shutdown;
   let release;
   const pending = createLoginController({...opts, stopAutomation:() => new Promise(resolve => {release=resolve;})});
@@ -43,5 +57,10 @@ function fake() {
   await inherited.start('offline'); assert.ok(inherited.active()); child.emit('close',0);
   const missing = createLoginController({...opts, readConfig:() => ({telegram:{users:[{session:'offline'}]}})});
   await assert.rejects(missing.start('offline')); assert.equal(missing.active(),false);
-  console.log('login controller: busy, QR, 2FA retry, cancellation, shutdown, redaction, timeout PASS');
+  const refreshFailure = createLoginController({...opts,onComplete:async()=>{throw Error('secret');}});
+  await refreshFailure.start('offline'); child.event({type:'success'}); child.emit('close',0);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(refreshFailure.status().state,'success','profile refresh cannot undo Telegram authorization');
+  assert.equal(refreshFailure.active(),false); assert.ok(!JSON.stringify(refreshFailure.status()).includes('secret'));
+  console.log('login controller: busy, QR, 2FA retry, cancellation, shutdown, safe failure codes and phases, late event protection, timeout PASS');
 })().catch(error => {console.error(error); process.exitCode=1;});

@@ -317,6 +317,14 @@ dialog::backdrop, #login-dialog::backdrop, #run-log-dialog::backdrop { backgroun
 #login-dialog p, .ui-confirm-dialog p, .run-modal-foot small { color: var(--muted); font-size: 13px; line-height: 1.8; }
 #login-qr { background: #fff; border: 2px solid var(--ink); border-radius: 15px; }
 #login-status { color: var(--ink)!important; background: var(--green-soft); border: 1.5px solid var(--ink); }
+#login-status[data-state="starting"], #login-status[data-state="verifying"] { background: var(--lilac); }
+#login-status[data-state="error"] { color: #842f3c!important; background: #fff0ed; border-color: #b25160; }
+#login-status[data-state="cancelled"] { background: #f1f3f6; }
+#login-dialog #login-hint { text-align: left; color: var(--ink); margin: 14px 0 10px; }
+#login-dialog #login-diagnostic { font-size: 11px; text-align: left; overflow-wrap: anywhere; margin: 0 0 20px; }
+.login-actions { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 12px; margin-top: 22px; }
+#login-dialog .login-actions button { margin: 0; min-height: 44px; }
+.login-actions [hidden] { display: none; }
 #login-password-form label { color: var(--ink); font-size: 12px; }
 .toast { background: #fff; color: var(--ink); border: 2px solid var(--ink); border-radius: 13px; box-shadow: 4px 5px 0 var(--ink); font-size: 13px; max-width: calc(100vw - 48px); line-height: 1.7; }
 .toast.error { background: var(--pink); color: #682b32; }
