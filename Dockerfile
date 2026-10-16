@@ -2,7 +2,6 @@ FROM node:22-bookworm-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    BIND_HOST=0.0.0.0 \
     PIP_NO_CACHE_DIR=1 \
     PATH="/opt/venv/bin:${PATH}"
 
@@ -23,7 +22,6 @@ COPY --chown=node:node public ./public
 COPY --chown=node:node cleanup.js cleanup_worker.py ./
 COPY --chown=node:node red_packet.py ./
 COPY --chown=node:node health_monitor.js health_worker.py worker_health.py ./
-COPY --chown=node:node account_security.js account_security.py account_security_worker.py spam_bot.py ./
 COPY --chown=node:node outgoing_proxy.js outgoing_proxy.py ./
 COPY --chown=node:node docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh \

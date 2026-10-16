@@ -33,8 +33,6 @@ function createAutomation() {
   let stableSince = null;
   const accountHealth = new Map();
   const checkins = new Map();
-  const securityRequests = new Map();
-  let securityAccounts = [];
   let checkinAccounts = [];
   let state = { status: 'idle', startedAt: null, message: '尚未配置自动化规则', lines: [], planned: [], redPackets: Object.create(null) };
   let lastPacketNotice = '';
@@ -111,31 +109,6 @@ function createAutomation() {
       else {job.timeout=setTimeout(()=>finishCheckin(id,1,'等待监听连接就绪超时，本次未执行签到'),90000);job.timeout.unref?.();}
     });
     return child;
-  }
-
-  function requestSecurity({account,action,hash,appealText,pledge,signal}) {
-    if(!processHandle || state.status!=='running' || !securityAccounts.includes(account))return Promise.reject(Error('账号连接尚未就绪或监听进程需要更新，请稍后重试'));
-    const id=require('node:crypto').randomUUID(),worker=processHandle;
-    return new Promise((resolve,reject)=>{
-      if(signal?.aborted){reject(Error('服务正在停止'));return;}
-      const abort=()=>{
-        const request=securityRequests.get(id);if(!request)return;
-        request.reject(Error('账号防护检查已取消'));
-        worker.stdin.write(JSON.stringify({type:'cancel_security',id})+'\n',()=>{});
-        securityRequests.delete(id);clearTimeout(timeout);
-      };
-      const finish=callback=>value=>{signal?.removeEventListener('abort',abort);callback(value);};
-      const timeout=setTimeout(()=>{
-        securityRequests.delete(id);
-        worker.stdin.write(JSON.stringify({type:'cancel_security',id})+'\n',()=>{});
-        finish(reject)(Error('账号防护检查超时，请稍后重试'));
-      },action.startsWith('spam_') ? 130000 : 65000);timeout.unref();
-      securityRequests.set(id,{account,worker,resolve:finish(resolve),reject:finish(reject),timeout});
-      signal?.addEventListener('abort',abort,{once:true});
-      worker.stdin.write(JSON.stringify({type:'account_security',id,account,action,hash,appealText,pledge})+'\n',error=>{
-        if(error){clearTimeout(timeout);securityRequests.delete(id);finish(reject)(Error('账号防护请求发送失败'));}
-      });
-    });
   }
 
   function packetNotice(message, level = 'info', runState = 'running') {
@@ -223,15 +196,13 @@ function createAutomation() {
     sessionOwners = [...sessions];
     accountHealth.clear();
     checkinAccounts=[];
-    securityAccounts=[];
     stableSince = null;
     worker.stdin?.on('error',()=>{});
     for (const [level, pipe] of [['info', worker.stdout], ['error', worker.stderr]]) {
-      let buffer = '',discarding=false;
+      let buffer = '';
       pipe.setEncoding('utf8');
       pipe.on('data', chunk => {
         if (processHandle !== worker) return;
-        if(discarding){const end=chunk.indexOf('\n');if(end<0)return;chunk=chunk.slice(end+1);discarding=false;}
         buffer += chunk;
         const parts = buffer.split(/\r?\n/);
         buffer = parts.pop();
@@ -240,12 +211,7 @@ function createAutomation() {
           if (level === 'error') { line(part, 'error'); packetNotice(`自动化进程错误：${part}`,'error','failed'); continue; }
           try {
             const event = JSON.parse(part);
-            if(event.type==='account_security') {
-              const request=securityRequests.get(event.requestId);
-              if(!request || request.worker!==worker || event.account!==request.account)continue;
-              clearTimeout(request.timeout);securityRequests.delete(event.requestId);request.resolve(event.result);
-            }
-            else if(event.type==='checkin') {
+            if(event.type==='checkin') {
               const job=checkins.get(event.requestId);
               if(!job || job.worker!==worker || !event.event || typeof event.event!=='object')continue;
               if(event.event.type==='finished')finishCheckin(job.id,[0,1,130].includes(event.event.code) ? event.event.code : 1);
@@ -266,16 +232,15 @@ function createAutomation() {
             else if (event.type === 'ready' && desired) {
               state.status = 'running';state.runningSince=new Date().toISOString();state.message = event.message || '监听中';
               checkinAccounts=Array.isArray(event.checkinAccounts) ? event.checkinAccounts.filter(account=>sessionOwners.includes(account)) : [];
-              securityAccounts=Array.isArray(event.securityAccounts) ? event.securityAccounts.filter(account=>sessionOwners.includes(account)) : [];
               for(const job of checkins.values())submitCheckin(job);
             }
             else if (event.type === 'fatal') { state.status = 'failed'; state.message = event.message || '自动化启动失败'; line(state.message, 'error'); packetNotice(state.message,'error','failed'); }
             else line(event.message || part, event.level || 'info', event);
-          } catch { line(/"type"\s*:\s*"account_security"/.test(part) ? '账号防护进程返回不完整响应，已忽略' : part); }
+          } catch { line(part); }
         }
-        if (buffer.length > 524288) { line('自动化进程响应过大，已忽略', 'error');buffer='';discarding=true; }
+        if (buffer.length > 65536) { line(buffer, level); buffer = ''; }
       });
-      pipe.on('end', () => { if (buffer && processHandle === worker) line(level==='error' ? buffer : '自动化进程输出未完成，已忽略', level); });
+      pipe.on('end', () => { if (buffer && processHandle === worker) line(buffer, level); });
     }
     worker.on('error', error => { if (processHandle !== worker) return; state.status = 'failed'; state.message = error.message; line(error.message, 'error'); packetNotice(`自动化进程错误：${error.message}`,'error','failed'); });
     worker.on('close', code => {
@@ -284,8 +249,6 @@ function createAutomation() {
       processHandle = null;
       sessionOwners = [];
       checkinAccounts=[];
-      securityAccounts=[];
-      for(const [id,request] of securityRequests)if(request.worker===worker){clearTimeout(request.timeout);securityRequests.delete(id);request.reject(Error('Telegram 连接进程已退出，账号防护检查中断'));}
       for(const job of [...checkins.values()])if(job.worker===worker)finishCheckin(job.id,1,'监听进程已退出，本次签到中断；不会自动重复发送签到消息');
       if (!desired) {
         state.status = 'paused';
@@ -364,6 +327,6 @@ function createAutomation() {
     worker.kill('SIGTERM');
   }
 
-  return { configure, getState, start, stop, restart, recover, runCheckin, requestSecurity, ownedAccounts:()=>sessionOwners.slice() };
+  return { configure, getState, start, stop, restart, recover, runCheckin, ownedAccounts:()=>sessionOwners.slice() };
 }
 module.exports = { ...createAutomation(), createAutomation, combineCheckinWorkers };

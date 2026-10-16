@@ -9,12 +9,9 @@ document.querySelector('#admin-logout')?.addEventListener('click', async () => {
 let currentRun = null;
 let activeRunRecords = [];
 let busyRunAccounts = new Set();
-let securityRunAccounts = new Set();
 const startingAccounts = new Set();
 function receiveRunState(data) {
   currentRun = data.run;
-  securityRunAccounts = new Set(data.securityBusyAccounts || []);
-  window.receiveAccountSecuritySummary?.(data.accountSecurity || []);
   activeRunRecords = data.activeRuns || (['running','stopping'].includes(currentRun?.state) ? [currentRun] : []);
   busyRunAccounts = new Set(data.busyAccounts || activeRunRecords.flatMap(run => run.accounts || (run.account ? [run.account] : (config?.users || []).map(user => user.session))));
   if (typeof renderCleanupStatus === 'function') renderCleanupStatus(data.cleanupRuns || []);
@@ -56,8 +53,7 @@ function lineIcon(name) {
     message:'<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m3 6 9 7 9-7"/>',
     forward:'<path d="m13 4 7 7-7 7M20 11H9a5 5 0 0 0-5 5v4"/>',
     refresh:'<path d="M20 8a9 9 0 0 0-15-3L2 8m0-5v5h5M4 16a9 9 0 0 0 15 3l3-3m0 5v-5h-5"/>',
-    edit:'<path d="m16 3 5 5-12 12-6 1 1-6L16 3ZM13 6l5 5"/>',
-    shield:'<path d="m12 3 8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/>'
+    edit:'<path d="m16 3 5 5-12 12-6 1 1-6L16 3ZM13 6l5 5"/>'
   };
   return `<svg class="line-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.ai}</svg>`;
 }
@@ -139,7 +135,6 @@ async function api(url, options = {}) {
 function navigate(view, keepAccount = false, logAccount = null) {
   if (['users','audit','admin-global-settings'].includes(view) && typeof webUser !== 'undefined' && webUser?.role !== 'admin') view = 'overview';
   if(typeof settingsNavigationAllowed==='function' && !settingsNavigationAllowed(view))return;
-  if (view === 'security') { openAccount(selectedAccountIndex ?? 0, 'security'); return; }
   if (view === 'bots') { openCheckinFeature(); return; }
   if (view === 'automation') {
     if (!config?.users.length) { navigate('accounts'); toast('先添加账号，再配置消息自动化'); return; }
@@ -154,14 +149,13 @@ function navigate(view, keepAccount = false, logAccount = null) {
   if (view === 'activity' && typeof setRunLogScope === 'function') setRunLogScope(logAccount);
   $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
   $$('.view').forEach(item => item.classList.toggle('active', item.id === `view-${view==='admin-global-settings' ? 'global-settings' : view}`));
-  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', features:'功能中心', ai:'AI 管理', activity:'运行日志', users:'用户管理', 'global-settings':'全局设置','admin-global-settings':'管理员全局设置', audit:'后台审计',notifications:'TG 通知',health:'运行健康监控',security:'账号防护' })[view];
+  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', features:'功能中心', ai:'AI 管理', activity:'运行日志', users:'用户管理', 'global-settings':'全局设置','admin-global-settings':'管理员全局设置', audit:'后台审计',notifications:'TG 通知',health:'运行健康监控' })[view];
   window.location.hash = view === 'activity' && logAccount ? `activity?account=${encodeURIComponent(logAccount)}` : view;
   schedulePeerLookup();
   if (view === 'activity') renderRun();
   if (view === 'audit' && typeof loadAuditUsers === 'function') loadAuditUsers();
   if (view === 'notifications' && typeof loadNotificationSettings === 'function') loadNotificationSettings();
   if (view === 'health' && typeof loadHealth === 'function') loadHealth();
-  if (view === 'security' && typeof loadAccountSecurity === 'function') loadAccountSecurity();
   if (view === 'ai' && typeof loadAISettings === 'function') loadAISettings().catch(error=>toast(error.message,true));
   if (['global-settings','admin-global-settings'].includes(view) && typeof loadSystemSettings === 'function') loadSystemSettings().catch(error=>toast(error.message,true));
   if (view === 'features' && typeof renderFeatureCenter === 'function') renderFeatureCenter();
@@ -173,24 +167,19 @@ function openAccount(index, section = 'settings') {
   if (section === 'logs') { openAccountLogs(config.users[index].session); return; }
   if (['bots','checkins'].includes(section)) { openCheckinFeature(index, section); return; }
   selectedAccountIndex = index;
-  accountSection = ['settings','messages','security'].includes(section) ? section : 'settings';
+  accountSection = ['settings','messages'].includes(section) ? section : 'settings';
   navigate('accounts', true);
-  history.replaceState(null,'',`#accounts?${new URLSearchParams({account:config.users[index].session,section:accountSection})}`);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function showAccountSection(section) {
   if (section === 'logs') { openAccount(selectedAccountIndex, 'logs'); return; }
   if (['bots','checkins'].includes(section)) { openCheckinFeature(selectedAccountIndex, section); return; }
-  section = ['settings','messages','security'].includes(section) ? section : 'settings';
+  section = ['settings','messages'].includes(section) ? section : 'settings';
   accountSection = section;
   $('#account-editor').hidden = section !== 'settings';
   $$('#account-tabs [data-account-section]').forEach(button => button.classList.toggle('active', button.dataset.accountSection === section));
   $$('#account-editor .account-pane,[data-account-pane="messages"]').forEach(pane => { pane.hidden = pane.dataset.accountPane !== section; });
-  $('#view-security').hidden = section !== 'security';
-  $$('#account-detail > .bottom-save,.account-detail-actions .save-btn').forEach(button=>button.hidden=section==='security');
-  if(section==='security')window.loadAccountSecurity?.();
-  if(currentView==='accounts' && config?.users[selectedAccountIndex])history.replaceState(null,'',`#accounts?${new URLSearchParams({account:config.users[selectedAccountIndex].session,section})}`);
   schedulePeerLookup();
 }
 
@@ -255,12 +244,8 @@ function renderConfig() {
   const aiScope=config.systemProviderId ? `指定提供商 · ${activeAI[0]?.source==='personal' ? '我的服务' : '管理员服务'}` : config.system?.sources?.ai==='personal' ? '我的 AI 配置' : '继承管理员配置';
   $('#system-ai-summary').textContent=activeAI.length ? `${aiScope} · ${activeAI.map(p=>p.name).join('、')}` : config.systemProviderId ? '所选提供商已不可用，请重新选择并保存。' : '尚未配置 AI 提供商，请在上方添加，或由管理员配置项目默认服务。';
   $('#account-list').innerHTML = config.users.map((user, index) => {
-    return `<article class="account-tile" data-account-index="${index}"><button type="button" class="account-tile-main" data-open-account="${index}" data-section="settings"><span class="account-tile-top"><span class="account-tile-avatar">${accountAvatar(user)}</span><span class="account-tile-title"><strong>${escapeHtml(user.name || '新账号')}</strong><small>${escapeHtml(user.profile?.username ? `@${user.profile.username}` : user.session || '待设置 Session')}</small></span><span class="account-health ${user.sessionReady ? 'ready' : 'pending'}">${user.sessionReady ? '● 已登录' : '○ 待登录'}</span></span><span class="account-tile-info"><span><small>Telegram 用户 ID</small><strong>${escapeHtml(user.profile?.userId || (user.sessionReady ? '待同步' : '登录后获取'))}</strong></span><span><small>数据中心 DC</small><strong title="当前 Telegram Session 连接的数据中心">${user.profile?.dcId ? `DC ${escapeHtml(user.profile.dcId)}` : '—'}</strong></span><span><small>签到 Bot</small><strong>${user.bots.length} 个</strong></span><span><small>资料更新</small><strong>${user.profile?.updatedAt ? escapeHtml(formatDate(user.profile.updatedAt)) : '尚未同步'}</strong></span></span><span class="account-restriction" data-restriction-account="${escapeHtml(user.session)}">双向限制：尚未查询</span><span class="account-tile-activity"><span>签到状态</span><strong></strong><small></small></span></button><div class="account-tile-actions"><button type="button" data-login-account="${index}" title="Telegram 登录">${lineIcon('login')}<span>登录</span></button><button type="button" data-open-account="${index}" data-section="messages" title="定时消息">${lineIcon('message')}<span>消息</span></button><button type="button" data-open-account="${index}" data-section="security" title="账号防护">${lineIcon('shield')}<span>防护</span></button><button type="button" data-open-account="${index}" data-section="logs" title="账号运行日志">${lineIcon('log')}<span>日志</span></button><button type="button" data-profile-account="${index}" ${!user.sessionReady ? 'disabled' : ''} title="同步 Telegram 头像、用户 ID 和 DC">${lineIcon('refresh')}<span>同步资料</span></button><button type="button" data-open-account="${index}" data-section="settings" title="账号资料">${lineIcon('edit')}<span>资料</span></button></div></article>`;
+    return `<article class="account-tile" data-account-index="${index}"><button type="button" class="account-tile-main" data-open-account="${index}" data-section="settings"><span class="account-tile-top"><span class="account-tile-avatar">${accountAvatar(user)}</span><span class="account-tile-title"><strong>${escapeHtml(user.name || '新账号')}</strong><small>${escapeHtml(user.profile?.username ? `@${user.profile.username}` : user.session || '待设置 Session')}</small></span><span class="account-health ${user.sessionReady ? 'ready' : 'pending'}">${user.sessionReady ? '● 正常' : '○ 待登录'}</span></span><span class="account-tile-info"><span><small>Telegram 用户 ID</small><strong>${escapeHtml(user.profile?.userId || (user.sessionReady ? '待同步' : '登录后获取'))}</strong></span><span><small>数据中心 DC</small><strong title="当前 Telegram Session 连接的数据中心">${user.profile?.dcId ? `DC ${escapeHtml(user.profile.dcId)}` : '—'}</strong></span><span><small>签到 Bot</small><strong>${user.bots.length} 个</strong></span><span><small>资料更新</small><strong>${user.profile?.updatedAt ? escapeHtml(formatDate(user.profile.updatedAt)) : '尚未同步'}</strong></span></span><span class="account-tile-activity"><span>签到状态</span><strong></strong><small></small></span></button><div class="account-tile-actions"><button type="button" data-login-account="${index}" title="Telegram 登录">${lineIcon('login')}<span>登录</span></button><button type="button" data-open-account="${index}" data-section="messages" title="定时消息">${lineIcon('message')}<span>消息</span></button><button type="button" data-open-account="${index}" data-section="logs" title="账号运行日志">${lineIcon('log')}<span>日志</span></button><button type="button" data-profile-account="${index}" ${!user.sessionReady ? 'disabled' : ''} title="同步 Telegram 头像、用户 ID 和 DC">${lineIcon('refresh')}<span>同步资料</span></button><button type="button" data-open-account="${index}" data-section="settings" title="账号资料">${lineIcon('edit')}<span>资料</span></button></div></article>`;
   }).join('') || '<div class="automation-empty">还没有账号。点击右上角添加账号。</div>';
-  SortableLists.mount($('#account-list'),{scope:'accounts',selector:'.account-tile',
-    key:card=>config.users[Number(card.dataset.accountIndex)]?.session,
-    label:card=>config.users[Number(card.dataset.accountIndex)]?.name || '账号',
-    handleTarget:card=>{let bar=card.querySelector('.account-sort-bar');if(!bar){bar=document.createElement('div');bar.className='account-sort-bar';bar.innerHTML='<small>账号排序</small>';card.prepend(bar);}return bar;}});
   if (selectedAccountIndex !== null && !config.users[selectedAccountIndex]) selectedAccountIndex = null;
   $('#account-overview').hidden = selectedAccountIndex !== null;
   $('#account-detail').hidden = selectedAccountIndex === null;
@@ -301,7 +286,6 @@ function renderConfig() {
     deleteAccount.disabled = false;
     showAccountSection(accountSection);
   }
-  window.renderAccountRestrictionBadges?.();
   renderAutomation();
   renderCheckinStatus();
   if (typeof renderFeatureCenter === 'function') renderFeatureCenter();
@@ -348,7 +332,7 @@ function accountCheckinStatus(user) {
   const active = activeRunRecords.find(run => (run.accounts || [run.account]).includes(user.session));
   if (runBusy(user.session)) {
     const cleanupActive = typeof cleanupRuns !== 'undefined' && cleanupRuns.some(run=>run.account===user.session && ['running','stopping'].includes(run.state));
-    text += securityRunAccounts.has(user.session) ? ' · 账号防护运行中' : cleanupActive ? ' · 群成员清理任务运行中' : active?.state === 'stopping' ? ' · 当前签到正在停止' : active?.state === 'running' ? ' · 当前签到运行中' : ' · 正在准备签到';
+    text += cleanupActive ? ' · 群成员清理任务运行中' : active?.state === 'stopping' ? ' · 当前签到正在停止' : active?.state === 'running' ? ' · 当前签到运行中' : ' · 正在准备签到';
   }
   const event = checkinSchedulerState?.events?.filter(item => item.account === user.session).at(-1);
   return {
@@ -402,14 +386,6 @@ function refreshRuleCards() {
       : `${rule.groups?.filter(Boolean).length || 0} 个群组 · ${(rule.groups || []).filter(Boolean).slice(0,2).map(value => peerLabel(rule.account,value)).join('、') || '待设置群组'} · ${rule.botUsername || '/red 自动领取'}`;
     RuleCards.enhance(card, {key:`${kind}:${rule.id}`,title:rule.name || `${label} ${index + 1}`,summary:`${accountLabel(rule.account)} · ${detail}`});
   });
-  const sortableRules=(list,scope,selector)=>SortableLists.mount(list,{scope,selector,key:card=>card.dataset.ruleKey,label:card=>card.querySelector('[data-rule-title]')?.textContent || '规则',handleTarget:card=>card.querySelector('.automation-card-head,.checkin-rule-head')});
-  if(config.users[selectedAccountIndex])sortableRules($('#schedule-list'),`message:${config.users[selectedAccountIndex].session}`,'[data-auto-kind="schedules"]');
-  $$('#checkin-config-editor [data-checkin-account]').forEach(editor=>{
-    const user=config.users[Number(editor.dataset.checkinAccount)];if(!user)return;
-    sortableRules(editor.querySelector('.checkin-rules'),`checkin:${user.session}`,'[data-checkin-index]');
-    SortableLists.mount(editor.querySelector('.account-bot-table'),{scope:`bots:${user.session}`,selector:'[data-bot-index]',key:row=>String(user.bots[Number(row.dataset.botIndex)]?.name || '').trim().toLowerCase(),label:row=>user.bots[Number(row.dataset.botIndex)]?.note || user.bots[Number(row.dataset.botIndex)]?.name || 'Bot',handleTarget:row=>{row.cells[0].classList.add('bot-sort-cell');return row.cells[0];}});
-  });
-  for(const [id,scope,selector] of [['forward-pin-rules','forward','[data-feature-rule]'],['zero-speakers-rules','cleanup','[data-cleanup-rule]'],['red-packet-rules','packet','[data-red-packet-rule]']])sortableRules(document.getElementById(id),scope,selector);
   renderRuleActions();
 }
 
@@ -757,7 +733,7 @@ function renderRun() {
   if (!currentRun) return;
   const summary = CheckinResults.summarize(currentRun,currentRun.account);
   const cleanupBusy = typeof cleanupRuns !== 'undefined' && cleanupRuns.some(run=>['running','stopping'].includes(run.state));
-  $('#stat-status').textContent = runBusy() ? `${busyRunAccounts.size || startingAccounts.size} 个账号${cleanupBusy || securityRunAccounts.size ? '任务运行中' : '签到中'}` : summary.label || statusText[summary.state] || summary.state;
+  $('#stat-status').textContent = runBusy() ? `${busyRunAccounts.size || startingAccounts.size} 个账号${cleanupBusy ? '任务运行中' : '签到中'}` : summary.label || statusText[summary.state] || summary.state;
   $('#stat-last').textContent = currentRun.startedAt ? `启动于 ${formatDate(currentRun.startedAt)}` : '尚无运行记录';
   const loggingIn = (typeof loginState !== 'undefined' && loginState?.active) || (typeof profileStarting !== 'undefined' && profileStarting);
   renderRuleActions();
@@ -981,7 +957,6 @@ $('#today').textContent = new Date().toLocaleDateString('zh-CN', { year:'numeric
   try {
     const data = await api('/api/state');
     config = data.config;
-    await SortableLists.load();
     rememberSavedCheckinSettings();
     receiveRunState(data);
     automationState = data.automation;
@@ -996,11 +971,7 @@ $('#today').textContent = new Date().toLocaleDateString('zh-CN', { year:'numeric
     if (hash === 'features' && params.get('plugin') === 'checkin') {
       const index = config.users.findIndex(user => user.session === params.get('account'));
       openCheckinFeature(index < 0 ? null : index, params.get('section'));
-    } else if(hash==='features' && params.get('plugin')==='spam') {window.openSpamFeature?.();
-    } else if(hash==='accounts' && params.get('account')) {
-      const index=config.users.findIndex(user=>user.session===params.get('account'));
-      if(index>=0)openAccount(index,params.get('section'));else navigate('accounts');
-    } else if (['overview','bots','accounts','features','ai','automation','activity','users','global-settings','admin-global-settings','audit','notifications','health','security'].includes(hash)) navigate(hash, false, hash === 'activity' ? params.get('account') : null);
+    } else if (['overview','bots','accounts','features','ai','automation','activity','users','global-settings','admin-global-settings','audit','notifications','health'].includes(hash)) navigate(hash, false, hash === 'activity' ? params.get('account') : null);
     if (!pythonVersion) toast('未检测到 Python，配置可编辑，运行需安装 Python 环境', true);
     const statePollTimer = setInterval(() => { if (!document.hidden) poll(); }, 2000);
     document.addEventListener('visibilitychange', () => {

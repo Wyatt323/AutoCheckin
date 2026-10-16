@@ -4,7 +4,7 @@ const {spawn}=require('node:child_process');
 (async()=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'shared-checkin-api-'));let server;
   try {
-    for(const file of ['server.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','account_security.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'])fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
+    for(const file of ['server.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'])fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
     fs.writeFileSync(path.join(root,'config.json'),JSON.stringify({telegram:{api_id:123,api_hash:'offline',users:['Labubu','other'].map(session=>({name:session,session,bot_groups:{command:[{bot:'@offline_bot',command:'/sign'}]}}))},ai:{providers:[]},automations:{redPackets:[{id:'shared_packet_rule',enabled:true,account:'Labubu',groups:['-100123']} ]}}));
     for(const account of ['Labubu','other'])fs.writeFileSync(path.join(root,account+'.session'),'offline');
     fs.writeFileSync(path.join(root,'allinone.py'),`import sys,json,time

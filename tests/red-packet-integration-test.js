@@ -9,7 +9,7 @@ const {spawn}=require('node:child_process'),{createHash}=require('node:crypto');
   let server,browser;
   const stop=async()=>{if(server){const closed=new Promise(resolve=>server.once('close',resolve));server.kill();await closed;server=null;}};
   try {
-    for(const file of ['server.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','account_security.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'])fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
+    for(const file of ['server.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'])fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
     fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
     fs.writeFileSync(path.join(root,'automation_worker.py'),`import json,time
 from pathlib import Path
@@ -93,7 +93,7 @@ time.sleep(60)
         return route.continue();
       });
       const screenshot=async name=>{if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,name+'.png'),fullPage:true});};
-      await page.goto(base+'/#features');assert.equal(await page.locator('#feature-catalog .feature-plugin-card').count(),5);
+      await page.goto(base+'/#features');assert.equal(await page.locator('#feature-catalog .feature-plugin-card').count(),4);
       await screenshot('red-packet-catalog');await page.locator('#open-red-packet').click();
       const card=page.locator('[data-red-packet-rule="red_rule_001"]');
       await card.locator('[data-rule-toggle]').click();

@@ -6,7 +6,7 @@ const {applySystemConfig,mergeSettings}=require('../system_settings');
 (async()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'global-api-')); let server,browser;
  try {
-  for(const file of ['database.js', 'account_profiles.js','server.js','admin_auth.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','account_security.js','checkin_results.js','automation.js','login.js','schedule_time.js', 'run_history.js', 'checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(dir,file));
+  for(const file of ['database.js', 'account_profiles.js','server.js','admin_auth.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','checkin_results.js','automation.js','login.js','schedule_time.js', 'run_history.js', 'checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(dir,file));
   fs.cpSync(path.join(__dirname,'../public'),path.join(dir,'public'),{recursive:true});
   const original={telegram:{api_id:789,api_hash:'global-secret',users:[{name:'legacy',session:'legacy',api_id:123,api_hash:'old-hash',bot_groups:{button:['@example_bot'],command:[]}}]},ai:{providers:[]}};
   fs.writeFileSync(path.join(dir,'config.json'),JSON.stringify(original));
@@ -56,7 +56,7 @@ const {applySystemConfig,mergeSettings}=require('../system_settings');
    await page.locator('[data-use-global]').check();await clickSave('#account-detail .save-btn');assert.equal(read().telegram.users[0].api_id,'');assert.equal(read().telegram.users[0].api_hash,'');
    await page.locator('#account-back').click();await clickSave('#account-overview .save-btn');assert.equal(own().telegram.api_hash,'browser-secret');
    await page.locator('#add-account').click();await page.fill('[data-field="name"]','inherited');await page.fill('[data-field="session"]','inherited');await clickSave('#account-detail .save-btn');
-   assert.equal(read().telegram.users[1].api_id,'');assert.equal(read().telegram.users[1].api_hash,'');await page.reload();await page.locator('#account-detail').waitFor();assert.equal(await page.inputValue('[data-field="session"]'),'inherited','reload restores the selected account');assert.equal(await page.locator('[data-use-global]').isChecked(),true);await page.locator('#account-back').click();await page.locator('#account-list .account-tile').first().waitFor();assert.equal(await page.locator('#global-api-id').count(),0);assert.equal(await page.locator('[data-section="forwards"]').count(),0);assert.equal(own().telegram.api_hash,'browser-secret');assert.deepEqual(errors,[]);
+   assert.equal(read().telegram.users[1].api_id,'');assert.equal(read().telegram.users[1].api_hash,'');await page.reload();await page.locator('#account-list .account-tile').first().waitFor();assert.equal(await page.locator('#global-api-id').count(),0);assert.equal(await page.locator('[data-section="forwards"]').count(),0);assert.equal(own().telegram.api_hash,'browser-secret');assert.deepEqual(errors,[]);
    const artifacts=process.env.AUTOCHECKIN_TEST_ARTIFACT_DIR;
    if(artifacts){fs.mkdirSync(artifacts,{recursive:true});await page.screenshot({path:path.join(artifacts,'global-api-desktop.png'),fullPage:true});}
    await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'mobile has no horizontal overflow');

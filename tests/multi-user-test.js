@@ -7,7 +7,7 @@ const {scopedStore} = require('../database');
 (async()=>{
   const root = fs.mkdtempSync(path.join(os.tmpdir(),'multi-user-'));
   let server, browser;
-  const baseFiles = ['server.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','account_security.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'];
+  const baseFiles = ['server.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'];
   const stop = async()=>{if(server){const done=new Promise(resolve=>server.once('close',resolve));server.kill();await done;server=null;}};
   try {
     // Exercise the same registry and prefix wrapper used with PostgreSQL.
@@ -102,13 +102,6 @@ for line in sys.stdin:
     assert.equal((await request('/api/users',alice)).status,403);
     assert.equal((await request('/api/users',alice,{username:'intruder'})).status,403);
     const adminRequest=(url,method,input,cookie=admin)=>fetch(base+url,{method,headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify(input)});
-    assert.equal((await request('/api/ui-order')).status,401);
-    assert.equal((await adminRequest('/api/ui-order','PUT',{scope:'accounts',keys:['alice-second','alice-first']},alice)).status,200);
-    assert.equal((await adminRequest('/api/ui-order','PUT',{scope:'accounts',keys:['bob-first']},bob)).status,200);
-    assert.equal((await adminRequest('/api/ui-order','PUT',{scope:'packet',keys:['duplicate','duplicate']},alice)).status,400);
-    assert.deepEqual((await(await request('/api/ui-order',alice)).json()).orders.accounts,['alice-second','alice-first']);
-    assert.deepEqual((await(await request('/api/ui-order',bob)).json()).orders.accounts,['bob-first']);
-    assert.deepEqual((await(await request('/api/ui-order',admin)).json()).orders,{});
     assert.equal((await adminRequest('/api/notifications','PUT',{enabled:false,botToken:'123456:alice_notification_token_123456',chatId:'111'},alice)).status,200);
     assert.equal((await adminRequest('/api/notifications','PUT',{enabled:false,botToken:'123456:bob_notification_token_123456',chatId:'222'},bob)).status,200);
     assert.equal((await(await request('/api/notifications',alice)).json()).notifications.chatId,'111');
@@ -311,7 +304,6 @@ for line in sys.stdin:
     assert.ok(fs.existsSync(userDir('bob')),'deleted user data is retained for backup');
     assert.equal((await deleteUser('admin')).status,404,'administrator cannot be removed');
     await stop();await start();admin=await login('admin','admin-secret');alice=await login('alice_renamed','alice-final-secret');
-    assert.deepEqual((await(await request('/api/ui-order',alice)).json()).orders.accounts,['alice-second','alice-first'],'user order survives username changes and server restart');
     assert.equal((await state(alice)).config.users[0].name,'alice');
     assert.ok(!(await(await request('/api/users',admin)).json()).users.some(user=>user.id===bobId),'deletion persists through restart');
     const newBob=(await(await request('/api/users',admin,{username:'bob'})).json()).user;

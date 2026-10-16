@@ -5,8 +5,6 @@ config.json
 .personal-settings.json*
 .notifications.json*
 .health-state.json*
-.account-security.json*
-.ui-order.json*
 .user-workspaces/
 .account-profiles/
 .bot-discovery/

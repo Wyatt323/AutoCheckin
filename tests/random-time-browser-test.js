@@ -6,7 +6,7 @@ const {spawn}=require('node:child_process');
  const {chromium}=require(process.env.PLAYWRIGHT_MODULE);
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'random-browser-'));let server,browser;
  try{
-  for(const file of ['database.js', 'account_profiles.js','server.js','admin_auth.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','account_security.js','checkin_results.js','automation.js','login.js','schedule_time.js','run_history.js', 'checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
+  for(const file of ['database.js', 'account_profiles.js','server.js','admin_auth.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','checkin_results.js','automation.js','login.js','schedule_time.js','run_history.js', 'checkin_scheduler.js','telegram_credentials.js']) fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
   fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
   const today=new Date(Date.now()+28800000).toISOString().slice(0,10);
   const rule={id:'random_rule_01',enabled:true,repeat:'daily',timeMode:'random',rangeStart:'09:00:01',rangeEnd:'09:00:01'};
@@ -41,7 +41,7 @@ const {spawn}=require('node:child_process');
   await message.locator('[data-auto-select][data-field="repeat"]').scrollIntoViewIfNeeded();
   await message.locator('[data-auto-select][data-field="repeat"]').click();await page.locator('[data-auto-option="once"]').click({force:true});await message.locator('[data-field="time"]').fill('2029-01-02T10:20:31');await save(200);
   persisted=JSON.parse(fs.readFileSync(path.join(root,'config.json')));assert.equal(persisted.automations.schedules[0].time,'2029-01-02T10:20:31');assert.equal(persisted.automations.schedules[0].timeMode,'fixed');
-  await page.reload();await page.locator('#account-detail [data-account-pane="messages"]').waitFor();assert.equal(await page.locator('[data-account-section="messages"]').getAttribute('class'),'active','reload restores the messages section');await message.locator('[data-rule-toggle]').click();assert.equal(await message.locator('[data-field="time"]').inputValue(),'2029-01-02T10:20:31');await page.locator('#account-back').click();await page.locator('[data-open-account="0"][data-section="messages"]').click();await message.locator('[data-rule-toggle]').click();assert.equal(await message.locator('[data-field="time"]').inputValue(),'2029-01-02T10:20:31');assert.deepEqual(errors,[]);
+  await page.reload();await page.locator('[data-open-account="0"][data-section="messages"]').click();await message.locator('[data-rule-toggle]').click();assert.equal(await message.locator('[data-field="time"]').inputValue(),'2029-01-02T10:20:31');assert.deepEqual(errors,[]);
   await page.locator('[data-view="features"]').click();if(await page.locator('#feature-catalog').isVisible())await page.locator('#open-checkin').click();await page.selectOption('#checkin-account-choice','0');
   const botTime=page.locator('[data-bot-schedule-time]');
   assert.equal(await botTime.getAttribute('step'),'1');

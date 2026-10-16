@@ -7,18 +7,16 @@ let profileStarting = false;
 const attemptedProfiles = new Set();
 const manualProfiles = new Set();
 let profileErrorId = null;
-let loginStarting = false;
-let loginRequestVersion = 0;
 const loginDialog = document.createElement('dialog');
 loginDialog.id = 'login-dialog';
 loginDialog.setAttribute('aria-labelledby', 'login-title');
-loginDialog.innerHTML = `<h2 id="login-title">Telegram 登录</h2><p id="login-account"></p><p id="login-status" role="status" aria-live="polite"></p><p id="login-hint" hidden></p><p id="login-diagnostic" hidden></p><img id="login-qr" alt="Telegram 登录二维码" width="260" height="260" hidden><p id="login-help" hidden>手机 Telegram → 设置 → 设备 → 连接桌面设备。二维码仅用于此账号登录，请勿分享。</p><form id="login-password-form" hidden><label>两步验证密码<input id="login-password" type="password" maxlength="256" autocomplete="off" required></label><button type="submit" class="outline-btn">验证密码</button></form><div class="login-actions"><button id="login-retry" type="button" class="primary-btn" hidden>重新登录</button><button id="login-cancel" type="button" class="outline-btn">取消登录</button></div>`;
+loginDialog.innerHTML = `<h2 id="login-title">Telegram 登录</h2><p id="login-account"></p><p id="login-status" role="status" aria-live="polite"></p><img id="login-qr" alt="Telegram 登录二维码" width="260" height="260" hidden><p>手机 Telegram → 设置 → 设备 → 连接桌面设备。二维码仅用于此账号登录，请勿分享。</p><form id="login-password-form" hidden><label>两步验证密码<input id="login-password" type="password" maxlength="256" autocomplete="off" required></label><button type="submit" class="outline-btn">验证密码</button></form><button id="login-cancel" type="button" class="outline-btn">取消登录</button>`;
 document.body.append(loginDialog);
 function renderLogin(state) {
   const previous = loginState;
   loginState = state;
   $$('.save-btn,#restart-automation,[data-login-account],[data-profile-account]').forEach(button => {
-    button.disabled = loginStarting || state.active || runBusy() || (button.classList.contains('save-btn') && typeof savingConfig !== 'undefined' && savingConfig) || (button.dataset.profileAccount !== undefined && !config?.users[Number(button.dataset.profileAccount)]?.sessionReady);
+    button.disabled = state.active || runBusy() || (button.classList.contains('save-btn') && typeof savingConfig !== 'undefined' && savingConfig) || (button.dataset.profileAccount !== undefined && !config?.users[Number(button.dataset.profileAccount)]?.sessionReady);
     if (button.dataset.profileAccount !== undefined) {
       const syncing = state.active && state.mode === 'profile' && config?.users[Number(button.dataset.profileAccount)]?.session === state.account;
       const label = button.querySelector('span');
@@ -28,24 +26,16 @@ function renderLogin(state) {
   });
   renderRun();
   if (state.state === 'idle' || dismissedLoginId === state.id) return;
-  if ((!loginDialog.open || loginDialog.classList?.contains('ui-dialog-closing')) && (state.active || (state.state === 'error' && previous?.id !== state.id)) && state.mode !== 'profile') loginDialog.showModal();
+  if ((!loginDialog.open || loginDialog.classList?.contains('ui-dialog-closing')) && state.active && state.mode !== 'profile') loginDialog.showModal();
   $('#login-account').textContent = state.account || '';
   $('#login-status').textContent = state.message || '正在准备登录';
-  $('#login-status').setAttribute('data-state', state.state);
-  $('#login-hint').hidden = state.state !== 'error' || !state.hint;
-  $('#login-hint').textContent = state.hint || '';
-  $('#login-diagnostic').hidden = state.state !== 'error' || !state.errorCode;
-  $('#login-diagnostic').textContent = state.errorCode ? `${state.phaseLabel ? `失败阶段：${state.phaseLabel} · ` : ''}错误代码：${state.errorCode.toUpperCase()}${state.sqliteCode ? ` · ${state.sqliteCode}` : ''}` : '';
   const image = $('#login-qr');
   image.hidden = state.state !== 'qr' || !state.png;
   if (!image.hidden) image.src = `data:image/png;base64,${state.png}`;
   else image.removeAttribute('src');
-  $('#login-help').hidden = image.hidden;
   $('#login-password-form').hidden = state.state !== 'password_required';
   if (state.state === 'password_required' && previous?.state !== state.state) $('#login-password').focus();
   $('#login-cancel').textContent = state.active ? '取消登录' : '关闭';
-  $('#login-retry').hidden = state.state !== 'error' || state.active || state.retryable === false || state.mode === 'profile';
-  $('#login-retry').disabled = loginStarting || state.active || runBusy();
   if (state.state === 'success' && !state.active && refreshedLoginId !== state.id && refreshingLoginId !== state.id && config) {
     const completedId = state.id;
     refreshingLoginId = completedId;
@@ -93,39 +83,8 @@ function queueAccountProfiles() {
   if (user) syncAccountProfile(user);
 }
 async function pollLogin() {
-  if (loginStarting) return;
-  const version = loginRequestVersion;
-  try {
-    const response = await api('/api/login/status');
-    if (version !== loginRequestVersion) return;
-    renderLogin(response.login); queueAccountProfiles();
-  }
-  catch (error) {
-    if (version === loginRequestVersion && loginDialog.open) {
-      $('#login-status').textContent = `状态读取失败：${error.message}`;
-      $('#login-status').setAttribute('data-state', 'error');
-    }
-  }
-}
-
-async function startAccountLogin(user) {
-  if (loginStarting || loginState?.active) return;
-  if (user.sourceIndex < 0) { toast('请先保存账号名称和 Session，再登录', true); return; }
-  loginStarting = true;
-  loginRequestVersion++;
-  $('#login-retry').disabled = true;
-  $('#login-password').value = '';
-  try {
-    const response = await api('/api/login/start', { method:'POST', body:JSON.stringify({ account:user.session }) });
-    dismissedLoginId = null;
-    loginStarting = false;
-    renderLogin(response.login);
-  } catch (error) { toast(error.message, true); }
-  finally {
-    loginStarting = false;
-    loginRequestVersion++;
-    if (loginState) renderLogin(loginState);
-  }
+  try { renderLogin((await api('/api/login/status')).login); queueAccountProfiles(); }
+  catch (error) { if (loginDialog.open) $('#login-status').textContent = `状态读取失败：${error.message}`; }
 }
 document.addEventListener('click', async event => {
   const profileButton = event.target.closest('[data-profile-account]');
@@ -138,14 +97,11 @@ document.addEventListener('click', async event => {
   if (!button) return;
   const user = config?.users[Number(button.dataset.loginAccount)];
   if (!user) return;
+  if (user.sourceIndex < 0) { toast('请先保存账号名称和 Session，再登录', true); return; }
   button.disabled = true;
-  await startAccountLogin(user);
-  button.disabled = !!loginState?.active || runBusy();
-});
-$('#login-retry').addEventListener('click', async () => {
-  const user = config?.users.find(user => user.session === loginState?.account);
-  if (!user) { toast('账号不存在，请刷新后重试', true); return; }
-  await startAccountLogin(user);
+  try { dismissedLoginId = null; renderLogin((await api('/api/login/start', { method:'POST', body:JSON.stringify({ account:user.session }) })).login); }
+  catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; }
 });
 $('#login-password-form').addEventListener('submit', async event => {
   event.preventDefault();

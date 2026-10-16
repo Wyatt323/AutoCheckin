@@ -18,11 +18,6 @@ const vm = require('node:vm'), fs = require('node:fs'), assert = require('node:a
   resolveRefresh({config:{users:[{session:'one',sessionReady:true}]}}); await new Promise(r=>setImmediate(r));
   assert.equal(element('#login-dialog').open,true,'old refresh must not close new login'); assert.equal(refreshed,0);
   render({id:'new',state:'failed',active:false,message:'offline error'}); assert.equal(element('#login-dialog').open,true);
-  render({id:'storage',state:'error',active:false,message:'无法写入 Telegram 登录数据',errorCode:'storage_permission',sqliteCode:'SQLITE_READONLY',phaseLabel:'创建或读取登录会话',hint:'检查数据目录权限',retryable:false});
-  assert.ok(element('#login-diagnostic').textContent.includes('SQLITE_READONLY'));
-  assert.equal(element('#login-help').hidden,true);
-  assert.equal(element('#login-retry').hidden,true);
-  assert.equal(element('#login-dialog').open,true,'new fast storage failure remains visible');
   render({id:'final',state:'qr',active:true,account:'one'});
   render({id:'final',state:'success',active:false,account:'one'});
   resolveRefresh({config:{users:[{session:'one',sessionReady:true}]}}); await new Promise(r=>setImmediate(r));
