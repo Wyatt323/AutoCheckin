@@ -50,13 +50,18 @@ function createAdminAuth({ password = process.env.ADMIN_PASSWORD, ttlMs = 12 * 6
   }
   return { configured, authenticated, login, logout };
 }
-function requestSecurity(req, { publicHost, port, trustProxy = false }) {
-  const host = `${publicHost}:${port}`;
-  if (req.headers.host !== host) return { error: '访问地址不被允许' };
-  const peer = req.socket.remoteAddress;
-  const loopback = peer === '127.0.0.1' || peer === '::1' || peer === '::ffff:127.0.0.1';
-  const secure = !!req.socket.encrypted || (trustProxy && loopback && req.headers['x-forwarded-proto'] === 'https');
-  const expectedOrigin = `${secure ? 'https' : 'http'}://${host}`;
+function requestSecurity(req, { publicHost = '127.0.0.1', port = 8765, strictPublicHost = false, trustProxy = false } = {}) {
+  // Accept any valid request authority by default, including Docker port mappings.
+  // Never use Forwarded / X-Forwarded-Host: they must not redefine the CSRF target.
+  const host = req.headers.host;
+  if (typeof host !== 'string' || !/^(?:\[[0-9a-fA-F:.]+\]|[a-zA-Z0-9._-]+)(?::[0-9]+)?$/.test(host)) return { error: '访问地址不被允许' };
+  if (strictPublicHost && host !== `${publicHost}:${port}`) return { error: '访问地址不被允许' };
+  // Explicit deployment-wide opt-in: the proxy must overwrite this header and
+  // direct access to the upstream must be controlled by the operator.
+  const secure = !!req.socket.encrypted || (trustProxy && req.headers['x-forwarded-proto'] === 'https');
+  let expectedOrigin;
+  try { expectedOrigin = new URL(`${secure ? 'https' : 'http'}://${host}`).origin; }
+  catch { return { error: '访问地址不被允许' }; }
   if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== expectedOrigin) return { error: '跨站请求被拒绝' };
   return { secure };
 }

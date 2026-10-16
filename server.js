@@ -22,7 +22,7 @@ if (!fs.existsSync(CONFIG)) {
   fs.mkdirSync(DATA_ROOT, { recursive: true });
   fs.writeFileSync(CONFIG, fs.readFileSync(path.join(ROOT, 'config.example.json')), { mode: 0o600 });
 }
-const HOST = process.env.BIND_HOST || '127.0.0.1';
+const HOST = process.env.BIND_HOST || '0.0.0.0';
 const PUBLIC_HOST = process.env.PUBLIC_HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT || 8765);
 const MAX_BODY = 256 * 1024;
@@ -972,9 +972,9 @@ async function boot() {
   const types = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml'};
 http.createServer(async (req, res) => {
   try {
-    const security = requestSecurity(req, { publicHost: PUBLIC_HOST, port: Number(process.env.PUBLIC_PORT || PORT), trustProxy: process.env.TRUST_PROXY === 'true' });
+    const security = requestSecurity(req, { publicHost: PUBLIC_HOST, port: Number(process.env.PUBLIC_PORT || PORT), strictPublicHost: process.env.STRICT_PUBLIC_HOST === 'true', trustProxy: process.env.TRUST_PROXY === 'true' });
     if (security.error) return send(res, 403, { error: security.error });
-    const url = new URL(req.url, `http://${PUBLIC_HOST}:${PORT}`);
+    const url = new URL(req.url, 'http://localhost');
     const user = auth.identity(req);
     if (req.method === 'GET' && url.pathname === '/api/auth/status') return send(res,200,{authenticated:Boolean(user),configured:auth.configured,adminUsername:auth.adminUsername(),user});
     if (req.method === 'POST' && url.pathname === '/api/auth/login') {
