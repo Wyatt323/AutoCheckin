@@ -8,6 +8,7 @@ config.json
 .personal-settings.json*
 .notifications.json*
 .account-security.json*
+.ui-order.json*
 .user-workspaces
 .account-profiles
 .bot-discovery

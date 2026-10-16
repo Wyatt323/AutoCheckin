@@ -48,6 +48,10 @@ function fake() {
   assert.equal(login.status().retryAfterSeconds,90); assert.ok(login.status().hint.includes('90')); assert.equal(login.status().retryable,false);
   await login.start('offline'); child.event({type:'error',code:'tg://secret',phase:'secret',message:'secret'}); child.emit('close',2);
   assert.equal(login.status().errorCode,'unknown'); assert.ok(!JSON.stringify(login.status()).includes('secret'));
+  await login.start('offline'); child.event({type:'error',code:'storage_permission',phase:'session',sqliteCode:'SQLITE_READONLY',message:'secret'}); child.emit('close',2);
+  assert.equal(login.status().sqliteCode,'SQLITE_READONLY'); assert.ok(!JSON.stringify(login.status()).includes('secret'));
+  await login.start('offline'); child.event({type:'error',code:'session_storage',sqliteCode:'secret'}); child.emit('close',2);
+  assert.equal(login.status().sqliteCode,undefined); assert.ok(!JSON.stringify(login.status()).includes('secret'));
   await login.start('offline'); const shutdown = login.shutdown(); child.emit('close',null); await shutdown;
   let release;
   const pending = createLoginController({...opts, stopAutomation:() => new Promise(resolve => {release=resolve;})});

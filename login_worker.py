@@ -4,6 +4,7 @@ from telegram_credentials import resolve_credentials
 from outgoing_proxy import telegram_proxy_kwargs, install_network_guard
 import asyncio
 import base64
+import errno
 import io
 import json
 import os
@@ -11,6 +12,7 @@ import re
 import signal
 import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 from account_profile import save_profile
 from storage import read_document, parse_config_text
@@ -49,10 +51,31 @@ def emit_error(error, phase, *, proxy_enabled=False):
         code = 'session_invalid'
     elif isinstance(error, PermissionError):
         code = 'storage_permission'
-    elif isinstance(error, sqlite3.OperationalError) and 'locked' in str(error).lower():
-        code = 'session_busy'
     elif isinstance(error, sqlite3.DatabaseError):
-        code = 'session_storage'
+        primary = (getattr(error, 'sqlite_errorcode', 0) or 0) & 255
+        categories = {
+            sqlite3.SQLITE_BUSY: ('session_busy', 'SQLITE_BUSY'),
+            sqlite3.SQLITE_LOCKED: ('session_busy', 'SQLITE_LOCKED'),
+            sqlite3.SQLITE_READONLY: ('storage_permission', 'SQLITE_READONLY'),
+            sqlite3.SQLITE_PERM: ('storage_permission', 'SQLITE_PERM'),
+            sqlite3.SQLITE_CANTOPEN: ('session_path', 'SQLITE_CANTOPEN'),
+            sqlite3.SQLITE_CORRUPT: ('session_corrupt', 'SQLITE_CORRUPT'),
+            sqlite3.SQLITE_NOTADB: ('session_corrupt', 'SQLITE_NOTADB'),
+            sqlite3.SQLITE_FULL: ('storage_full', 'SQLITE_FULL'),
+            sqlite3.SQLITE_IOERR: ('storage_io', 'SQLITE_IOERR'),
+            sqlite3.SQLITE_ERROR: ('session_schema', 'SQLITE_ERROR'),
+        }
+        code, sqlite_code = categories.get(primary, ('session_storage', 'SQLITE_OTHER'))
+        # Manually raised exceptions in adapters may not carry SQLite's attributes.
+        if not primary and isinstance(error, sqlite3.OperationalError) and 'locked' in str(error).lower():
+            code, sqlite_code = 'session_busy', 'SQLITE_BUSY'
+        fields['sqliteCode'] = sqlite_code
+    elif isinstance(error, OSError) and error.errno in {errno.EACCES, errno.EPERM, errno.EROFS}:
+        code = 'storage_permission'
+    elif isinstance(error, OSError) and error.errno in {errno.ENOSPC, getattr(errno, 'EDQUOT', errno.ENOSPC)}:
+        code = 'storage_full'
+    elif phase == 'session' and isinstance(error, OSError):
+        code = 'session_path'
     elif type(error).__module__.startswith('psycopg'):
         code = 'config_unavailable'
     elif phase == 'credentials':
@@ -72,6 +95,20 @@ def emit_error(error, phase, *, proxy_enabled=False):
     else:
         code = 'unknown'
     emit('error', code=code, phase=phase, **fields)
+
+
+def prepare_session_storage(data_dir, account):
+    """SQLite needs a writable directory for its journal, even with PostgreSQL config."""
+    directory = Path(data_dir)
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    session_file = directory / (account if account.endswith('.session') else account + '.session')
+    if session_file.exists() and not session_file.is_file():
+        raise IsADirectoryError(errno.EISDIR, 'Session path is not a file')
+    # A real write is more reliable than os.access() for mounted volumes/ACLs.
+    # This never modifies or deletes an existing Session.
+    with tempfile.TemporaryFile(prefix='.session-write-check-', dir=directory) as probe:
+        probe.write(b'1')
+        probe.flush()
 
 
 async def read_password():
@@ -108,6 +145,8 @@ async def login(account, data_dir, *, client_factory=None, password_reader=read_
         proxy_options = telegram_proxy_kwargs(user)
         proxy_enabled = bool(proxy_options)
         phase = 'session'
+        emit('progress', phase=phase)
+        prepare_session_storage(data_dir, account)
         client = (client_factory or TelegramClient)(str(Path(data_dir) / account), api_id, api_hash,
             device_model="AutoCheckin", connection_retries=1, request_retries=1, retry_delay=1,
             timeout=10, flood_sleep_threshold=0, **proxy_options)

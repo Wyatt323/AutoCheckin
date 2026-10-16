@@ -130,6 +130,16 @@ async function createDatabase({ dataDir, parseConfig, pool: suppliedPool } = {})
       }
       await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb)',['migration:account-security-v1',JSON.stringify({at:new Date().toISOString()})]);
     }
+    const orderMigrated=await client.query("SELECT key FROM autocheckin_documents WHERE key = 'migration:ui-order-v1'");
+    if(!orderMigrated.rows.length) {
+      const directories=[['',dataDir]],tenants=path.join(dataDir,'.user-workspaces');
+      if(fs.existsSync(tenants))for(const entry of fs.readdirSync(tenants,{withFileTypes:true}))if(entry.isDirectory() && /^[a-f0-9-]{36}$/.test(entry.name))directories.push(['tenant:'+entry.name+':',path.join(tenants,entry.name)]);
+      for(const [prefix,directory] of directories) {
+        const file=path.join(directory,'.ui-order.json');
+        if(fs.existsSync(file))await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb) ON CONFLICT(key) DO NOTHING',[prefix+'ui-order',fs.readFileSync(file,'utf8')]);
+      }
+      await client.query('INSERT INTO autocheckin_documents(key,value) VALUES($1,$2::jsonb)',['migration:ui-order-v1',JSON.stringify({at:new Date().toISOString()})]);
+    }
     await client.query('COMMIT');
     if (importedCount !== null) console.log(`旧数据迁移完成：${importedCount} 项；源文件已保留。`);
     for (const row of (await client.query('SELECT key, value FROM autocheckin_documents')).rows) documents.set(row.key, row.value);
@@ -171,4 +181,33 @@ function scopedStore(store, prefix) {
     keys:() => store.keys().filter(key=>key.startsWith(prefix)).map(key=>key.slice(prefix.length))
   };
 }
-module.exports = { createDatabase, scopedStore };
+// Presentation order is independent of executable configuration and editor drafts.
+function createUiOrder({dataDir,store}) {
+  const file=path.join(dataDir,'.ui-order.json');
+  let document=store ? store.read('ui-order') : fs.existsSync(file) ? JSON.parse(fs.readFileSync(file,'utf8')) : null;
+  document=structuredClone(document || {version:1,orders:{}});
+  let queue=Promise.resolve();
+  return {
+    view:()=>structuredClone(document.orders || {}),
+    update(input) {
+      const {scope,keys}=input || {};
+      if(typeof scope!=='string' || scope.length>120 || !/^(accounts|forward|cleanup|packet|spam|(?:checkin|message|bots):[^\x00-\x1f\x7f]+)$/.test(scope))throw Error('排序列表不正确');
+      if(!Array.isArray(keys) || keys.length>2000 || keys.some(key=>typeof key!=='string' || !key || key.length>200 || /[\x00-\x1f\x7f]/.test(key)) || new Set(keys).size!==keys.length)throw Error('排序内容不正确或包含重复项');
+      const ordered=keys.slice();
+      const result=queue.then(async()=>{
+        const next={version:1,orders:{...document.orders,[scope]:ordered}};
+        if(Object.keys(next.orders).length>1000 || Buffer.byteLength(JSON.stringify(next))>192*1024)throw Error('排序数据过多');
+        if(store)await store.write('ui-order',next);
+        else {
+          try{fs.writeFileSync(file+'.tmp',JSON.stringify(next)+'\n',{encoding:'utf8',mode:0o600});fs.renameSync(file+'.tmp',file);}
+          catch(error){try{fs.unlinkSync(file+'.tmp');}catch{}throw error;}
+        }
+        document=next;
+        return {scope,keys:ordered};
+      });
+      queue=result.catch(()=>{});
+      return result;
+    }
+  };
+}
+module.exports = { createDatabase, scopedStore, createUiOrder };

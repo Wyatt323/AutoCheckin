@@ -6,7 +6,7 @@ const { resolveCredentials } = require('./telegram_credentials');
 
 const LOGIN_PHASES = Object.freeze({
   dependencies:'加载登录组件', configuration:'读取账号配置', credentials:'检查 API 凭据',
-  proxy:'检查出口代理', session:'打开登录会话', connect:'连接 Telegram',
+  proxy:'检查出口代理', session:'创建或读取登录会话', connect:'连接 Telegram',
   authorization:'检查登录状态', qr:'获取登录二维码', qr_image:'生成二维码图片',
   scan:'等待扫码确认', password_input:'等待两步密码', password:'验证两步密码', profile:'同步账号资料', startup:'启动登录组件'
 });
@@ -22,7 +22,12 @@ const LOGIN_ERRORS = Object.freeze({
   dependency_missing:['登录组件或依赖未正确安装', 'Docker 部署请重新构建镜像；本机部署请在项目虚拟环境安装 requirements.txt 中的依赖。', false],
   qr_render_failed:['无法生成登录二维码图片', '请检查 Python 环境中的 qrcode 和 Pillow 依赖；Docker 部署可重新构建镜像。', false],
   config_unavailable:['无法读取账号配置', '请检查数据库连接或配置文件，确认账号已保存后重试。'],
-  storage_permission:['登录数据目录没有读写权限', '请检查 Docker 数据卷或本机数据目录权限，修复后重新登录。', false],
+  storage_permission:['无法写入 Telegram 登录数据', '新账号需要创建 Session 和 SQLite 临时文件。请检查数据目录、已有 Session 的写入权限，以及 Docker 挂载是否只读；PostgreSQL 不保存 Telegram Session 文件。', false],
+  session_path:['无法创建或打开账号 Session 文件', '请检查数据目录及 Session 路径是否存在、可写，是否被同名文件夹占用；新账号遇到此错误不代表会话已损坏。', false],
+  session_corrupt:['Session 文件格式无效或已损坏', '请先备份此账号的 Session 文件，再重新登录；程序不会自动删除或覆盖原会话。', false],
+  session_schema:['Session 数据表无法初始化或版本不兼容', '请检查容器是否使用同一版本的 Telethon，保留 Session 备份后处理；不要让不同版本的实例共用同一数据目录。', false],
+  storage_full:['登录数据所在磁盘空间或配额不足', '请检查 Docker 数据卷或宿主机磁盘空间与配额，释放空间后重试。', false],
+  storage_io:['登录数据卷读写异常', '请检查挂载、磁盘状态及存储服务，恢复正常后再登录。', false],
   session_busy:['此账号的登录会话正在被占用', '请确认没有另一个 AutoCheckin 实例使用同一 Session，待占用结束后重试。'],
   session_storage:['无法读取账号登录会话', '请检查 Session 文件及数据卷是否损坏，先备份数据再处理；程序不会自动删除会话。', false],
   session_invalid:['Telegram 登录会话已失效', '请在 Telegram 官方客户端核对设备与账号状态，确认没有其他实例共用此 Session 后重试。'],
@@ -55,6 +60,7 @@ function createLoginController({ workerEnv = {}, root, dataDir, readConfig, pyth
       state.retryAfterSeconds = event.retryAfterSeconds;
       state.hint = `Telegram 要求等待 ${event.retryAfterSeconds} 秒，请在等待结束后再登录。`;
     }
+    if (['SQLITE_BUSY','SQLITE_LOCKED','SQLITE_READONLY','SQLITE_PERM','SQLITE_CANTOPEN','SQLITE_CORRUPT','SQLITE_NOTADB','SQLITE_FULL','SQLITE_IOERR','SQLITE_ERROR','SQLITE_OTHER'].includes(event.sqliteCode)) state.sqliteCode = event.sqliteCode;
     delete state.png; delete state.expiresAt;
   }
   function check(id) {

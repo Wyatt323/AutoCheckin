@@ -94,6 +94,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
   const accountBusy = account => shuttingDown || editingConfig || networkChanging() || login.active() || (account ? reservedAccounts.has(account) : busy());
   const publicRun = record => ({ ...record, lines:record.lines.slice(-150) });
   fs.mkdirSync(DATA_ROOT,{recursive:true,mode:0o700});
+  const uiOrder=require('./database').createUiOrder({dataDir:DATA_ROOT,store:database});
   if (prefix && !(database ? database.read('config') : fs.existsSync(CONFIG))) {
     const empty = {telegram:{users:[]},ai:{providers:[]},automations:{schedules:[],forwards:[]}};
     if (database) await database.write('config',empty);
@@ -742,6 +743,11 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     },
     async handle(req,res,url,authUser) {
         if (shuttingDown) return send(res,403,{error:'当前用户工作空间已关闭'});
+        if(url.pathname==='/api/ui-order') {
+          if(req.method==='GET')return send(res,200,{orders:uiOrder.view()});
+          if(req.method==='PUT')return send(res,200,await uiOrder.update(await bodyJson(req)));
+          return send(res,405,{error:'不支持的请求'});
+        }
         if(url.pathname==='/api/account-security') {
           if(req.method==='GET')return send(res,200,{security:security.view()});
           if(req.method==='PUT'){const input=await bodyJson(req);return send(res,200,{security:await security.update(input,input.account || '')});}
@@ -1139,7 +1145,7 @@ http.createServer(async (req, res) => {
     }
     if (req.method !== 'GET') return send(res, 405, { error: '不支持的请求' });
     const file = url.pathname === '/' ? 'index.html' : ['/login','/password'].includes(url.pathname) ? 'auth.html' : url.pathname.slice(1);
-    if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'features.js', 'rule-cards.js', 'rule-cards.css', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css', 'run-log.js', 'checkin-results.js', 'run-log.css', 'ui-controls.js', 'users.js', 'audit.js', 'notifications.js', 'health.js', 'account-security.js', 'account-security.css', 'spam-submit.js', 'ui-controls.css', 'theme.css', 'favicon.svg'].includes(file)) return send(res, 404, { error: '页面不存在' });
+    if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'features.js', 'rule-cards.js', 'rule-cards.css', 'sortable.js', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css', 'run-log.js', 'checkin-results.js', 'run-log.css', 'ui-controls.js', 'users.js', 'audit.js', 'notifications.js', 'health.js', 'account-security.js', 'account-security.css', 'spam-submit.js', 'ui-controls.css', 'theme.css', 'favicon.svg'].includes(file)) return send(res, 404, { error: '页面不存在' });
     const target = file==='checkin-results.js' ? path.join(ROOT,'checkin_results.js') : path.join(PUBLIC, file);
     res.writeHead(200, { 'Content-Type': types[path.extname(file)], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     fs.createReadStream(target).pipe(res);

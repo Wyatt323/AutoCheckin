@@ -35,7 +35,7 @@ function renderLogin(state) {
   $('#login-hint').hidden = state.state !== 'error' || !state.hint;
   $('#login-hint').textContent = state.hint || '';
   $('#login-diagnostic').hidden = state.state !== 'error' || !state.errorCode;
-  $('#login-diagnostic').textContent = state.errorCode ? `${state.phaseLabel ? `失败阶段：${state.phaseLabel} · ` : ''}错误代码：${state.errorCode.toUpperCase()}` : '';
+  $('#login-diagnostic').textContent = state.errorCode ? `${state.phaseLabel ? `失败阶段：${state.phaseLabel} · ` : ''}错误代码：${state.errorCode.toUpperCase()}${state.sqliteCode ? ` · ${state.sqliteCode}` : ''}` : '';
   const image = $('#login-qr');
   image.hidden = state.state !== 'qr' || !state.png;
   if (!image.hidden) image.src = `data:image/png;base64,${state.png}`;
