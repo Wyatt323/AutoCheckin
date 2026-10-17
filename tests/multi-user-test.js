@@ -91,7 +91,7 @@ for line in sys.stdin:
     assert.equal((await request('/api/users',admin,{username:'ALICE'})).status,400);
     const users=(await(await request('/api/users',admin)).json()).users;
     let alice=await login('alice','a123456'),bob=await login('bob','a123456');
-    for(const url of ['/api/state','/api/runs','/api/login/status','/api/users']) assert.equal((await request(url,alice)).status,403,url);
+    for(const url of ['/api/state','/api/runs','/api/login/status','/api/users','/api/ui-order']) assert.equal((await request(url,alice)).status,403,url);
     assert.equal((await request('/',alice)).headers.get('location'),'/password');
     assert.equal((await request('/api/auth/password',alice,{currentPassword:'wrong',newPassword:'alice-secret'})).status,400);
     assert.equal((await request('/api/auth/password',alice,{currentPassword:'a123456',newPassword:'a123456'})).status,400);
@@ -102,6 +102,13 @@ for line in sys.stdin:
     assert.equal((await request('/api/users',alice)).status,403);
     assert.equal((await request('/api/users',alice,{username:'intruder'})).status,403);
     const adminRequest=(url,method,input,cookie=admin)=>fetch(base+url,{method,headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify(input)});
+    assert.equal((await request('/api/ui-order')).status,401);
+    assert.equal((await adminRequest('/api/ui-order','PUT',{scope:'accounts',keys:['alice-second','alice-first']},alice)).status,200);
+    assert.equal((await adminRequest('/api/ui-order','PUT',{scope:'accounts',keys:['bob-first','bob-second']},bob)).status,200);
+    assert.deepEqual((await(await request('/api/ui-order',alice)).json()).orders.accounts,['alice-second','alice-first']);
+    assert.deepEqual((await(await request('/api/ui-order',bob)).json()).orders.accounts,['bob-first','bob-second']);
+    assert.deepEqual((await(await request('/api/ui-order',admin)).json()).orders,{});
+    assert.equal((await adminRequest('/api/ui-order','PUT',{scope:'packet',keys:['two','two']},alice)).status,400);
     assert.equal((await adminRequest('/api/notifications','PUT',{enabled:false,botToken:'123456:alice_notification_token_123456',chatId:'111'},alice)).status,200);
     assert.equal((await adminRequest('/api/notifications','PUT',{enabled:false,botToken:'123456:bob_notification_token_123456',chatId:'222'},bob)).status,200);
     assert.equal((await(await request('/api/notifications',alice)).json()).notifications.chatId,'111');
@@ -130,6 +137,12 @@ for line in sys.stdin:
       assert.equal((await request('/api/config',cookie,config)).status,200);
     }
     await waitFor(async()=>((await(await request('/api/runs',alice)).json()).records.length>0));
+    const aliceConfigBefore=fs.readFileSync(path.join(userDir('alice'),'config.json'),'utf8');
+    const aliceListenerPid=fs.readFileSync(path.join(userDir('alice'),'worker.pid'),'utf8');
+    assert.equal((await adminRequest('/api/ui-order','PUT',{scope:'message:shared',keys:['message:same_rule_001']},alice)).status,200);
+    assert.equal((await adminRequest('/api/ui-order','PUT',{scope:'packet',keys:['packet:two','packet:one']},alice)).status,200);
+    assert.equal(fs.readFileSync(path.join(userDir('alice'),'worker.pid'),'utf8'),aliceListenerPid,'sorting keeps the existing listener process');
+    assert.equal(fs.readFileSync(path.join(userDir('alice'),'config.json'),'utf8'),aliceConfigBefore,'sorting does not change executable config');
     const aliceId=users.find(user=>user.username==='alice').id,bobId=users.find(user=>user.username==='bob').id;
     assert.ok(JSON.stringify((await(await request('/api/runs',alice)).json())).includes(aliceId));
     assert.ok(!JSON.stringify((await(await request('/api/runs',alice)).json())).includes(bobId));
@@ -165,6 +178,10 @@ for line in sys.stdin:
     await stop(); await start();
     assert.equal((await request('/api/state',alice)).status,401,'server restart expires sessions');
     alice=await login('alice','alice-secret'); bob=await login('bob','bob-secret'); admin=await login('admin','admin-secret');
+    assert.deepEqual((await(await request('/api/ui-order',alice)).json()).orders.accounts,['alice-second','alice-first'],'user ordering survives restart');
+    assert.deepEqual((await(await request('/api/ui-order',bob)).json()).orders.accounts,['bob-first','bob-second'],'other user ordering survives restart independently');
+    assert.deepEqual((await(await request('/api/ui-order',alice)).json()).orders.packet,['packet:two','packet:one'],'red packet display ordering survives restart');
+    assert.equal((await(await request('/api/ui-order',bob)).json()).orders.packet,undefined,'red packet display ordering is user isolated');
     assert.equal((await(await request('/api/notifications',alice)).json()).notifications.chatId,'111','user notification settings survive restart');
     assert.equal((await state(alice)).config.users[0].name,'alice'); assert.equal((await state(bob)).config.users[0].name,'bob');
     assert.equal((await state(alice)).run.id,runAlice.id); assert.equal((await state(bob)).run.id,runBob.id);

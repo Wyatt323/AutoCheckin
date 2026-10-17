@@ -1,0 +1,25 @@
+.sort-list-tools { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 2px 14px; color:var(--muted); }
+.sort-list-tools[hidden] { display:none; }
+.sort-list-tools small { font-size:12px; line-height:1.7; }
+.sort-list-tools[data-state="error"] { color:#a54035; }
+.sort-list-tools[data-state="saving"] { color:#7a6428; }
+.sort-list-tools button { flex:none; padding:4px 0; border:0; background:none; box-shadow:none; color:inherit; cursor:pointer; }
+.sort-handle { display:inline-flex; align-items:center; justify-content:center; flex:none; width:34px; height:36px; padding:6px; border:1px solid transparent; border-radius:10px; background:transparent; color:var(--muted); box-shadow:none; cursor:grab; touch-action:none; user-select:none; }
+.sort-handle svg { width:20px; height:20px; pointer-events:none; }
+.sort-handle:hover:not(:disabled),.sort-handle:focus-visible { color:var(--ink); background:var(--green-light,#e9f3de); border-color:var(--ink); box-shadow:2px 2px 0 var(--ink); transform:none; }
+.sort-handle:focus-visible { outline:2px solid var(--ink); outline-offset:3px; }
+.sort-handle:disabled { opacity:.25; cursor:default; }
+.account-sort-bar { display:flex; flex-direction:row-reverse; align-items:center; justify-content:space-between; min-height:36px; margin:6px 14px 0; color:var(--muted); }
+.account-sort-bar small { font-size:10px; letter-spacing:.04em; }
+.account-sort-bar + .account-tile-main { padding-top:8px; }
+.sort-item > .automation-card-head,.sort-item > .checkin-rule-head { column-gap:10px; }
+.bot-sort-cell > .sort-handle { vertical-align:middle; margin-right:4px; }
+.bot-sort-cell > input.cell-input { width:calc(100% - 42px); vertical-align:middle; }
+body.is-sorting,body.is-sorting * { cursor:grabbing !important; user-select:none !important; }
+.sort-dragging { opacity:.5; outline:2px dashed var(--ink); outline-offset:3px; }
+.sort-drag-preview { position:fixed; left:0; top:0; z-index:10000; max-width:200px; padding:12px 16px; border:1.5px solid var(--ink); border-radius:12px; background:#e7f0d7; color:var(--ink); font-size:12px; font-weight:600; box-shadow:3px 3px 0 var(--ink); pointer-events:none; }
+@media(max-width:720px) {
+  .sort-item > .automation-card-head > .sort-handle,.sort-item > .checkin-rule-head > .sort-handle { align-self:flex-start; margin-top:1px; }
+  .sort-item > .automation-card-head > .rule-card-toggle,.sort-item > .checkin-rule-head > .rule-card-toggle { flex-basis:calc(100% - 48px); }
+  .account-sort-bar { margin:5px 12px 0; }
+}

@@ -7,6 +7,7 @@ config.json
 .system-settings.json*
 .personal-settings.json*
 .notifications.json*
+.ui-order.json*
 .user-workspaces
 .account-profiles
 .bot-discovery

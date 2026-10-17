@@ -11,8 +11,9 @@ const {spawn}=require('node:child_process'),{createHash}=require('node:crypto');
   try {
     for(const file of ['server.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','checkin_results.js','admin_auth.js','database.js','automation.js','login.js','run_history.js','schedule_time.js','checkin_scheduler.js','telegram_credentials.js','account_profiles.js','config.example.json'])fs.copyFileSync(path.join(__dirname,'..',file),path.join(root,file));
     fs.cpSync(path.join(__dirname,'../public'),path.join(root,'public'),{recursive:true});
-    fs.writeFileSync(path.join(root,'automation_worker.py'),`import json,time
+    fs.writeFileSync(path.join(root,'automation_worker.py'),`import json,time,os
 from pathlib import Path
+Path('worker.pid').write_text(str(os.getpid()))
 config=json.loads(Path('config.json').read_text(encoding='utf-8'))
 print(json.dumps(dict(type='ready',message='offline red packet worker')),flush=True)
 for rule in config.get('automations',{}).get('redPackets',[]):
@@ -58,6 +59,18 @@ time.sleep(60)
     for(let i=0;i<80 && !(await logs()).length;i++)await new Promise(resolve=>setTimeout(resolve,50));
     assert.equal((await logs())[0].trigger,'automatic');
     assert.equal((await logs(admin,'?account=second&category=red_packet')).length,0);
+    for(let i=0;i<80 && (!fs.existsSync(path.join(root,'worker.pid')) || (await state(admin)).automation.status!=='running');i++)await new Promise(resolve=>setTimeout(resolve,50));
+    const listenerBefore=(await state(admin)).automation;
+    const listenerPid=fs.readFileSync(path.join(root,'worker.pid'),'utf8');
+    const configBeforeSort=fs.readFileSync(path.join(root,'config.json'),'utf8');
+    assert.equal(listenerBefore.status,'running');
+    const orderResponse=await fetch(base+'/api/ui-order',{method:'PUT',headers:{Cookie:admin,'Content-Type':'application/json'},body:JSON.stringify({scope:'packet',keys:['packet:red_rule_001']})});
+    assert.equal(orderResponse.status,200);
+    const listenerAfter=(await state(admin)).automation;
+    assert.equal(listenerAfter.status,'running','display sorting keeps red packet monitoring active');
+    assert.equal(listenerAfter.startedAt,listenerBefore.startedAt,'display sorting never restarts the red packet worker');
+    assert.equal(fs.readFileSync(path.join(root,'worker.pid'),'utf8'),listenerPid,'display sorting retains the worker process');
+    assert.equal(fs.readFileSync(path.join(root,'config.json'),'utf8'),configBeforeSort,'display sorting leaves executable configuration untouched');
     const users=[];
     for(const username of ['alice','bob']){
       assert.equal((await request('/api/users',admin,{username})).status,201);

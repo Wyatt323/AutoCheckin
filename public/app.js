@@ -246,6 +246,10 @@ function renderConfig() {
   $('#account-list').innerHTML = config.users.map((user, index) => {
     return `<article class="account-tile" data-account-index="${index}"><button type="button" class="account-tile-main" data-open-account="${index}" data-section="settings"><span class="account-tile-top"><span class="account-tile-avatar">${accountAvatar(user)}</span><span class="account-tile-title"><strong>${escapeHtml(user.name || '新账号')}</strong><small>${escapeHtml(user.profile?.username ? `@${user.profile.username}` : user.session || '待设置 Session')}</small></span><span class="account-health ${user.sessionReady ? 'ready' : 'pending'}">${user.sessionReady ? '● 正常' : '○ 待登录'}</span></span><span class="account-tile-info"><span><small>Telegram 用户 ID</small><strong>${escapeHtml(user.profile?.userId || (user.sessionReady ? '待同步' : '登录后获取'))}</strong></span><span><small>数据中心 DC</small><strong title="当前 Telegram Session 连接的数据中心">${user.profile?.dcId ? `DC ${escapeHtml(user.profile.dcId)}` : '—'}</strong></span><span><small>签到 Bot</small><strong>${user.bots.length} 个</strong></span><span><small>资料更新</small><strong>${user.profile?.updatedAt ? escapeHtml(formatDate(user.profile.updatedAt)) : '尚未同步'}</strong></span></span><span class="account-tile-activity"><span>签到状态</span><strong></strong><small></small></span></button><div class="account-tile-actions"><button type="button" data-login-account="${index}" title="Telegram 登录">${lineIcon('login')}<span>登录</span></button><button type="button" data-open-account="${index}" data-section="messages" title="定时消息">${lineIcon('message')}<span>消息</span></button><button type="button" data-open-account="${index}" data-section="logs" title="账号运行日志">${lineIcon('log')}<span>日志</span></button><button type="button" data-profile-account="${index}" ${!user.sessionReady ? 'disabled' : ''} title="同步 Telegram 头像、用户 ID 和 DC">${lineIcon('refresh')}<span>同步资料</span></button><button type="button" data-open-account="${index}" data-section="settings" title="账号资料">${lineIcon('edit')}<span>资料</span></button></div></article>`;
   }).join('') || '<div class="automation-empty">还没有账号。点击右上角添加账号。</div>';
+  SortableLists.mount($('#account-list'),{scope:'accounts',selector:'.account-tile',
+    key:card=>config.users[Number(card.dataset.accountIndex)]?.session,
+    label:card=>config.users[Number(card.dataset.accountIndex)]?.name || '账号',
+    handleTarget:card=>{let bar=card.querySelector('.account-sort-bar');if(!bar){bar=document.createElement('div');bar.className='account-sort-bar';bar.innerHTML='<small>账号排序</small>';card.prepend(bar);}return bar;}});
   if (selectedAccountIndex !== null && !config.users[selectedAccountIndex]) selectedAccountIndex = null;
   $('#account-overview').hidden = selectedAccountIndex !== null;
   $('#account-detail').hidden = selectedAccountIndex === null;
@@ -386,6 +390,14 @@ function refreshRuleCards() {
       : `${rule.groups?.filter(Boolean).length || 0} 个群组 · ${(rule.groups || []).filter(Boolean).slice(0,2).map(value => peerLabel(rule.account,value)).join('、') || '待设置群组'} · ${rule.botUsername || '/red 自动领取'}`;
     RuleCards.enhance(card, {key:`${kind}:${rule.id}`,title:rule.name || `${label} ${index + 1}`,summary:`${accountLabel(rule.account)} · ${detail}`});
   });
+  const sortableRules=(list,scope,selector)=>SortableLists.mount(list,{scope,selector,key:card=>card.dataset.ruleKey,label:card=>card.querySelector('[data-rule-title]')?.textContent || '规则',handleTarget:card=>card.querySelector('.automation-card-head,.checkin-rule-head')});
+  if(config.users[selectedAccountIndex])sortableRules($('#schedule-list'),`message:${config.users[selectedAccountIndex].session}`,'[data-auto-kind="schedules"]');
+  $$('#checkin-config-editor [data-checkin-account]').forEach(editor=>{
+    const user=config.users[Number(editor.dataset.checkinAccount)];if(!user)return;
+    sortableRules(editor.querySelector('.checkin-rules'),`checkin:${user.session}`,'[data-checkin-index]');
+    SortableLists.mount(editor.querySelector('.account-bot-table'),{scope:`bots:${user.session}`,selector:'[data-bot-index]',key:row=>String(user.bots[Number(row.dataset.botIndex)]?.name || '').trim().toLowerCase(),label:row=>user.bots[Number(row.dataset.botIndex)]?.note || user.bots[Number(row.dataset.botIndex)]?.name || 'Bot',handleTarget:row=>{row.cells[0].classList.add('bot-sort-cell');return row.cells[0];}});
+  });
+  for(const [id,scope,selector] of [['forward-pin-rules','forward','[data-feature-rule]'],['zero-speakers-rules','cleanup','[data-cleanup-rule]'],['red-packet-rules','packet','[data-red-packet-rule]']])sortableRules(document.getElementById(id),scope,selector);
   renderRuleActions();
 }
 
@@ -957,6 +969,7 @@ $('#today').textContent = new Date().toLocaleDateString('zh-CN', { year:'numeric
   try {
     const data = await api('/api/state');
     config = data.config;
+    await SortableLists.load();
     rememberSavedCheckinSettings();
     receiveRunState(data);
     automationState = data.automation;
