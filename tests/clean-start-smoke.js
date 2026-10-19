@@ -16,11 +16,12 @@ async function freePort() {
 
 async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'autocheckin-clean-'));
-  let child;
+  let child, childClosed;
   try {
     for (const name of ['database.js', 'account_profiles.js', 'server.js', 'admin_auth.js','user_auth.js','system_settings.js','outgoing_proxy.js','telegram_notifications.js','health_monitor.js','checkin_results.js', 'automation.js', 'login.js', 'schedule_time.js', 'run_history.js', 'checkin_scheduler.js', 'telegram_credentials.js', 'config.example.json']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(root, name));
     const port = await freePort();
     child = spawn(process.execPath, [path.join(root, 'server.js')], { env: { ...process.env, PORT: String(port), AUTOCHECKIN_DATA_DIR: root }, stdio: 'ignore' });
+    childClosed = new Promise(resolve => child.once('close', resolve));
     let state;
     for (let attempt = 0; attempt < 40; attempt++) {
       try { state = await (await fetch(`http://127.0.0.1:${port}/api/state`)).json(); break; }
@@ -32,7 +33,14 @@ async function main() {
     assert.equal(fs.existsSync(path.join(root, 'config.json')), true);
     console.log('公开源码的空配置首次启动检查通过');
   } finally {
-    child?.kill();
+    if (child) {
+      // kill() only sends a signal: wait until the server can no longer write SQLite/config files.
+      const forceKill = setTimeout(() => child.kill('SIGKILL'), 5000);
+      try {
+        child.kill();
+        await childClosed;
+      } finally { clearTimeout(forceKill); }
+    }
     if (root.startsWith(path.resolve(os.tmpdir()) + path.sep)) fs.rmSync(root, { recursive: true, force: true });
   }
 }

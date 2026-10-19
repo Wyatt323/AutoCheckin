@@ -12,6 +12,7 @@ const path = require('node:path');
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     let failSave = false;
+    const ruleWrites = [];
     let config = {
       telegram:{ apiId:'', hasApiHash:false }, model:'', providers:[],
       users:[{
@@ -30,6 +31,17 @@ const path = require('node:path');
       const url = new URL(route.request().url());
       const json = body => route.fulfill({ contentType:'application/json', body:JSON.stringify(body) });
       if (url.pathname === '/api/state') return json(url.searchParams.get('config') === '0' ? status : { ...status, config });
+      if (url.pathname === '/api/rules') {
+        const input = route.request().postDataJSON();
+        assert.equal(route.request().method(), 'PATCH');
+        assert.equal(input.kind, 'checkin');
+        const user = config.users.find(user => user.session === input.account);
+        const rule = user.checkinSchedules.find(rule => rule.id === input.id);
+        ruleWrites.push(input);
+        if (failSave) return route.fulfill({ status:500, contentType:'application/json', body:JSON.stringify({ error:'模拟保存失败' }) });
+        rule.enabled = input.enabled;
+        return json({ ...status, rule });
+      }
       if (url.pathname === '/api/config') {
         if (failSave) return route.fulfill({ status:500, contentType:'application/json', body:JSON.stringify({ error:'模拟保存失败' }) });
         config = route.request().postDataJSON();
@@ -52,29 +64,51 @@ const path = require('node:path');
     const hint = page.locator('.checkin-status');
     assert.ok((await hint.textContent()).startsWith('账号定时已关闭'));
     const toggle = page.locator('.checkin-rule [data-field="enabled"]');
-    await page.locator('.checkin-rule .auto-switch').click();
-    assert.ok((await hint.textContent()).includes('账号定时已启用 · 1 个任务（未保存，保存后生效）'));
-    await page.waitForTimeout(2200);
-    assert.ok(await toggle.isChecked(), 'polling must preserve draft switch');
-    assert.ok((await hint.textContent()).includes('未保存'), 'polling must preserve unsaved hint');
-    const save = page.locator('.save-btn:visible').first();
-    await save.click();
-    await page.locator('#toast').filter({ hasText:'配置已保存' }).waitFor();
+    const switchRule = async () => {
+      await Promise.all([
+        page.waitForResponse(response => response.url().endsWith('/api/rules') && response.request().method() === 'PATCH'),
+        page.locator('.checkin-rule .auto-switch').click()
+      ]);
+      await page.waitForFunction(() => !savingConfig);
+    };
+    await switchRule();
+    assert.deepEqual(ruleWrites.at(-1), { kind:'checkin', id:'daily', account:'test', enabled:true });
+    assert.equal(config.users[0].checkinSchedules[0].enabled, true, 'saved switch persists immediately');
+    assert.ok((await hint.textContent()).includes('账号定时已启用 · 1 个任务'));
     assert.ok(!(await hint.textContent()).includes('未保存'));
-    await page.locator('.checkin-rule .auto-switch').click();
+    await page.waitForTimeout(2200);
+    assert.ok(await toggle.isChecked(), 'polling must preserve saved switch');
+    assert.ok(!(await hint.textContent()).includes('未保存'), 'saved switch stays clean after polling');
     failSave = true;
-    await save.click();
+    await switchRule();
     await page.locator('#toast').filter({ hasText:'模拟保存失败' }).waitFor();
-    assert.ok((await hint.textContent()).includes('账号定时已关闭（未保存，保存后生效）'));
+    assert.ok(await toggle.isChecked(), 'failed switch rolls back to persisted state');
+    assert.equal(config.users[0].checkinSchedules[0].enabled, true);
+    assert.ok((await hint.textContent()).startsWith('账号定时已启用'));
+    assert.ok(!(await hint.textContent()).includes('未保存'), 'rolled-back switch is not a draft');
     failSave = false;
-    await save.click();
-    await page.locator('#toast').filter({ hasText:'配置已保存' }).waitFor();
+    await switchRule();
+    assert.equal(config.users[0].checkinSchedules[0].enabled, false);
     assert.ok((await hint.textContent()).startsWith('账号定时已关闭'));
     assert.ok(!(await hint.textContent()).includes('未保存'));
 
-    // Independent Bot schedules remain visible even when the account schedule is off.
+    // Independent Bot schedules still require a save: polling and failed saves retain this draft.
     await page.locator('[data-checkin-section="bots"]').click();
     await page.locator('.bot-schedule-switch').click();
+    await page.locator('[data-checkin-section="checkins"]').click();
+    await page.waitForTimeout(2200);
+    assert.ok((await hint.textContent()).includes('账号定时已关闭 · 1 个 Bot 独立定时已启用'));
+    assert.ok((await hint.textContent()).includes('未保存'), 'polling must preserve unsaved Bot hint');
+    assert.equal(config.users[0].bots[0].schedule.enabled, false, 'Bot switch remains a draft');
+    await page.locator('[data-checkin-section="bots"]').click();
+    assert.ok(await page.locator('.bot-schedule-switch input').isChecked(), 'polling must preserve draft Bot switch');
+    const save = page.locator('.save-btn:visible').first();
+    failSave = true;
+    await save.click();
+    await page.locator('#toast').filter({ hasText:'模拟保存失败' }).waitFor();
+    await page.locator('[data-checkin-section="checkins"]').click();
+    assert.ok((await hint.textContent()).includes('未保存'), 'failed save preserves draft hint');
+    failSave = false;
     await save.click();
     await page.locator('#toast').filter({ hasText:'配置已保存' }).waitFor();
     await page.locator('[data-checkin-section="checkins"]').click();

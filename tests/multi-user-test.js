@@ -205,6 +205,8 @@ for line in sys.stdin:
       await page.locator('#nav-users').click();await page.fill('#web-new-username','charlie');await page.locator('#web-user-create button').click();
       await page.locator('#web-users-list').filter({hasText:'charlie'}).waitFor();
       await page.locator('#nav-admin-global-settings').click();
+      // Navigation starts an async load; do not let its response overwrite the edit below.
+      await page.waitForFunction(() => serviceSettingsView === 'admin-global-settings');
       await page.locator('#system-api-id').fill('789');
       await page.locator('#system-settings-form [type="submit"]').click();
       await page.locator('#toast').filter({hasText:'系统服务已保存'}).waitFor();
