@@ -103,6 +103,7 @@ for line in sys.stdin:
     assert.equal((await request('/api/users',alice,{username:'intruder'})).status,403);
     const adminRequest=(url,method,input,cookie=admin)=>fetch(base+url,{method,headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify(input)});
     assert.equal((await request('/api/ui-order')).status,401);
+    assert.equal((await adminRequest('/api/rules','PATCH',{kind:'message',id:'same_rule_001',enabled:false},'')).status,401,'switches require login');
     assert.equal((await adminRequest('/api/ui-order','PUT',{scope:'accounts',keys:['alice-second','alice-first']},alice)).status,200);
     assert.equal((await adminRequest('/api/ui-order','PUT',{scope:'accounts',keys:['bob-first','bob-second']},bob)).status,200);
     assert.deepEqual((await(await request('/api/ui-order',alice)).json()).orders.accounts,['alice-second','alice-first']);
@@ -143,6 +144,13 @@ for line in sys.stdin:
     assert.equal((await adminRequest('/api/ui-order','PUT',{scope:'packet',keys:['packet:two','packet:one']},alice)).status,200);
     assert.equal(fs.readFileSync(path.join(userDir('alice'),'worker.pid'),'utf8'),aliceListenerPid,'sorting keeps the existing listener process');
     assert.equal(fs.readFileSync(path.join(userDir('alice'),'config.json'),'utf8'),aliceConfigBefore,'sorting does not change executable config');
+    const bobConfigBeforeToggle=fs.readFileSync(path.join(userDir('bob'),'config.json'),'utf8');
+    assert.equal((await adminRequest('/api/rules','PATCH',{kind:'message',id:'same_rule_001',enabled:false},alice)).status,200);
+    assert.equal((await state(alice)).config.automations.schedules[0].enabled,false);
+    assert.equal(fs.readFileSync(path.join(userDir('bob'),'config.json'),'utf8'),bobConfigBeforeToggle,'same rule ID in another user remains unchanged');
+    assert.equal((await adminRequest('/api/rules','PATCH',{kind:'message',id:'same_rule_001',enabled:true},alice)).status,200);
+    await waitFor(async()=>(await state(alice)).automation.status==='running');
+    assert.equal(fs.readFileSync(path.join(userDir('alice'),'config.json'),'utf8'),aliceConfigBefore,'switch roundtrip preserves all other user settings');
     const aliceId=users.find(user=>user.username==='alice').id,bobId=users.find(user=>user.username==='bob').id;
     assert.ok(JSON.stringify((await(await request('/api/runs',alice)).json())).includes(aliceId));
     assert.ok(!JSON.stringify((await(await request('/api/runs',alice)).json())).includes(bobId));

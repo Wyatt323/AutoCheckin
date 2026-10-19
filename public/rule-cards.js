@@ -63,7 +63,11 @@
       setExpanded(card, expanded.get(key) === true, false);
       const footer = document.createElement('div');
       footer.className = 'rule-card-footer';
-      footer.innerHTML = '<small data-rule-save-status role="status"></small><div class="rule-card-buttons"><button type="button" class="outline-btn" data-rule-logs>规则日志</button><button type="button" class="primary-btn" data-rule-save>保存规则</button></div>';
+      footer.innerHTML = '<small data-rule-save-status role="status"></small><div class="rule-card-buttons"><button type="button" class="outline-btn" data-rule-logs>规则日志</button></div>';
+      const saveActions = document.createElement('div');
+      saveActions.className = 'rule-card-save-actions';
+      saveActions.innerHTML = `<small>修改内容后保存${head.querySelector('input[type="checkbox"]') ? '；已保存规则的启用开关立即生效。' : '。'}</small><button type="button" class="primary-btn" data-rule-save>保存规则</button>`;
+      content.append(saveActions);
       card.append(footer);
     }
     const heading = card.querySelector('[data-rule-title]');

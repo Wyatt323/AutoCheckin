@@ -406,7 +406,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
     }
   }
 
-  async function saveRule(input, remove = false) {
+  async function saveRule(input, remove = false, enabledOnly = false) {
     const kind = input.kind, id = nonempty(input.id, '规则 ID', 100);
     if (!/^[A-Za-z0-9_-]{8,100}$/.test(id)) throw Error('规则 ID 无效');
     const original = readConfig(), users = original.telegram?.users || original.users || [];
@@ -416,7 +416,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
       rules = original.automations?.[field] || [];
       assign = next => {
         const validated = validateAutomations({...original.automations,[field]:next},users);
-        original.automations = {...original.automations,[field]:validated[field]};
+        original.automations = {...original.automations,[field]:enabledOnly ? next : validated[field]};
       };
     } else if (kind === 'cleanup') {
       rules = original.plugins?.zeroSpeakers || [];
@@ -427,14 +427,18 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
       rules = user.checkin_schedules || [];
       assign = next => {
         const view = viewConfig(original).users.find(item => item.session === input.account);
-        user.checkin_schedules = validateCheckinSchedules(next,user.name,view.dialogFolder ? 1 : view.bots.length);
+        const validated=validateCheckinSchedules(next,user.name,view.dialogFolder ? 1 : view.bots.length);
+        user.checkin_schedules = enabledOnly ? next : validated;
       };
     } else throw Error('规则类型无效');
     const index = rules.findIndex(rule => rule.id === id);
     if (remove && index < 0) throw Error('规则不存在或已删除');
-    if (!remove && (!input.rule || typeof input.rule !== 'object' || Array.isArray(input.rule) || input.rule.id !== id)) throw Error('规则内容或 ID 不匹配');
+    if (enabledOnly && index < 0) throw Error('规则不存在或已删除，请先保存规则');
+    if (enabledOnly && (kind === 'cleanup' || typeof input.enabled !== 'boolean' || Object.keys(input).some(key=>!['kind','id','account','enabled'].includes(key)))) throw Error('开关仅支持修改规则的启用状态');
+    if (!remove && !enabledOnly && (!input.rule || typeof input.rule !== 'object' || Array.isArray(input.rule) || input.rule.id !== id)) throw Error('规则内容或 ID 不匹配');
     const next = rules.slice();
     if (remove) next.splice(index,1);
+    else if (enabledOnly) next[index] = {...rules[index],enabled:input.enabled};
     else if (index < 0) next.push(input.rule);
     else next[index] = input.rule;
     assign(next);
@@ -814,12 +818,12 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
           if (url.searchParams.get('config') !== '0') state.config = viewConfig(readConfig());
           return send(res, 200, state);
         }
-        if (['POST','DELETE'].includes(req.method) && url.pathname === '/api/rules') {
+        if (['POST','PATCH','DELETE'].includes(req.method) && url.pathname === '/api/rules') {
           const input = await bodyJson(req);
           if (busy() || login.active() || shuttingDown) throw Error('运行或登录期间不能修改配置');
           editingConfig = true;
           try {
-            const rule = await saveRule(input,req.method === 'DELETE');
+            const rule = await saveRule(input,req.method === 'DELETE',req.method === 'PATCH');
             await automation.restart();
             return send(res,200,{rule,automation:automation.getState(),checkinScheduler:scheduler.getState()});
           } finally {editingConfig=false;if (!shuttingDown) automation.start();}

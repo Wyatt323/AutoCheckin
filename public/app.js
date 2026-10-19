@@ -26,7 +26,7 @@ let openModeIndex = null;
 let automationState = null;
 let checkinSchedulerState = null;
 let savedCheckinSettings = new Map();
-let savedRuleSettings = new Map(), savingRuleKey = null;
+let savedRuleSettings = new Map(), savingRuleKey = null, togglingRuleKey = null;
 let openAutoSelect = null;
 let selectedAccountIndex = null;
 let accountSection = 'settings';
@@ -401,13 +401,13 @@ function refreshRuleCards() {
   renderRuleActions();
 }
 
-function allRuleContexts() {
-  if (!config) return [];
+function allRuleContexts(source = config) {
+  if (!source) return [];
   const result = [];
-  for (const [kind,list] of [['packet',config.automations.redPackets],['forward',config.automations.forwardPins],['message',config.automations.schedules],['cleanup',config.plugins?.zeroSpeakers]]) {
+  for (const [kind,list] of [['packet',source.automations.redPackets],['forward',source.automations.forwardPins],['message',source.automations.schedules],['cleanup',source.plugins?.zeroSpeakers]]) {
     for (const rule of list || []) result.push({kind,id:rule.id,rule,list,key:`${kind}:${rule.id}`});
   }
-  for (const user of config.users) for (const rule of user.checkinSchedules || []) {
+  for (const user of source.users) for (const rule of user.checkinSchedules || []) {
     result.push({kind:'checkin',id:rule.id,account:user.session,rule,list:user.checkinSchedules,key:`checkin:${user.session}:${rule.id}`});
   }
   return result;
@@ -415,19 +415,56 @@ function allRuleContexts() {
 // Stable key order avoids marking a rule dirty when a form reconstructs its object.
 function ruleSignature(rule) { return JSON.stringify(rule,Object.keys(rule).sort()); }
 function ruleContext(card) { return allRuleContexts().find(context => context.key === card?.dataset.ruleKey); }
+function savedRuleEnabled(key) { const saved=savedRuleSettings.get(key);return saved ? JSON.parse(saved).enabled !== false : undefined; }
+function ruleEnabledInput(card) { return card.querySelector('.automation-card-head input[data-field="enabled"],.checkin-rule-head input[data-field="enabled"],[data-feature-field="enabled"],[data-red-packet-field="enabled"]'); }
 function renderRuleActions() {
   const blocked = savingConfig || runBusy() || (typeof loginState !== 'undefined' && loginState?.active);
   const contexts = new Map(allRuleContexts().map(context => [context.key,context]));
   $$('[data-rule-key]').forEach(card => {
     const context = contexts.get(card.dataset.ruleKey);if (!context) return;
     const dirty = savedRuleSettings.get(context.key) !== ruleSignature(context.rule);
-    const label = savingRuleKey === context.key ? '正在保存…' : dirty ? '未保存 · 仅保存此规则' : '已保存';
+    const label = togglingRuleKey === context.key ? context.rule.enabled === false ? '正在关闭…' : '正在启用…' : savingRuleKey === context.key ? '正在保存…' : dirty ? '未保存 · 仅保存此规则' : '已保存';
     const status = card.querySelector('[data-rule-save-status]');
     if (status.textContent !== label) status.textContent = label;
     status.dataset.dirty = String(dirty);
-    card.querySelector('[data-rule-save]').disabled = Boolean(blocked);
+    card.querySelector('[data-rule-save]').disabled = Boolean(blocked) || !dirty;
+    const enabledInput=ruleEnabledInput(card);
+    if(enabledInput){enabledInput.disabled=Boolean(blocked);enabledInput.title=savedRuleSettings.has(context.key) ? '点击立即保存启用状态，不提交其他修改' : '新规则首次保存后生效';}
     card.querySelectorAll('[data-feature-remove],[data-red-packet-remove],[data-cleanup-remove],[data-delete="schedule"],[data-delete="checkin"]').forEach(button => {button.disabled=Boolean(blocked);});
   });
+}
+async function toggleRuleEnabled(card, input) {
+  const context=ruleContext(card);if(!context)return;
+  const previous=savedRuleEnabled(context.key),enabled=input.checked;
+  if(previous===undefined){refreshRuleCards();return;}
+  if(savingConfig){input.checked=previous;context.rule.enabled=previous;return;}
+  savingConfig=true;togglingRuleKey=context.key;renderRun();renderRuleActions();
+  try {
+    const data=await api('/api/rules',{method:'PATCH',body:JSON.stringify({kind:context.kind,id:context.id,account:context.account,enabled})});
+    readEditors();
+    const current=allRuleContexts().find(item=>item.key===context.key);
+    if(current)current.rule.enabled=data.rule.enabled;
+    rememberSavedRule(context,data.rule);
+    automationState=data.automation;checkinSchedulerState=data.checkinScheduler;
+    toast(enabled ? '规则已启用' : '规则已关闭');
+  }catch(error){
+    let restored=previous;
+    // A response can fail after persistence; reconcile only this flag, keeping all drafts.
+    try {
+      const data=await api('/api/state');
+      const saved=allRuleContexts(data.config).find(item=>item.key===context.key);
+      if(saved){restored=saved.rule.enabled!==false;rememberSavedRule(context,saved.rule);}
+      automationState=data.automation;checkinSchedulerState=data.checkinScheduler;
+    }catch{}
+    readEditors();
+    const current=allRuleContexts().find(item=>item.key===context.key);
+    if(current)current.rule.enabled=restored;
+    toast(error.message,true);
+  }finally{
+    const current=allRuleContexts().find(item=>item.key===context.key);
+    $$('[data-rule-key]').filter(item=>item.dataset.ruleKey===context.key).forEach(item=>{const control=ruleEnabledInput(item);if(control && current)control.checked=current.rule.enabled!==false;});
+    savingConfig=false;togglingRuleKey=null;refreshRuleCards();renderAutomationState();renderCheckinStatus();renderRun();
+  }
 }
 function rememberSavedRule(context, rule) {
   if (rule) savedRuleSettings.set(context.key,ruleSignature(rule));else savedRuleSettings.delete(context.key);
@@ -499,7 +536,10 @@ document.addEventListener('rulecardtoggle', () => {
 });
 for (const type of ['input','change']) document.addEventListener(type, event => {
   if (!config || !event.target.closest('.rule-card')) return;
-  readEditors();refreshRuleCards();
+  readEditors();
+  const card=event.target.closest('.rule-card');
+  if(type==='change' && event.target===ruleEnabledInput(card)){toggleRuleEnabled(card,event.target);return;}
+  refreshRuleCards();
 });
 
 function renderAutomation() {

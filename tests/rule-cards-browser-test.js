@@ -6,7 +6,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined});
   try {
     const page=await browser.newPage({viewport:{width:1440,height:1100},reducedMotion:'reduce'}),errors=[],saves=[],queries=[];
-    let saveFailure=false,releaseSave=null,holdSave=false;
+    let saveFailure=false,failAfterCommit=false,releaseSave=null,holdSave=false;
     page.on('pageerror',error=>errors.push(error.message));
     let stored={telegram:{apiId:'',hasApiHash:false},model:'',providers:[],users:['Labubu','second'].map((session,index)=>({
       name:session,session,sourceIndex:index,sessionReady:true,apiId:'',hasApiHash:false,botSource:'configured',dialogFolder:'',
@@ -28,8 +28,11 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
         const list=input.kind==='checkin' ? stored.users.find(user=>user.session===input.account).checkinSchedules : input.kind==='cleanup' ? stored.plugins.zeroSpeakers : stored.automations[({packet:'redPackets',forward:'forwardPins',message:'schedules'})[input.kind]];
         const index=list.findIndex(rule=>rule.id===input.id);
         if(route.request().method()==='DELETE')list.splice(index,1);
+        else if(route.request().method()==='PATCH')list[index]={...list[index],enabled:input.enabled};
         else if(index<0)list.push(input.rule);else list[index]=input.rule;
-        saves.push(input);return json({...status,rule:input.rule || null});
+        saves.push({...input,method:route.request().method()});
+        if(failAfterCommit)return route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'offline response failure'})});
+        return json({...status,rule:list.find(rule=>rule.id===input.id) || null});
       }
       if(url.pathname==='/api/runs'){
         queries.push(url.search);
@@ -47,7 +50,8 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     const screenshot=async name=>{if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,name+'.png'),fullPage:true});};
     const toggle=card=>card.locator('[data-rule-toggle]');
     const isOpen=async(card,value)=>assert.equal(await toggle(card).getAttribute('aria-expanded'),String(value));
-    const save=async card=>{await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/rules')&&r.request().method()==='POST'),card.locator('[data-rule-save]').click()]);await card.locator('[data-rule-save]').waitFor({state:'visible'});await page.waitForFunction(()=>!savingConfig);};
+    const save=async card=>{if(await toggle(card).getAttribute('aria-expanded')==='false')await toggle(card).click();await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/rules')&&r.request().method()==='POST'),card.locator('[data-rule-save]').click()]);await page.waitForFunction(()=>!savingConfig);};
+    const switchRule=async card=>{await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/rules')&&r.request().method()==='PATCH'),card.locator('.automation-card-actions .auto-switch').click()]);await page.waitForFunction(()=>!savingConfig);};
     const catalog=async close=>{await page.locator(close).click();await page.locator('#feature-catalog').waitFor();};
     const noOverflow=async()=>assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'rules fit mobile viewport');
     await page.goto('https://autocheckin-offline.test/#features');
@@ -58,7 +62,10 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     assert.equal(await first.locator('.rule-card-body').evaluate(el=>el.getBoundingClientRect().height),0);
     assert.match(await toggle(first).innerText(),/Labubu.*1 个群组/);
     assert.ok(await first.locator('[data-red-packet-runtime]').isVisible(),'connection status remains visible');
+    assert.equal(await first.locator('[data-rule-save]').isVisible(),false,'save button folds with configuration');
+    assert.equal(await first.locator('[data-rule-logs]').isVisible(),true,'logs remain available while collapsed');
     await toggle(first).focus();await page.keyboard.press('Enter');await isOpen(first,true);
+    assert.equal(await first.locator('[data-rule-save]').isDisabled(),true,'unchanged content does not need saving');
     await first.locator('[data-red-packet-field="name"]').fill('牛币群红包 · 已修改');
     await first.locator('.red-packet-options summary').click();await first.locator('[data-red-packet-field="watchSeconds"]').fill('180');
     await first.locator('[data-red-packet-words="buttonKeywords"]').fill('领取红包\n领取');
@@ -71,25 +78,54 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     assert.equal(await first.locator('[data-red-packet-field="watchSeconds"]').inputValue(),'180');
     await toggle(first).focus();await first.locator('[data-red-packet-field="name"]').evaluate(el=>el.focus());
     assert.equal(await toggle(first).evaluate(el=>el===document.activeElement),true,'collapsed fields cannot receive focus');
-    await first.locator('.auto-switch').click();await isOpen(first,false);
+    await switchRule(first);await isOpen(first,false);
+    assert.equal(stored.automations.redPackets[0].enabled,false,'switch immediately persists disabled state');
+    assert.deepEqual(saves.at(-1),{kind:'packet',id:'packet_1',enabled:false,method:'PATCH'},'switch submits only enabled state');
+    assert.equal(stored.automations.redPackets[0].name,'牛币群红包','switch never submits this rule draft');
+    assert.equal(stored.automations.redPackets[0].watchSeconds,120);
+    assert.match(await first.locator('[data-red-packet-runtime] strong').innerText(),/规则已关闭/);
+    assert.doesNotMatch(await first.locator('[data-red-packet-runtime] strong').innerText(),/保存后生效/);
+    saveFailure=true;await switchRule(first);
+    assert.equal(await first.locator('[data-red-packet-field="enabled"]').isChecked(),false,'failed switch rolls back');
+    assert.equal(await first.locator('[data-red-packet-field="name"]').inputValue(),'牛币群红包 · 已修改','failed switch retains draft');
+    saveFailure=false;failAfterCommit=true;await switchRule(first);
+    assert.equal(stored.automations.redPackets[0].enabled,true);
+    assert.equal(await first.locator('[data-red-packet-field="enabled"]').isChecked(),true,'failed response reconciles actual committed state');
+    assert.equal(await first.locator('[data-red-packet-field="name"]').inputValue(),'牛币群红包 · 已修改','reconciliation preserves content draft');
+    failAfterCommit=false;await switchRule(first);
+    holdSave=true;const switching=switchRule(first);switching.catch(()=>{});
+    await page.waitForFunction(()=>Boolean(togglingRuleKey));
+    assert.equal(await first.locator('[data-red-packet-field="enabled"]').isDisabled(),true,'disable repeated clicks while saving state');
+    while(!releaseSave)await new Promise(resolve=>setTimeout(resolve,10));
+    await toggle(first).click();await first.locator('[data-red-packet-field="name"]').fill('切换请求中的草稿');
+    holdSave=false;releaseSave();await switching;releaseSave=null;
+    assert.equal(stored.automations.redPackets[0].enabled,true,'switch immediately enables saved rule');
+    assert.equal(stored.automations.redPackets[0].name,'牛币群红包','in-flight edits never enter switch request');
+    assert.equal(await first.locator('[data-red-packet-field="name"]').inputValue(),'切换请求中的草稿','in-flight switch preserves new edits');
+    await isOpen(first,true);await first.locator('[data-red-packet-field="name"]').fill('牛币群红包 · 已修改');await toggle(first).click();
+    await switchRule(first);assert.equal(stored.automations.redPackets[0].enabled,false);
     await packets.locator('[data-rules-expand]').click();await isOpen(first,true);
     assert.equal(await first.locator('[data-red-packet-group]').last().inputValue(),'@another_group');
     await packets.locator('[data-rules-collapse]').click();await isOpen(first,false);
     await catalog('#close-red-packet');await page.locator('#open-red-packet').click();await isOpen(first,false);
     await page.locator('#add-red-packet').click();
     const added=packets.locator('[data-red-packet-rule]').last();await isOpen(added,true);await isOpen(first,false);
+    const beforeNewSwitch=saves.length;await added.locator('.auto-switch').click();
+    assert.equal(saves.length,beforeNewSwitch,'new rule remains a draft until first save');
     await added.locator('[data-red-packet-field="name"]').fill('新规则');await added.locator('[data-red-packet-group]').fill('@new_group');
     await save(added);await isOpen(added,false);
     assert.equal(stored.automations.redPackets[0].name,'牛币群红包','saving new rule leaves another draft uncommitted');
     assert.equal(await first.locator('[data-red-packet-field="name"]').inputValue(),'牛币群红包 · 已修改','another draft survives rerender');
     await save(first);await isOpen(first,false);
     assert.equal(stored.automations.redPackets[0].name,'牛币群红包 · 已修改');assert.equal(stored.automations.redPackets[0].enabled,false);
+    assert.equal(await first.locator('[data-rule-save]').isDisabled(),true);
     assert.equal(stored.automations.redPackets[0].watchSeconds,180);assert.deepEqual(stored.automations.redPackets[0].buttonKeywords,['领取红包','领取']);
     assert.deepEqual(stored.automations.redPackets[0].groups,['-1001234567','@another_group']);
     await screenshot('rule-cards-desktop-collapsed');
     await catalog('#close-red-packet');await page.locator('#open-forward-pin').click();
     const forward=page.locator('[data-feature-rule]').first();await isOpen(forward,false);
-    assert.match(await toggle(forward).innerText(),/重要通知同步/);await toggle(forward).click();
+    assert.match(await toggle(forward).innerText(),/重要通知同步/);await switchRule(forward);
+    assert.equal(stored.automations.forwardPins[0].enabled,false);await toggle(forward).click();
     await forward.locator('[data-feature-add-keyword]').click();await isOpen(forward,true);
     await forward.locator('[data-feature-keyword]').last().fill('测试');await toggle(forward).click();await toggle(forward).click();
     assert.equal(await forward.locator('[data-feature-keyword]').last().inputValue(),'测试');await save(forward);await isOpen(forward,false);
@@ -100,7 +136,8 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     await toggle(cleanup).click();await toggle(cleanup).click();assert.equal(await cleanup.locator('[data-cleanup-field="name"]').inputValue(),'检查任务草稿');
     await save(cleanup);await isOpen(cleanup,false);
     await catalog('#close-zero-speakers');await page.locator('#open-checkin').click();await page.locator('[data-checkin-section="checkins"]').click();
-    const checkin=page.locator('.checkin-rule').first();await isOpen(checkin,false);await toggle(checkin).click();
+    const checkin=page.locator('.checkin-rule').first();await isOpen(checkin,false);await switchRule(checkin);
+    assert.equal(stored.users[0].checkinSchedules[0].enabled,false);await toggle(checkin).click();
     await page.selectOption('.checkin-rule [data-field="timeMode"]','random');await isOpen(checkin,true);
     await checkin.locator('[data-field="rangeStart"]').fill('11:12:13');await checkin.locator('[data-field="rangeEnd"]').fill('12:13:14');
     await toggle(checkin).click();assert.match(await toggle(checkin).innerText(),/11:12:13–12:13:14/);
@@ -110,7 +147,8 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     await save(checkin);await isOpen(checkin,false);
     assert.equal(stored.users[1].checkinSchedules[0].time,'09:30:15','other account schedules are untouched');
     await page.locator('#checkin-account-settings').click();await page.locator('[data-account-section="messages"]').click();
-    const message=page.locator('#schedule-list article').first();await isOpen(message,false);await toggle(message).click();
+    const message=page.locator('#schedule-list article').first();await isOpen(message,false);await switchRule(message);
+    assert.equal(stored.automations.schedules[0].enabled,false);await toggle(message).click();
     await message.locator('[data-auto-select][data-field="repeat"]').click();await page.locator('[data-auto-option="once"]').click();
     assert.equal(await message.locator('[data-field="time"]').getAttribute('type'),'datetime-local');
     await message.locator('[data-field="time"]').fill('2029-01-02T10:20:31');

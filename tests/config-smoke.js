@@ -109,16 +109,37 @@ async function main() {
     for(const [kind,rule] of targets){
       const before=disk(),response=await ruleRequest({kind,id:rule.id,account:kind==='checkin'?'test':undefined,rule});
       assert.equal(response.status,200,await response.clone().text());
-      assert.equal((await response.json()).rule.id,rule.id);
+      const savedRule=(await response.json()).rule;
+      assert.equal(savedRule.id,rule.id);
       const after=disk();
       if(kind==='checkin')after.telegram.users[0].checkin_schedules=before.telegram.users[0].checkin_schedules;
       else if(kind==='cleanup'){after.plugins=before.plugins;}
       else {const field={packet:'redPackets',forward:'forwardPins',message:'schedules'}[kind];after.automations[field]=before.automations[field];}
       assert.deepEqual(after,before,`${kind}: unrelated persistent data stays identical`);
+      if(kind!=='cleanup') {
+        // Preserve legacy or future metadata instead of normalizing sibling rules on a switch.
+        const withMetadata=disk();
+        const metadataList=kind==='checkin' ? withMetadata.telegram.users[0].checkin_schedules : withMetadata.automations[{packet:'redPackets',forward:'forwardPins',message:'schedules'}[kind]];
+        metadataList.find(item=>item.id===rule.id).metadata={label:'preserve on toggle'};
+        fs.writeFileSync(path.join(directory,'config.json'),JSON.stringify(withMetadata));
+        const beforeToggle=disk(),enabled=savedRule.enabled===false;
+        const patch=await ruleRequest({kind,id:rule.id,account:kind==='checkin'?'test':undefined,enabled},'PATCH');
+        assert.equal(patch.status,200,await patch.clone().text());
+        assert.equal((await patch.json()).rule.enabled,enabled);
+        const expected=structuredClone(beforeToggle);
+        const list=kind==='checkin' ? expected.telegram.users[0].checkin_schedules : expected.automations[{packet:'redPackets',forward:'forwardPins',message:'schedules'}[kind]];
+        list.find(item=>item.id===rule.id).enabled=enabled;
+        assert.deepEqual(disk(),expected,`${kind}: switch changes only committed enabled state`);
+        assert.equal((await ruleRequest({kind,id:rule.id,account:kind==='checkin'?'test':undefined,enabled:savedRule.enabled},'PATCH')).status,200);
+        assert.deepEqual(disk(),beforeToggle,`${kind}: switch is reversible`);
+      }
     }
     assert.deepEqual(disk().ai,baseline.ai,'AI secrets remain unchanged');
     assert.equal(disk().telegram.users[0].api_hash,'secret-hash');
     const committed=disk();
+    for(const input of [{kind:'packet',id:'packet_test_001',enabled:'false'},{kind:'packet',id:'missing_rule',enabled:false},{kind:'packet',id:'packet_test_001',enabled:false,rule:targets[0][1]},{kind:'cleanup',id:'cleanup_test_001',enabled:false},{kind:'checkin',id:'checkin_test_001',account:'unknown',enabled:false}]) {
+      assert.equal((await ruleRequest(input,'PATCH')).status,400);assert.deepEqual(disk(),committed,'invalid switch leaves saved config intact');
+    }
     for(const input of [{kind:'packet',id:'packet_test_001',rule:{...targets[0][1],account:'unknown'}},{kind:'packet',id:'packet_test_001',rule:{...targets[0][1],id:'mismatch'}},{kind:'unknown',id:'packet_test_001',rule:targets[0][1]}]){
       assert.equal((await ruleRequest(input)).status,400);assert.deepEqual(disk(),committed,'failed save preserves disk');
     }
@@ -138,6 +159,7 @@ async function main() {
       scheduled=logs.records[0];
       if(scheduled?.state==='running'){
         assert.equal((await ruleRequest({kind:'checkin',id:plan.id,account:'test',rule:plan})).status,400,'running task prevents config changes');
+        assert.equal((await ruleRequest({kind:'checkin',id:plan.id,account:'test',enabled:false},'PATCH')).status,400,'running task prevents switch changes');
         break;
       }
       await new Promise(resolve=>setTimeout(resolve,100));

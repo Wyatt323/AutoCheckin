@@ -377,7 +377,7 @@ function renderRedPacketStatus() {
     const sum=key=>groups.reduce((value,group)=>value+Number(group[key] || 0),0);
     const last=Math.max(0,...groups.map(group=>Number(group.lastReceivedAt || 0)));
     const active=automationState?.status==='running' && groups.length;
-    const label=rule.enabled===false ? savedRuleSettings.get(`packet:${rule.id}`) === ruleSignature(rule) ? '规则已关闭' : '规则已关闭 · 保存后生效' : active ? `已连接 ${groups.length} 个群组` : automationState?.status==='starting' ? '正在连接，请稍候' : '尚未确认群组连接，请查看规则日志';
+    const label=rule.enabled===false ? savedRuleEnabled(`packet:${rule.id}`) === false ? '规则已关闭' : togglingRuleKey === `packet:${rule.id}` ? '正在关闭规则…' : '规则已关闭 · 保存后生效' : active ? `已连接 ${groups.length} 个群组` : automationState?.status==='starting' ? '正在连接，请稍候' : '尚未确认群组连接，请查看规则日志';
     element.innerHTML=`<strong>${escapeHtml(label)}</strong><small>已接收 ${sum('received')} 条实时消息 · /red ${sum('commands')} 次 · 红包按钮 ${sum('packets')} 个 · 备用检查 ${sum('fallbackChecks')} 次${last ? ' · 最近接收 '+escapeHtml(formatDate(new Date(last*1000).toISOString())) : ''}</small><small>运行状态对应已保存规则。未收到指令时，也会检测新红包按钮；无实时消息时每 5 秒补充检查新消息。</small>`;
   });
 }
