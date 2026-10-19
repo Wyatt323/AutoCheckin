@@ -3,6 +3,8 @@
 #account-log-dialog { width:min(1080px,calc(100vw - 40px)); max-height:calc(100dvh - 48px); overflow:visible; }
 .log-run-group{margin:12px 0 20px;border:1px solid #526476;border-radius:14px;overflow:hidden}.log-run-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:14px 16px;background:#293a4b;color:#ecf1eb;border-bottom:1px solid #526476}.log-run-heading>div{display:flex;flex-wrap:wrap;gap:8px 14px;min-width:0;overflow-wrap:anywhere}.log-run-heading span,.log-run-heading small{color:#bccbce;font-size:12px}.log-run-heading small{flex-basis:100%}.log-run-state{padding:4px 10px;border-radius:20px;background:#42566a;white-space:nowrap;font-size:12px}.log-run-state.completed{background:#365c4c;color:#d4f2c4}.log-run-state.partial{background:#655635;color:#ffe2a3}.log-run-state.failed{background:#693f45;color:#ffd1d5}.log-run-group .log-line{padding:8px 14px}.log-run-group .log-line.success{color:#c3edb4}#audit-log-output .log-line{grid-template-columns:160px 1fr}@media(max-width:600px){.log-run-heading{padding:12px}.log-run-heading>div{flex-basis:100%;flex-direction:column;gap:4px}#audit-log-output .log-line{grid-template-columns:1fr}}
 #account-log-dialog[open] { display:flex; flex-direction:column; }
+.log-run-state.warning { background:#655635; color:#ffe2a3; }
+.log-run-group .log-line.warning { color:#ffe2a3; }
 #account-log-dialog #log-history-content { min-height:0; overflow:auto; }
 .account-log-toolbar { display:flex; align-items:center; justify-content:space-between; gap:16px; flex:none; padding-bottom:12px; }
 #account-log-dialog .page-heading { margin:8px 0 20px; }

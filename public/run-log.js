@@ -6,12 +6,22 @@ function beijingParts(value) {
   const text = new Date(date.getTime() + 28800000).toISOString();
   return { date: text.slice(0, 10), time: text.slice(11, 19) };
 }
+function presentRunLogRecord(record) {
+  // Telethon writes this warning to stderr; it does not establish worker failure.
+  // Classify only its standalone packet notice, preserving stored events and runtime signals.
+  const match = record.category === 'red_packet' && record.state === 'failed' && record.lines?.length === 1 && record.lines[0].stream === 'stderr'
+    && /^(\[[^\r\n]+\]\s*)自动化进程错误[：:]\s*(Server closed the connection: \d+ bytes read on a total of \d+ expected bytes)$/.exec(record.lines[0].text);
+  if (!match) return record;
+  return { ...record, state:'warning', lines:[{ ...record.lines[0], stream:'warning',
+    text:`${match[1]}⚠️ Telegram 连接中断，等待恢复\n原始提示：${match[2]}` }] };
+}
 function filterRunLogs(records, filter, accounts = []) {
   const rows = [];
   const start = filter.start && (filter.start.length === 5 ? `${filter.start}:00` : filter.start);
   const end = filter.end && (filter.end.length === 5 ? `${filter.end}:59` : filter.end);
   if (start && end && start > end) return rows;
-  for (const run of records) {
+  for (const record of records) {
+    const run = presentRunLogRecord(record);
     const summaries = new Map();
     const category = run.category || 'checkin';
     if (filter.category && category !== filter.category) continue;

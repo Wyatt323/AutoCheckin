@@ -109,7 +109,7 @@ document.querySelectorAll('[data-icon]').forEach(element => { element.innerHTML 
 })();
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]);
 const formatDate = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '—';
-const statusText = { idle:'待运行', running:'运行中', stopping:'正在停止', completed:'已完成', partial:'部分成功', failed:'运行失败', stopped:'已停止', cancelled:'已取消' };
+const statusText = { idle:'待运行', running:'运行中', stopping:'正在停止', completed:'已完成', partial:'部分成功', warning:'连接警告', failed:'运行失败', stopped:'已停止', cancelled:'已取消' };
 
 function toast(message, error = false) {
   const el = $('#toast');
