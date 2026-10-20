@@ -33,6 +33,7 @@ let accountSection = 'settings';
 let pollPending = false;
 let savingConfig = false;
 let startingRun = false;
+let restoringRoute = false;
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 function lineIcon(name) {
@@ -144,13 +145,20 @@ function navigate(view, keepAccount = false, logAccount = null) {
   if (view === 'accounts' && !keepAccount) selectedAccountIndex = null;
   closeModeMenu();
   closeAutoSelect();
-  if (config) { readEditors(); if (view === 'accounts') renderConfig(); }
+  window.UIControls?.close();
+  if (config) readEditors();
   currentView = view;
+  if (config && view === 'accounts') renderConfig();
   if (view === 'activity' && typeof setRunLogScope === 'function') setRunLogScope(logAccount);
-  $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
+  $$('.nav-item').forEach(item => {
+    const active = item.dataset.view === view;
+    item.classList.toggle('active', active);
+    if (active) item.setAttribute('aria-current','page');else item.removeAttribute('aria-current');
+  });
   $$('.view').forEach(item => item.classList.toggle('active', item.id === `view-${view==='admin-global-settings' ? 'global-settings' : view}`));
   $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', features:'功能中心', ai:'AI 管理', activity:'运行日志', users:'用户管理', 'global-settings':'全局设置','admin-global-settings':'管理员全局设置', audit:'后台审计',notifications:'TG 通知',health:'运行健康监控' })[view];
-  window.location.hash = view === 'activity' && logAccount ? `activity?account=${encodeURIComponent(logAccount)}` : view;
+  const hash = `#${view === 'activity' && logAccount ? `activity?account=${encodeURIComponent(logAccount)}` : view}`;
+  if (!restoringRoute && location.hash !== hash) history.pushState(null,'',hash);
   schedulePeerLookup();
   if (view === 'activity') renderRun();
   if (view === 'audit' && typeof loadAuditUsers === 'function') loadAuditUsers();
@@ -160,6 +168,24 @@ function navigate(view, keepAccount = false, logAccount = null) {
   if (['global-settings','admin-global-settings'].includes(view) && typeof loadSystemSettings === 'function') loadSystemSettings().catch(error=>toast(error.message,true));
   if (view === 'features' && typeof renderFeatureCenter === 'function') renderFeatureCenter();
 }
+
+function restoreLocationRoute() {
+  if (!config) return;
+  const [hash, query] = location.hash.slice(1).split('?');
+  const params = new URLSearchParams(query);
+  restoringRoute = true;
+  try {
+    if (hash === 'features' && params.get('plugin') === 'checkin') {
+      const index = config.users.findIndex(user => user.session === params.get('account'));
+      openCheckinFeature(index < 0 ? null : index, params.get('section'));
+    } else {
+      if (hash === 'features') checkinEditorOpen = false;
+      const view = ['overview','bots','accounts','features','ai','automation','activity','users','global-settings','admin-global-settings','audit','notifications','health'].includes(hash) ? hash : 'overview';
+      navigate(view, false, view === 'activity' ? params.get('account') : null);
+    }
+  } finally { restoringRoute = false; }
+}
+window.addEventListener('hashchange', restoreLocationRoute);
 
 function openAccount(index, section = 'settings') {
   if (!config?.users[index]) return;
@@ -413,7 +439,12 @@ function allRuleContexts(source = config) {
   return result;
 }
 // Stable key order avoids marking a rule dirty when a form reconstructs its object.
-function ruleSignature(rule) { return JSON.stringify(rule,Object.keys(rule).sort()); }
+function ruleSignature(rule) {
+  // Compare editor defaults and the browser's minute-only representation of zero seconds.
+  const comparable = rule.repeat === 'daily' ? {...rule,timeMode:rule.timeMode || 'fixed'}
+    : rule.repeat === 'once' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00$/.test(rule.time || '') ? {...rule,time:rule.time.slice(0,-3)} : rule;
+  return JSON.stringify(comparable,Object.keys(comparable).sort());
+}
 function ruleContext(card) { return allRuleContexts().find(context => context.key === card?.dataset.ruleKey); }
 function savedRuleEnabled(key) { const saved=savedRuleSettings.get(key);return saved ? JSON.parse(saved).enabled !== false : undefined; }
 function ruleEnabledInput(card) { return card.querySelector('.automation-card-head input[data-field="enabled"],.checkin-rule-head input[data-field="enabled"],[data-feature-field="enabled"],[data-red-packet-field="enabled"]'); }
@@ -632,6 +663,8 @@ function openAutoDropdown(trigger) {
   const menu = document.createElement('div');
   menu.id = 'auto-select-menu';
   menu.className = 'auto-select-menu';
+  menu.dataset.anchorTop = rect.top;
+  menu.dataset.anchorLeft = rect.left;
   menu.setAttribute('role', 'listbox');
   menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
   menu.style.width = `${width}px`;
@@ -641,7 +674,7 @@ function openAutoDropdown(trigger) {
   document.body.append(menu);
   trigger.setAttribute('aria-expanded', 'true');
   openAutoSelect = { kind, index, field };
-  menu.querySelector('[aria-selected="true"]')?.focus();
+  menu.querySelector('[aria-selected="true"]')?.focus({preventScroll:true});
 }
 
 function chooseAutoOption(value) {
@@ -688,6 +721,8 @@ function openModeMenu(key) {
   const menu = document.createElement('div');
   menu.id = 'mode-menu';
   menu.className = 'mode-menu';
+  menu.dataset.anchorTop = rect.top;
+  menu.dataset.anchorLeft = rect.left;
   menu.setAttribute('role', 'listbox');
   menu.setAttribute('aria-label', '签到方式');
   menu.style.cssText = `top:${top}px;left:${left}px;width:${width}px`;
@@ -697,7 +732,7 @@ function openModeMenu(key) {
   document.body.append(menu);
   trigger.setAttribute('aria-expanded', 'true');
   openModeIndex = key;
-  menu.querySelector('[aria-selected="true"]').focus();
+  menu.querySelector('[aria-selected="true"]').focus({preventScroll:true});
 }
 
 function chooseMode(mode) {
@@ -817,7 +852,7 @@ async function poll() {
     const connection = $('.connection');
     if (connection) { connection.classList.remove('offline'); connection.title = '服务连接正常'; }
     const connectionLabel = $('#connection-label');
-    if (connectionLabel && connectionLabel.textContent !== '本地连接') connectionLabel.textContent = '本地连接';
+    if (connectionLabel && connectionLabel.textContent !== '服务已连接') connectionLabel.textContent = '服务已连接';
   } catch (error) {
     const connection = $('.connection');
     if (connection) { connection.classList.add('offline'); connection.title = '无法连接服务，正在重试'; }
@@ -993,7 +1028,18 @@ document.addEventListener('keydown', event => {
     options[(options.indexOf(event.target) + step + options.length) % options.length].focus();
   }
 });
-window.addEventListener('scroll', () => { closeModeMenu(); closeAutoSelect(); }, true);
+window.addEventListener('scroll', () => {
+  // A queued scroll event can arrive just after opening a menu; close only if its anchor moved.
+  const menus = [
+    ['#mode-menu',openModeIndex === null ? null : document.querySelector(`[data-mode-trigger="${openModeIndex}"]`),closeModeMenu],
+    ['#auto-select-menu',openAutoSelect ? document.querySelector(`[data-auto-select="${openAutoSelect.kind}"][data-index="${openAutoSelect.index}"][data-field="${openAutoSelect.field}"]`) : null,closeAutoSelect]
+  ];
+  for (const [selector,trigger,close] of menus) {
+    const menu = $(selector);if (!menu) continue;
+    const rect = trigger?.getBoundingClientRect();
+    if (!rect || Math.abs(rect.top-Number(menu.dataset.anchorTop)) > 1 || Math.abs(rect.left-Number(menu.dataset.anchorLeft)) > 1) close();
+  }
+}, true);
 window.addEventListener('resize', () => { closeModeMenu(); closeAutoSelect(); });
 $('#add-account').addEventListener('click', () => { readEditors(); config.users.push({ sourceIndex:-1, name:'', session:'', apiId:'', apiHash:'', hasApiHash:false, sessionReady:false, dialogFolder:'', bots:[], checkinSchedules:[] }); openAccount(config.users.length - 1); $('#account-editor .account-fields input')?.focus(); });
 $('#account-back').addEventListener('click', () => navigate('accounts'));
@@ -1019,12 +1065,7 @@ $('#today').textContent = new Date().toLocaleDateString('zh-CN', { year:'numeric
     renderConfig();
     renderRun();
     renderAutomationState();
-    const [hash, query] = location.hash.slice(1).split('?');
-    const params = new URLSearchParams(query);
-    if (hash === 'features' && params.get('plugin') === 'checkin') {
-      const index = config.users.findIndex(user => user.session === params.get('account'));
-      openCheckinFeature(index < 0 ? null : index, params.get('section'));
-    } else if (['overview','bots','accounts','features','ai','automation','activity','users','global-settings','admin-global-settings','audit','notifications','health'].includes(hash)) navigate(hash, false, hash === 'activity' ? params.get('account') : null);
+    restoreLocationRoute();
     if (!pythonVersion) toast('未检测到 Python，配置可编辑，运行需安装 Python 环境', true);
     const statePollTimer = setInterval(() => { if (!document.hidden) poll(); }, 2000);
     document.addEventListener('visibilitychange', () => {

@@ -74,6 +74,9 @@ const path = require('node:path');
     await page.locator('#schedule-list [data-rule-toggle]').click();
     await badge.filter({ hasText:'second:@source_channel' }).waitFor();
     assert.ok(!(await badge.textContent()).includes('first'), 'slow old-account response cannot overwrite current account');
+    await page.locator('[data-account-section="settings"]').click();
+    await page.locator('[data-account-section="messages"]').click();
+    assert.equal(await page.locator('#schedule-list [data-rule-save]').isDisabled(),true,'opening legacy daily messages does not create unsaved changes');
 
     await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable:true, value:true }); document.dispatchEvent(new Event('visibilitychange')); });
     await page.waitForTimeout(100);
@@ -82,6 +85,14 @@ const path = require('node:path');
     assert.equal(stateRequests.length, polls, 'hidden page stops status polling');
     await page.evaluate(() => { delete document.hidden; document.dispatchEvent(new Event('visibilitychange')); });
     await page.waitForResponse(response => response.url().includes('/api/state?config=0'));
+    await page.locator('[data-view="features"]').click();
+    await page.locator('[data-view="accounts"]').click();
+    await page.goBack();await page.locator('#view-features.active').waitFor();
+    assert.equal(await page.locator('[data-view="features"]').getAttribute('aria-current'),'page');
+    await page.goForward();await page.locator('#view-accounts.active').waitFor();
+    assert.equal(new URL(page.url()).hash,'#accounts');
+    await page.evaluate(() => { location.hash='overview'; });
+    await page.locator('#view-overview.active').waitFor();
     assert.deepEqual(errors, []);
     console.log('Polling browser PASS: status-only responses, hidden tab/page suppression, preserved drafts, account isolation and resume');
   } finally { await browser.close(); }

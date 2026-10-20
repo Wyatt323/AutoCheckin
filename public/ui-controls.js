@@ -47,7 +47,10 @@
   const pad = value => String(value).padStart(2, '0');
   const today = () => new Date(Date.now() + 28800000).toISOString().slice(0, 10);
   function labelFor(control) {
-    return control.getAttribute('aria-label') || control.closest('label')?.querySelector('span')?.textContent || control.closest('label')?.firstChild?.textContent?.trim() || '选择';
+    const label = control.labels?.[0] || control.closest('label');
+    const caption = label?.querySelector('span');
+    const text = label ? [...label.childNodes].filter(node => node.nodeType === Node.TEXT_NODE).map(node => node.textContent).join(' ').trim() : '';
+    return control.getAttribute('aria-label') || (caption && !caption.closest('button') ? caption.textContent : '') || text || '选择';
   }
   function close(restore = false) {
     if (!active) return;
@@ -55,6 +58,7 @@
     active = null;
     dismiss(previous.panel, () => previous.panel.remove());
     previous.trigger.setAttribute('aria-expanded', 'false');
+    previous.trigger.removeAttribute('aria-controls');
     if (restore && previous.trigger.isConnected) previous.trigger.focus();
   }
   function position() {
@@ -115,7 +119,7 @@
       item.setAttribute('role', 'option');
       item.setAttribute('aria-label', option.textContent);
       item.setAttribute('aria-selected', String(option.selected));
-      item.disabled = option.disabled;
+      item.disabled = option.disabled || Boolean(option.closest('optgroup')?.disabled);
       panel.append(item);
     }
     panel.addEventListener('keydown', event => {
@@ -130,14 +134,16 @@
       if (event.key.length === 1 && event.key !== ' ') items.find(item => item.textContent.toLowerCase().startsWith(event.key.toLowerCase()))?.focus();
     });
     position();
-    (panel.querySelector('[aria-selected="true"]') || panel.querySelector('button:not(:disabled)'))?.focus();
+    (panel.querySelector('[aria-selected="true"]:not(:disabled)') || panel.querySelector('button:not(:disabled)'))?.focus();
   }
   function sync(select) {
     const trigger = enhanced.get(select);
     if (!trigger) return;
     const label = select.selectedOptions[0]?.textContent || '请选择';
     if (trigger.firstChild.textContent !== label) trigger.firstChild.textContent = label;
-    trigger.disabled = select.disabled;
+    if (trigger.disabled !== select.disabled) trigger.disabled = select.disabled;
+    const name = labelFor(select);
+    if (trigger.getAttribute('aria-label') !== name) trigger.setAttribute('aria-label', name);
   }
   function enhanceSelect(select) {
     if (enhanced.has(select)) { sync(select); return; }
@@ -250,7 +256,7 @@
     document.querySelectorAll('dialog').forEach(enhanceDialog);
     document.querySelectorAll('select:not([multiple])').forEach(enhanceSelect);
     document.querySelectorAll('input[type="date"],input[type="time"],input[type="datetime-local"]').forEach(enhanceDate);
-    if (active && !active.trigger.isConnected) close();
+    if (active && (!active.trigger.isConnected || active.trigger.disabled || active.trigger.closest('[hidden],[inert]'))) close();
   }
   document.addEventListener('pointerdown', event => {
     if (active && !active.panel.contains(event.target) && !active.trigger.contains(event.target)) close();
@@ -261,15 +267,17 @@
   document.addEventListener('keydown', event => {
     if (!active) return;
     if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); close(true); }
-    if (event.key === 'Tab' && active.panel.classList.contains('ui-options')) close();
+    if (event.key === 'Tab' && active.panel.classList.contains('ui-options')) close(true);
   }, true);
   document.addEventListener('reset', event => { setTimeout(() => event.target.querySelectorAll('select').forEach(sync), 0); });
   window.addEventListener('resize', position);
   window.addEventListener('scroll', event => { if (active && !active.panel.contains(event.target)) position(); }, true);
   const observer = new MutationObserver(records => {
-    if (records.some(record => [...record.addedNodes].some(node => node.nodeType === 1 && !node.closest?.('.ui-popover')))) scan();
+    if (records.some(record => record.type === 'attributes'
+      ? record.target.matches('select,input,option,optgroup')
+      : record.target.matches('select,option,optgroup') || [...record.addedNodes].some(node => node.nodeType === 1 && !node.closest?.('.ui-popover')))) scan();
   });
-  observer.observe(document.body, { childList: true, subtree: true });
+  observer.observe(document.body, { childList: true, subtree: true, attributes:true, attributeFilter:['disabled','selected','label','aria-label'] });
   scan();
   window.UIControls = { close, refresh: scan, confirm: options => new Promise(resolve => {
     close();

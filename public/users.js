@@ -100,7 +100,7 @@ function renderSettingsScope() {
 function settingsNavigationAllowed(view) {
   if(!['global-settings','admin-global-settings','ai'].includes(currentView) || currentView===view)return true;
   if(!globalSaving && !document.querySelector('#proxy-edit-dialog[open],#provider-edit-dialog[open],.ui-confirm-dialog[open]'))return true;
-  if(location.hash!==`#${currentView}`)location.hash=currentView;
+  if(location.hash!==`#${currentView}`)history.replaceState(null,'',`#${currentView}`);
   toast('请先完成或关闭当前设置操作',true);return false;
 }
 function applySettingsSummary(effective) {

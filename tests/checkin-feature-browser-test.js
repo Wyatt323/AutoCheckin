@@ -16,7 +16,7 @@ const path = require('node:path');
       botSource:index ? 'folder' : 'configured',dialogFolder:index ? 'saved-folder' : '',
       discoveredBots:index ? [{bot:'@discovered_bot',mode:'command',command:'/checkin',lastResult:'success'}] : [],
       bots:[{name:`@${session}_bot`,mode:'command',command:'/sign',note:`${session} original`,schedule:{enabled:true,time:'11:22:37'}}],
-      checkinSchedules:[{id:`daily_${session}`,enabled:true,repeat:'daily',time:'09:30:15',timeMode:'fixed'}]
+      checkinSchedules:[{id:`daily_${session}`,enabled:true,repeat:index ? 'once' : 'daily',time:index ? '2029-01-02T09:30:00' : '09:30:15'}]
     })),automations:{schedules:[],forwards:[],forwardPins:[{id:'forward_1',enabled:false,name:'Saved forward',account:'second',sources:['@source'],target:'@target',keywords:[],pinAfterForward:false}]},plugins:{zeroSpeakers:[]}};
     const status = {python:'offline',run:{state:'idle',lines:[]},automation:{status:'idle',lines:[]},checkinScheduler:{events:[],planned:[]}};
     const records = [];
@@ -56,15 +56,29 @@ const path = require('node:path');
     assert.equal(await page.locator('[data-field="note"]').inputValue(),'first original');
     await page.locator('[data-field="note"]').fill('first edited');
     await page.locator('[data-bot-schedule-time]').fill('12:34:56');
+    const checkinRoute = page.url();
+    await page.locator('[data-view="accounts"]').click();
+    await page.goBack();
+    await page.locator('#checkin-plugin-editor:not([hidden])').waitFor();
+    assert.equal(page.url(),checkinRoute,'Back restores the checkin route without adding a new history entry');
+    assert.equal(await page.locator('[data-field="note"]').inputValue(),'first edited','history preserves the Bot draft');
+    await page.goForward();await page.locator('#view-accounts.active').waitFor();
+    assert.equal(new URL(page.url()).hash,'#accounts','Forward keeps the address aligned with the visible page');
+    await page.goBack();await page.locator('#checkin-plugin-editor:not([hidden])').waitFor();
     await page.selectOption('#checkin-account-choice','1');
     assert.equal(await page.locator('[data-dialog-folder]').inputValue(),'saved-folder');
     assert.match(await page.locator('.discovered-bots').innerText(),/discovered_bot/);
     assert.ok(await page.locator('[data-bot-schedule-enabled]').isDisabled(),'folder mode still suspends independent timers');
+    await page.locator('[data-checkin-section="checkins"]').click();
+    assert.equal(await page.locator('.checkin-rule [data-rule-save-status]').innerText(),'已保存','datetime controls omitting zero seconds do not mark a saved rule dirty');
+    await page.locator('[data-checkin-section="bots"]').click();
     await page.selectOption('#checkin-account-choice','0');
     assert.equal(await page.locator('[data-field="note"]').inputValue(),'first edited');
     assert.equal(await page.locator('[data-bot-schedule-time]').inputValue(),'12:34:56');
     await page.locator('[data-checkin-section="checkins"]').click();
     await page.locator('.checkin-rule [data-rule-toggle]').click();
+    assert.equal(await page.locator('.checkin-rule [data-rule-save]').isDisabled(),true,'legacy schedules without timeMode are already saved');
+    assert.equal(await page.locator('.checkin-rule [data-rule-save-status]').innerText(),'已保存');
     await page.selectOption('.checkin-rule [data-field="timeMode"]','random');
     await page.locator('[data-field="rangeStart"]').fill('10:11:12');
     await page.locator('[data-field="rangeEnd"]').fill('10:11:13');
@@ -76,7 +90,7 @@ const path = require('node:path');
     assert.equal(stored.users[0].bots[0].note,'first edited');
     assert.equal(stored.users[0].bots[0].schedule.time,'12:34:56');
     assert.equal(stored.users[0].checkinSchedules[0].rangeStart,'10:11:12');
-    assert.equal(stored.users[1].checkinSchedules[0].time,'09:30:15','editing first account cannot modify second');
+    assert.equal(stored.users[1].checkinSchedules[0].time,'2029-01-02T09:30','editing first account cannot modify second');
     assert.equal(stored.users[1].dialogFolder,'saved-folder');
     assert.equal(stored.users[1].discoveredBots[0].command,'/checkin');
     assert.equal(stored.automations.forwardPins[0].name,'Saved forward');

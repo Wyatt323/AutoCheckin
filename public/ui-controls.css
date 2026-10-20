@@ -10,6 +10,8 @@
 .ui-option[aria-selected=true] { background:#f1edff; color:#7461d6; font-weight:700; }
 .ui-option[aria-selected=true]:after { content:'✓'; color:#8b78df; }
 .ui-option:hover,.ui-option:focus-visible { background:#f5f2ff; }
+.ui-option { overflow-wrap:anywhere; white-space:normal; line-height:1.6; }
+.ui-option::after { flex:none; }
 .ui-date-field { display:flex; align-items:center; position:relative; min-width:0; width:100%; }
 .ui-date-field input { width:100%; padding-right:40px!important; min-height:40px; background:#fff; border:1px solid #e7e6f1; border-radius:10px; color:#536079; font-size:12px; }
 .ui-date-field input::-webkit-calendar-picker-indicator { display:none; }
