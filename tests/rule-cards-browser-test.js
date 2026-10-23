@@ -12,7 +12,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
       name:session,session,sourceIndex:index,sessionReady:true,apiId:'',hasApiHash:false,botSource:'configured',dialogFolder:'',
       bots:[{name:'@checkin_bot',mode:'command',command:'/sign',note:'签到 Bot'}],
       checkinSchedules:[{id:'daily_'+session,enabled:true,repeat:'daily',timeMode:'fixed',time:'09:30:15'}]
-    })),automations:{forwards:[],schedules:[{id:'message_1',enabled:true,account:'Labubu',repeat:'daily',timeMode:'fixed',time:'10:00:20',target:'@announcements',message:'原始消息\n完整保留'}],
+    })),automations:{forwards:[],schedules:[{id:'message_1',name:'',enabled:true,account:'Labubu',repeat:'daily',timeMode:'fixed',time:'10:00:20',target:'@announcements',message:'原始消息\n完整保留'}],
       forwardPins:[{id:'forward_1',enabled:true,name:'重要通知同步',account:'Labubu',sources:['@source'],target:'@announcements',keywords:['通知'],pinAfterForward:true}],
       redPackets:[1,2].map(id=>({id:'packet_'+id,enabled:true,name:id===1 ? '牛币群红包' : '交流群红包',account:'Labubu',groups:['-1001234567'],botUsername:'@example_bot',watchSeconds:120,retryInterval:0.5,buttonKeywords:[],successKeywords:[],emptyKeywords:[]}))},
       plugins:{zeroSpeakers:[{id:'cleanup_1',name:'群成员检查',account:'Labubu',group:'@members'}]}};
@@ -236,12 +236,27 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     await page.locator('#checkin-account-settings').click();await page.locator('[data-account-section="messages"]').click();
     const message=page.locator('#schedule-list article').first();await isOpen(message,false);await compactHeader(message,'message');await switchRule(message);
     assert.equal(stored.automations.schedules[0].enabled,false);await toggle(message).click();
+    assert.equal(await message.locator('[data-rule-title]').innerText(),'定时消息 1');
+    assert.equal(await message.locator('[data-field="name"]').inputValue(),'');
+    await saveStatus(message,'已保存',false,true);
+    const messageName='每日群组问候 "<测试>"';
+    await message.locator('[data-field="name"]').fill(messageName);
+    assert.equal(await message.locator('[data-rule-title]').innerText(),messageName);
     await message.locator('[data-auto-select][data-field="repeat"]').click();await page.locator('[data-auto-option="once"]').click();
     assert.equal(await message.locator('[data-field="time"]').getAttribute('type'),'datetime-local');
     await message.locator('[data-field="time"]').fill('2029-01-02T10:20:31');
     await message.locator('[data-field="message"]').fill('修改消息\n完整保留');
     await toggle(message).click();await toggle(message).click();assert.equal(await message.locator('[data-field="message"]').inputValue(),'修改消息\n完整保留');
     await save(message);await isOpen(message,false);assert.equal(stored.automations.schedules[0].message,'修改消息\n完整保留');
+    assert.equal(stored.automations.schedules[0].name,messageName);
+    assert.equal(await message.locator('[data-rule-title]').innerText(),messageName);
+    await toggle(message).click();
+    assert.equal(await message.locator('[data-field="name"]').inputValue(),messageName,'saved name survives editor rerender');
+    await screenshot('scheduled-message-name');
+    await message.locator('[data-field="name"]').fill('');
+    assert.equal(await message.locator('[data-rule-title]').innerText(),'定时消息 1','empty names retain the numbered fallback');
+    await message.locator('[data-field="name"]').fill(messageName);
+    await toggle(message).click();
     await page.setViewportSize({width:390,height:844});await noOverflow();await toggle(message).click();await noOverflow();
     await page.locator('[data-view="features"]').click();await page.locator('#close-checkin').click();await page.locator('#open-red-packet').click();
     await noOverflow();await screenshot('rule-cards-mobile-collapsed');

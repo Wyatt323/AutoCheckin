@@ -393,7 +393,7 @@ function refreshRuleCards() {
   const peerLabel = (account, value) => peerNames.get(peerKey(account, value || ''))?.title || value || '待设置';
   $$('#schedule-list [data-auto-kind="schedules"]').forEach(card => {
     const rule = config.automations.schedules[Number(card.dataset.index)];
-    if (rule) RuleCards.enhance(card, {key:`message:${rule.id}`,title:`定时消息 ${Number(card.dataset.index) + 1}`,
+    if (rule) RuleCards.enhance(card, {key:`message:${rule.id}`,title:rule.name?.trim() || `定时消息 ${Number(card.dataset.index) + 1}`,
       summary:`${accountLabel(rule.account)} · ${peerLabel(rule.account, rule.target)} · ${ruleTimeSummary(rule)}（北京时间）`});
   });
   $$('#checkin-config-editor [data-checkin-index]').forEach(card => {
@@ -578,8 +578,8 @@ function renderAutomation() {
   const account = config.users[selectedAccountIndex]?.session;
   const schedules = config.automations.schedules.map((item, index) => ({ item, index })).filter(entry => entry.item.account === account);
   $('#schedule-list').innerHTML = schedules.length ? schedules.map(({ item, index }) => `
-    <article class="automation-card" data-auto-kind="schedules" data-index="${index}"><div class="automation-card-head"><div class="automation-card-symbol">${lineIcon('clock')}</div><div><strong>定时消息 ${index + 1}</strong><small>${item.repeat === 'once' ? '指定时间发送一次' : '每天定时发送'}</small></div><div class="automation-card-actions"><label class="auto-switch"><input type="checkbox" data-field="enabled" ${item.enabled !== false ? 'checked' : ''}><i></i>启用</label><button class="delete-btn" data-delete="schedule" data-index="${index}">删除</button></div></div>
-    <div class="auto-field-grid"><div class="auto-field"><span>发送频率</span>${autoSelect('schedules', index, 'repeat', item.repeat === 'once' ? '发送一次' : '每天发送')}</div>${scheduleTimeFields(item, 'message')}${peerField('target', '目标群组 / 频道', item.target)}<label class="auto-field wide"><span>消息内容</span><textarea data-field="message" maxlength="4000" placeholder="输入要定时发送的消息">${escapeHtml(item.message || '')}</textarea><small>仅发送纯文本；一次性任务过期超过 5 分钟后不会补发。</small></label></div></article>`).join('') : '<div class="automation-empty">当前账号还没有定时消息。添加规则后，保存即可启用。</div>';
+    <article class="automation-card" data-auto-kind="schedules" data-index="${index}"><div class="automation-card-head"><div class="automation-card-symbol">${lineIcon('clock')}</div><div><strong>${escapeHtml(item.name?.trim() || `定时消息 ${index + 1}`)}</strong><small>${item.repeat === 'once' ? '指定时间发送一次' : '每天定时发送'}</small></div><div class="automation-card-actions"><label class="auto-switch"><input type="checkbox" data-field="enabled" ${item.enabled !== false ? 'checked' : ''}><i></i>启用</label><button class="delete-btn" data-delete="schedule" data-index="${index}">删除</button></div></div>
+    <div class="auto-field-grid"><label class="auto-field wide"><span>规则名称</span><input data-field="name" value="${escapeHtml(item.name || '')}" maxlength="80" placeholder="例如 每日群组问候（可选）"></label><div class="auto-field"><span>发送频率</span>${autoSelect('schedules', index, 'repeat', item.repeat === 'once' ? '发送一次' : '每天发送')}</div>${scheduleTimeFields(item, 'message')}${peerField('target', '目标群组 / 频道', item.target)}<label class="auto-field wide"><span>消息内容</span><textarea data-field="message" maxlength="4000" placeholder="输入要定时发送的消息">${escapeHtml(item.message || '')}</textarea><small>仅发送纯文本；一次性任务过期超过 5 分钟后不会补发。</small></label></div></article>`).join('') : '<div class="automation-empty">当前账号还没有定时消息。添加规则后，保存即可启用。</div>';
   renderPlannedTimes();
   refreshRuleCards();
   schedulePeerLookup();
@@ -1044,7 +1044,7 @@ window.addEventListener('scroll', () => {
 window.addEventListener('resize', () => { closeModeMenu(); closeAutoSelect(); });
 $('#add-account').addEventListener('click', () => { readEditors(); config.users.push({ sourceIndex:-1, name:'', session:'', apiId:'', apiHash:'', hasApiHash:false, sessionReady:false, dialogFolder:'', bots:[], checkinSchedules:[] }); openAccount(config.users.length - 1); $('#account-editor .account-fields input')?.focus(); });
 $('#account-back').addEventListener('click', () => navigate('accounts'));
-$('#add-schedule').addEventListener('click', () => { readEditors(); const rule = { id:crypto.randomUUID(), enabled:true, account:config.users[selectedAccountIndex]?.session || '', target:'', repeat:'daily', time:'09:00', message:'' }; config.automations.schedules.push(rule); RuleCards.open(`message:${rule.id}`); renderAutomation(); $('#schedule-list article:last-child input[data-field="target"]')?.focus(); });
+$('#add-schedule').addEventListener('click', () => { readEditors(); const rule = { id:crypto.randomUUID(), name:'', enabled:true, account:config.users[selectedAccountIndex]?.session || '', target:'', repeat:'daily', time:'09:00', message:'' }; config.automations.schedules.push(rule); RuleCards.open(`message:${rule.id}`); renderAutomation(); $('#schedule-list article:last-child input[data-field="name"]')?.focus(); });
 $('#restart-automation').addEventListener('click', async () => {
   try { const data = await api('/api/automation/restart', { method:'POST', body:'{}' }); automationState = data.automation; renderAutomationState(); toast('自动化已重新启动'); }
   catch (error) { toast(error.message, true); }

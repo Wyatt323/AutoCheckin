@@ -64,7 +64,7 @@ async function main() {
     state.config.users[1].bots = [{ name:'@another_bot', mode:'button', command:'/sign', note:'第二账号专属' }];
     state.config.users[0].checkinSchedules.push({ id:'checkin_test_001', enabled:true, repeat:'daily', time:'09:30' });
     state.config.users[1].checkinSchedules.push({ id:'checkin_test_002', enabled:false, repeat:'once', time:'2027-01-02T10:15' });
-    state.config.automations.schedules.push({ id:'schedule_test_001', enabled:true, account:'test', target:'@target_group', repeat:'daily', time:'09:30', message:'测试定时消息' });
+    state.config.automations.schedules.push({ id:'schedule_test_001', name:' 每日群组问候 ', enabled:true, account:'test', target:'@target_group', repeat:'daily', time:'09:30', message:'测试定时消息' });
     state.config.automations.forwards.push({ id:'forward_test_001', enabled:true, account:'test', source:'@source_group', target:'@target_group' });
     const saved = await fetch(`${base}/api/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.config) });
     assert.equal(saved.status, 200);
@@ -78,6 +78,7 @@ async function main() {
     assert.equal(persisted.telegram.users[1].api_hash, 'second-hash');
     assert.equal(persisted.ai.providers[0].api_key, 'secret-key');
     assert.equal(persisted.automations.schedules[0].time, '09:30');
+    assert.equal(persisted.automations.schedules[0].name, '每日群组问候');
     assert.deepEqual(persisted.automations.forwards, []);
     assert.deepEqual(persisted.automations.forwardPins[0].sources, ['@source_group']);
     assert.equal(persisted.telegram.users[0].checkin_schedules[0].time, '09:30');
@@ -87,6 +88,13 @@ async function main() {
     assert.equal(refreshed.config.users[0].bots[0].schedule.time,'09:30:27');
     assert.equal(refreshed.config.users[1].bots[0].name, '@another_bot');
     assert.equal(refreshed.config.automations.schedules[0].message, '测试定时消息');
+    assert.equal(refreshed.config.automations.schedules[0].name, '每日群组问候');
+    const legacy = structuredClone(persisted);
+    delete legacy.automations.schedules[0].name;
+    fs.writeFileSync(path.join(directory,'config.json'),JSON.stringify(legacy));
+    const legacyView = await (await fetch(`${base}/api/state`)).json();
+    assert.equal(legacyView.config.automations.schedules[0].name, '', 'old unnamed rules have an empty editor value');
+    fs.writeFileSync(path.join(directory,'config.json'),JSON.stringify(persisted));
     assert.equal(refreshed.config.users[0].checkinSchedules[0].repeat, 'daily');
     const invalid = structuredClone(refreshed.config);
     invalid.automations.forwards.push({ id:'forward_test_002', enabled:true, account:'test', source:'@target_group', target:'@source_group' });
@@ -103,7 +111,7 @@ async function main() {
       ['packet',{id:'packet_test_001',name:'独立规则',enabled:false,account:'test',groups:['@test_group']}],
       ['forward',{...refreshed.config.automations.forwardPins[0],name:'只保存此规则'}],
       ['cleanup',{id:'cleanup_test_001',name:'检查',account:'test',group:'@test_group'}],
-      ['message',{...refreshed.config.automations.schedules[0],message:'单条消息'}],
+      ['message',{...refreshed.config.automations.schedules[0],name:'单条消息规则',message:'单条消息'}],
       ['checkin',{...refreshed.config.users[0].checkinSchedules[0],time:'13:15:17'}]
     ];
     for(const [kind,rule] of targets){
@@ -111,6 +119,7 @@ async function main() {
       assert.equal(response.status,200,await response.clone().text());
       const savedRule=(await response.json()).rule;
       assert.equal(savedRule.id,rule.id);
+      if(kind==='message')assert.equal(savedRule.name,rule.name,'single-rule saves preserve the message rule name');
       const after=disk();
       if(kind==='checkin')after.telegram.users[0].checkin_schedules=before.telegram.users[0].checkin_schedules;
       else if(kind==='cleanup'){after.plugins=before.plugins;}

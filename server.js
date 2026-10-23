@@ -178,7 +178,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
         checkinSchedules: Array.isArray(user.checkin_schedules) ? user.checkin_schedules : []
       })),
       automations: {
-        schedules: Array.isArray(config.automations?.schedules) ? config.automations.schedules : [],
+        schedules: Array.isArray(config.automations?.schedules) ? config.automations.schedules.map(rule => ({...rule,name:String(rule.name || '')})) : [],
         forwards: Array.isArray(config.automations?.forwards) ? config.automations.forwards : [],
         forwardPins: Array.isArray(config.automations?.forwardPins) ? config.automations.forwardPins : [],
         redPackets: Array.isArray(config.automations?.redPackets) ? config.automations.redPackets : []
@@ -228,7 +228,7 @@ async function createWorkspace({dataDir, store, prefix = '', systemSettings, own
       const label = `定时消息 ${index + 1}`;
       const timing = validateTime(item, label);
       const message = nonempty(item.message, `${label} 内容`, 4000);
-      return { id: idFor(item, label), enabled: item.enabled !== false, account: accountFor(item, label), target: chatRef(item.target, `${label} 目标`), ...timing, message };
+      return { id: idFor(item, label), name:String(item.name || '').trim().slice(0,80), enabled: item.enabled !== false, account: accountFor(item, label), target: chatRef(item.target, `${label} 目标`), ...timing, message };
     });
     const normalizedForwards = forwards.map((item, index) => {
       const label = `转发规则 ${index + 1}`;
