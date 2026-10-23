@@ -18,7 +18,9 @@ const path = require('node:path');
         dialogFolder:'', bots:[], checkinSchedules:[], discoveredBots:[]
       })),
       automations:{ forwards:[],forwardPins:[], schedules:['first', 'second'].map(account => ({
-        id:`rule_${account}`, account, target:'@source_channel', message:'offline',repeat:'daily',time:'09:00',enabled:true
+        // /api/state supplies name:'' even for legacy unnamed rules (server.js viewConfig).
+        // Keep timeMode absent to exercise the legacy daily-time editor default.
+        id:`rule_${account}`, name:'', account, target:'@source_channel', message:'offline',repeat:'daily',time:'09:00',enabled:true
       })) }
     };
     const status = { python:'offline', run:{ state:'idle', lines:[] }, automation:{ status:'idle', lines:[] }, checkinScheduler:{ events:[], planned:[] } };
@@ -77,6 +79,12 @@ const path = require('node:path');
     await page.locator('[data-account-section="settings"]').click();
     await page.locator('[data-account-section="messages"]').click();
     assert.equal(await page.locator('#schedule-list [data-rule-save]').isDisabled(),true,'opening legacy daily messages does not create unsaved changes');
+    const ruleName = page.locator('#schedule-list input[data-field="name"]');
+    assert.equal(await ruleName.inputValue(), '', 'legacy unnamed messages use the API-normalized empty name');
+    await ruleName.fill('Custom scheduled rule');
+    assert.equal(await page.locator('#schedule-list [data-rule-save]').isDisabled(),false,'editing a message name creates unsaved changes');
+    await ruleName.fill('');
+    assert.equal(await page.locator('#schedule-list [data-rule-save]').isDisabled(),true,'reverting a message name restores the saved state');
 
     await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable:true, value:true }); document.dispatchEvent(new Event('visibilitychange')); });
     await page.waitForTimeout(100);
