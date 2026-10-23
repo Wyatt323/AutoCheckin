@@ -454,10 +454,11 @@ function renderRuleActions() {
   $$('[data-rule-key]').forEach(card => {
     const context = contexts.get(card.dataset.ruleKey);if (!context) return;
     const dirty = savedRuleSettings.get(context.key) !== ruleSignature(context.rule);
-    const label = togglingRuleKey === context.key ? context.rule.enabled === false ? '正在关闭…' : '正在启用…' : savingRuleKey === context.key ? '正在保存…' : dirty ? '未保存 · 仅保存此规则' : '已保存';
+    const label = togglingRuleKey === context.key ? context.rule.enabled === false ? '正在关闭…' : '正在启用…' : savingRuleKey === context.key ? '正在保存…' : dirty ? '未保存修改' : '已保存';
     const status = card.querySelector('[data-rule-save-status]');
     if (status.textContent !== label) status.textContent = label;
     status.dataset.dirty = String(dirty);
+    status.dataset.saved = String(label === '已保存');
     card.querySelector('[data-rule-save]').disabled = Boolean(blocked) || !dirty;
     const enabledInput=ruleEnabledInput(card);
     if(enabledInput){enabledInput.disabled=Boolean(blocked);enabledInput.title=savedRuleSettings.has(context.key) ? '点击立即保存启用状态，不提交其他修改' : '新规则首次保存后生效';}

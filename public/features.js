@@ -354,11 +354,11 @@ function renderRedPacketCenter() {
   $('#red-packet-rules').innerHTML = rules.map((rule,index) => `
     <article class="automation-card feature-rule" data-red-packet-rule="${escapeHtml(rule.id)}">
       <div class="automation-card-head"><div class="automation-card-symbol">${lineIcon('gift')}</div><div><strong>${escapeHtml(rule.name || `红包规则 ${index+1}`)}</strong><small>${rule.groups?.length || 0} 个监听群组 · /red 自动领取</small></div><div class="automation-card-actions"><label class="auto-switch"><input type="checkbox" data-red-packet-field="enabled" ${rule.enabled !== false ? 'checked' : ''}><i></i>启用规则</label><button class="delete-btn" type="button" data-red-packet-remove>删除规则</button></div></div>
-      <div class="auto-field-grid">
+      <div class="auto-field-grid packet-rule-fields">
         <label class="auto-field"><span>规则名称</span><input data-red-packet-field="name" value="${escapeHtml(rule.name || '')}" maxlength="80" placeholder="例如 牛逼群红包"></label>
         <label class="auto-field"><span>执行 TG 账号</span><select data-red-packet-field="account" aria-label="执行 TG 账号"><option value="">选择账号</option>${config.users.map(user => `<option value="${escapeHtml(user.session)}" ${user.session === rule.account ? 'selected' : ''}>${escapeHtml(user.name)} (${escapeHtml(user.session)})${user.sessionReady ? '' : ' · 待登录'}</option>`).join('')}</select></label>
-        <div class="auto-field wide"><div class="feature-field-heading"><span>监听群组</span><button class="outline-btn" type="button" data-red-packet-add-group>＋ 添加群组</button></div><div class="feature-input-list">${(rule.groups || ['']).map((group,i) => `<div class="feature-input-item">${featurePeerInput(group,`监听群组 ${i+1}`,'data-red-packet-group')}<button class="feature-remove-item" type="button" data-red-packet-remove-group="${i}" aria-label="移除群组 ${i+1}">×</button></div>`).join('')}</div><small>支持 1–20 个群组；执行账号需要已加入群组。输入后自动显示群名。</small></div>
-        <label class="auto-field wide"><span>红包 Bot 用户名 · 可选</span><input data-red-packet-field="botUsername" value="${escapeHtml(rule.botUsername || '')}" placeholder="例如 @niubi_bot" maxlength="120"><small>填写后只领取该 Bot 的红包；留空匹配群内 Bot 的领取按钮。</small></label>
+        <label class="auto-field"><span>红包 Bot · 可选</span><input data-red-packet-field="botUsername" value="${escapeHtml(rule.botUsername || '')}" placeholder="例如 @niubi_bot" maxlength="120" title="填写后只领取该 Bot 的红包；留空匹配群内 Bot 的领取按钮。" aria-description="填写后只领取该 Bot 的红包；留空匹配群内 Bot 的领取按钮。"></label>
+        <div class="auto-field wide"><div class="feature-field-heading"><span>监听群组</span><button class="outline-btn" type="button" data-red-packet-add-group>＋ 添加群组</button></div><div class="feature-input-list">${(rule.groups || ['']).map((group,i) => `<div class="feature-input-item">${featurePeerInput(group,`监听群组 ${i+1}`,'data-red-packet-group')}<button class="feature-remove-item" type="button" data-red-packet-remove-group="${i}" aria-label="移除群组 ${i+1}">×</button></div>`).join('')}</div><small>支持 ID、@用户名或公开 t.me 链接，填写后自动获取群名。最多 20 个群组，执行账号需已加入。</small></div>
       </div>
       <div class="cleanup-rule-runtime" data-red-packet-runtime role="status"></div>
       <details class="red-packet-options"><summary>识别与重试设置</summary><div class="auto-field-grid">
@@ -378,7 +378,9 @@ function renderRedPacketStatus() {
     const last=Math.max(0,...groups.map(group=>Number(group.lastReceivedAt || 0)));
     const active=automationState?.status==='running' && groups.length;
     const label=rule.enabled===false ? savedRuleEnabled(`packet:${rule.id}`) === false ? '规则已关闭' : togglingRuleKey === `packet:${rule.id}` ? '正在关闭规则…' : '规则已关闭 · 保存后生效' : active ? `已连接 ${groups.length} 个群组` : automationState?.status==='starting' ? '正在连接，请稍候' : '尚未确认群组连接，请查看规则日志';
-    element.innerHTML=`<strong>${escapeHtml(label)}</strong><small>已接收 ${sum('received')} 条实时消息 · /red ${sum('commands')} 次 · 红包按钮 ${sum('packets')} 个 · 备用检查 ${sum('fallbackChecks')} 次${last ? ' · 最近接收 '+escapeHtml(formatDate(new Date(last*1000).toISOString())) : ''}</small><small>运行状态对应已保存规则。未收到指令时，也会检测新红包按钮；无实时消息时每 5 秒补充检查新消息。</small>`;
+    element.dataset.connection=rule.enabled===false ? 'disabled' : active ? 'connected' : 'pending';
+    element.title=`运行状态对应已保存规则。未收到指令时，也会检测新红包按钮；无实时消息时每 5 秒补充检查新消息。${last ? ' 最近接收：'+formatDate(new Date(last*1000).toISOString()) : ''}`;
+    element.innerHTML=`<strong><i class="rule-runtime-dot" aria-hidden="true"></i>${escapeHtml(label)}</strong><small class="rule-runtime-metrics"><span>已接收 <b>${sum('received')}</b> 条实时消息</span><span>/red <b>${sum('commands')}</b> 次</span><span>红包按钮 <b>${sum('packets')}</b> 个</span><span>备用检查 <b>${sum('fallbackChecks')}</b> 次</span></small>`;
   });
 }
 $('#open-red-packet').addEventListener('click',() => {readEditors();checkinEditorOpen=featureEditorOpen=cleanupEditorOpen=false;redPacketEditorOpen=true;renderFeatureCenter();});

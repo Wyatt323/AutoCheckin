@@ -66,14 +66,49 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
       });
       assert.deepEqual(layout,{inHeader:true,sameRow:true,statusInHeader:true,saveInBody:true,runtimeBeforeBody:true},name+' keeps actions on one desktop row and save inside configuration');
       if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR)await card.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,'rule-card-'+name+'.png')});
+      await toggle(card).click();await isOpen(card,true);
+      if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR)await card.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,'rule-card-'+name+'-expanded.png')});
       for(const width of [390,768]){await page.setViewportSize({width,height:844});await noOverflow();}
       await page.setViewportSize({width:1440,height:1100});
+      await toggle(card).click();await isOpen(card,false);
+    };
+    const packetFormLayout=async(card,width,columns)=>{
+      await page.setViewportSize({width,height:1100});await noOverflow();
+      await card.locator('.peer-name.resolved').first().waitFor();
+      const layout=await card.evaluate(card=>{
+        const grid=card.querySelector('.packet-rule-fields'),fields=[...grid.querySelectorAll(':scope > label')].map(el=>el.getBoundingClientRect());
+        const row=card.querySelector('.peer-input-row').getBoundingClientRect(),badge=card.querySelector('.peer-name.resolved').getBoundingClientRect();
+        const runtime=card.querySelector('[data-red-packet-runtime]'),state=runtime.querySelector('strong').getBoundingClientRect(),metrics=runtime.querySelector('.rule-runtime-metrics').getBoundingClientRect();
+        return {columns:getComputedStyle(grid).gridTemplateColumns.split(' ').length,tops:fields.map(rect=>rect.top),
+          groupsBelowFields:row.top>=Math.max(...fields.map(rect=>rect.bottom)),
+          badgeInsideInput:badge.left>row.left && badge.right<row.right && badge.top>row.top && badge.bottom<row.bottom,
+          runtimeOnOneRow:Math.abs(state.top+state.height/2-metrics.top-metrics.height/2)<2};
+      });
+      assert.equal(layout.columns,columns,width+'px packet form column count');
+      assert.equal(layout.groupsBelowFields,true,'groups occupy their own row');
+      assert.equal(layout.badgeInsideInput,true,'resolved group name stays inside the input frame');
+      if(columns===3)assert.ok(layout.tops.every(top=>Math.abs(top-layout.tops[0])<2),'name, account and bot align on one desktop row');
+      if(columns===2){assert.ok(Math.abs(layout.tops[0]-layout.tops[1])<2);assert.ok(layout.tops[2]>layout.tops[1]);}
+      if(columns===1)assert.ok(layout.tops[0]<layout.tops[1] && layout.tops[1]<layout.tops[2],'mobile fields stack in order');
+      if(width===1440)assert.equal(layout.runtimeOnOneRow,true,'connection state and metrics share one desktop row');
     };
     await page.goto('https://autocheckin-offline.test/#features');
     await page.locator('#open-red-packet').click();
     const packets=page.locator('#red-packet-rules'),first=packets.locator('[data-red-packet-rule]').first();
     await isOpen(first,false);
     await compactHeader(first,'red-packet');
+    const layoutExample=packets.locator('[data-red-packet-rule]').nth(1);
+    await toggle(layoutExample).click();
+    for(const [width,columns] of [[1440,3],[768,2],[390,1]])await packetFormLayout(layoutExample,width,columns);
+    await page.setViewportSize({width:1440,height:1100});
+    await layoutExample.locator('[data-red-packet-field="name"]').fill('交流群红包 · 每日红包');
+    assert.equal(await layoutExample.locator('[data-rule-save]').isEnabled(),true);
+    if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR){
+      await layoutExample.locator('[data-red-packet-field="name"]').blur();
+      await packets.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,'rule-cards-actual-layout.png')});
+    }
+    await layoutExample.locator('[data-red-packet-field="name"]').fill('交流群红包');
+    await toggle(layoutExample).click();
     assert.equal(await first.locator('.rule-card-body').evaluate(el=>el.inert),true);
     assert.equal(await first.locator('.rule-card-body').evaluate(el=>el.getBoundingClientRect().height),0);
     assert.match(await toggle(first).innerText(),/Labubu.*1 个群组/);
@@ -218,6 +253,6 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     assert.equal(stored.automations.redPackets[0].name,'未通过校验的草稿');
     assert.equal(await first.locator('[data-red-packet-field="name"]').inputValue(),'请求期间继续编辑');
     assert.deepEqual(errors,[]);
-    console.log('Rule cards PASS: all five compact headers, desktop action alignment, 390/768px layouts, scoped save/delete, sibling drafts, failed/in-flight save edits, rule log isolation/reset, folded actions, keyboard/inert, polling and animation');
+    console.log('Rule cards PASS: all five compact headers, desktop action alignment and single-row status, 3/2/1-column packet forms, group names inside input frames, 390/768px expanded layouts, scoped save/delete, sibling drafts, failed/in-flight save edits, rule log isolation/reset, folded actions, keyboard/inert, polling and animation');
   }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

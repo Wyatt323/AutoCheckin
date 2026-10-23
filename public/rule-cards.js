@@ -74,7 +74,7 @@
       setExpanded(card, expanded.get(key) === true, false);
       const saveActions = document.createElement('div');
       saveActions.className = 'rule-card-save-actions';
-      saveActions.innerHTML = `<small>修改内容后保存${head.querySelector('input[type="checkbox"]') ? '；已保存规则的启用开关立即生效。' : '。'}</small><button type="button" class="primary-btn" data-rule-save>保存规则</button>`;
+      saveActions.innerHTML = `<small>配置有修改时可保存${head.querySelector('input[type="checkbox"]') ? ' · 启用开关即时生效' : ''}</small><button type="button" class="primary-btn" data-rule-save>保存规则</button>`;
       content.append(saveActions);
     }
     const heading = card.querySelector('[data-rule-title]');
