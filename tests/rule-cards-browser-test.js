@@ -54,6 +54,27 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     const switchRule=async card=>{await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/rules')&&r.request().method()==='PATCH'),card.locator('.automation-card-actions .auto-switch').click()]);await page.waitForFunction(()=>!savingConfig);};
     const catalog=async close=>{await page.locator(close).click();await page.locator('#feature-catalog').waitFor();};
     const noOverflow=async()=>assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'rules fit mobile viewport');
+    const controlsUnclipped=async(card,name,width)=>{
+      const clipped=await card.evaluate(card=>{
+        const bounds=card.getBoundingClientRect(),content=card.querySelector('.rule-card-content'),clip=content.getBoundingClientRect();
+        return [...card.querySelectorAll('button,input,textarea,[data-rule-summary],[data-rule-save-status],.peer-name')].filter(el=>{
+          const style=getComputedStyle(el),rect=el.getBoundingClientRect();
+          return el.checkVisibility() && rect.width>0 && rect.height>0 && style.visibility!=='hidden' && style.opacity!=='0' && !el.closest('[inert]');
+        }).flatMap(el=>{
+          const rect=el.getBoundingClientRect(),body=content.contains(el);
+          return rect.left<bounds.left-1 || rect.right>bounds.right+1 || (body && (rect.left<clip.left-1 || rect.right>clip.right+1 || rect.bottom>clip.bottom+1)) ? [el.outerHTML.slice(0,180)] : [];
+        });
+      });
+      assert.deepEqual(clipped,[],name+' '+width+'px controls remain inside card and clipping container');
+      for(const action of await card.locator('[data-rule-toggle],[data-rule-logs],.delete-btn,[data-cleanup-run],[data-cleanup-stop],[data-cleanup-report]').all()){
+        if(!await action.isVisible())continue;
+        await action.scrollIntoViewIfNeeded();
+        assert.equal(await action.evaluate(el=>{const r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return el===hit || el.contains(hit);}),true,name+' '+width+'px summary action remains hit-testable');
+      }
+    };
+    const saveStatus=async(card,label,dirty,saved)=>{
+      assert.deepEqual(await card.locator('[data-rule-save-status]').evaluate(el=>({text:el.textContent,dirty:el.dataset.dirty,saved:el.dataset.saved})),{text:label,dirty:String(dirty),saved:String(saved)});
+    };
     const compactHeader=async(card,name)=>{
       const layout=await card.evaluate(card=>{
         const head=card.querySelector('.automation-card-head,.checkin-rule-head'),toggle=head.querySelector('[data-rule-toggle]');
@@ -68,7 +89,11 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
       if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR)await card.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,'rule-card-'+name+'.png')});
       await toggle(card).click();await isOpen(card,true);
       if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR)await card.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,'rule-card-'+name+'-expanded.png')});
-      for(const width of [390,768]){await page.setViewportSize({width,height:844});await noOverflow();}
+      for(const width of [1440,320,390,768]){
+        await page.setViewportSize({width,height:1100});await noOverflow();await controlsUnclipped(card,name,width);
+        await toggle(card).click();await isOpen(card,false);await controlsUnclipped(card,name+' folded',width);
+        await toggle(card).click();await isOpen(card,true);
+      }
       await page.setViewportSize({width:1440,height:1100});
       await toggle(card).click();await isOpen(card,false);
     };
@@ -101,13 +126,22 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     await toggle(layoutExample).click();
     for(const [width,columns] of [[1440,3],[768,2],[390,1]])await packetFormLayout(layoutExample,width,columns);
     await page.setViewportSize({width:1440,height:1100});
-    await layoutExample.locator('[data-red-packet-field="name"]').fill('交流群红包 · 每日红包');
+    await saveStatus(layoutExample,'已保存',false,true);
+    await layoutExample.locator('[data-red-packet-field="name"]').fill('很长的红包规则名称'.repeat(8));
     assert.equal(await layoutExample.locator('[data-rule-save]').isEnabled(),true);
+    await saveStatus(layoutExample,'未保存修改',true,false);
+    for(const width of [1440,768,390,320]){await page.setViewportSize({width,height:1100});await controlsUnclipped(layoutExample,'long dirty title',width);}
+    await page.setViewportSize({width:1440,height:1100});
     if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR){
       await layoutExample.locator('[data-red-packet-field="name"]').blur();
       await packets.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,'rule-cards-actual-layout.png')});
     }
     await layoutExample.locator('[data-red-packet-field="name"]').fill('交流群红包');
+    await saveStatus(layoutExample,'已保存',false,true);
+    assert.equal(await layoutExample.locator('[data-rule-save]').isDisabled(),true,'reverting content clears dirty state');
+    await layoutExample.locator('.red-packet-options summary').click();
+    for(const width of [1440,768,390,320]){await page.setViewportSize({width,height:1100});await controlsUnclipped(layoutExample,'expanded retry settings',width);}
+    await layoutExample.locator('.red-packet-options summary').click();await page.setViewportSize({width:1440,height:1100});
     await toggle(layoutExample).click();
     assert.equal(await first.locator('.rule-card-body').evaluate(el=>el.inert),true);
     assert.equal(await first.locator('.rule-card-body').evaluate(el=>el.getBoundingClientRect().height),0);
@@ -236,9 +270,11 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     await first.locator('[data-red-packet-field="name"]').fill('未通过校验的草稿');saveFailure=true;
     await first.locator('[data-rule-save]').click();await page.locator('#toast').filter({hasText:'offline validation error'}).waitFor();
     await isOpen(first,true);assert.equal(await first.locator('[data-red-packet-field="name"]').inputValue(),'未通过校验的草稿');
+    await saveStatus(first,'未保存修改',true,false);
     saveFailure=false;holdSave=true;
     const saving=save(first);
     await first.locator('[data-rule-save-status]').filter({hasText:'正在保存…'}).waitFor();
+    await saveStatus(first,'正在保存…',true,false);
     while(!releaseSave)await new Promise(resolve=>setTimeout(resolve,10));
     await first.locator('[data-red-packet-field="name"]').fill('请求期间继续编辑');
     holdSave=false;releaseSave();await saving;
@@ -253,6 +289,6 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     assert.equal(stored.automations.redPackets[0].name,'未通过校验的草稿');
     assert.equal(await first.locator('[data-red-packet-field="name"]').inputValue(),'请求期间继续编辑');
     assert.deepEqual(errors,[]);
-    console.log('Rule cards PASS: all five compact headers, desktop action alignment and single-row status, 3/2/1-column packet forms, group names inside input frames, 390/768px expanded layouts, scoped save/delete, sibling drafts, failed/in-flight save edits, rule log isolation/reset, folded actions, keyboard/inert, polling and animation');
+    console.log('Rule cards PASS: all five compact headers, desktop action alignment and single-row status, unclipped/hit-testable expanded and folded controls at 320/390/768/1440px, long dirty titles and nested settings, saved/dirty/in-flight markers, 3/2/1-column packet forms, group names inside input frames, 390/768px expanded layouts, scoped save/delete, sibling drafts, failed/in-flight save edits, rule log isolation/reset, folded actions, keyboard/inert, polling and animation');
   }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
