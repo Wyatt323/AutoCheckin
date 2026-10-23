@@ -23,6 +23,7 @@ const path = require('node:path');
     await page.route('**/*',async route => {
       const url = new URL(route.request().url());
       const json = body => route.fulfill({contentType:'application/json',body:JSON.stringify(body)});
+      if (url.pathname === '/api/auth/status') return json({user:{id:'admin',username:'admin',role:'admin'}});
       if (url.pathname === '/api/state') return json(url.searchParams.get('config') === '0' ? status : {...status,config:stored});
       if (url.pathname === '/api/config') {
         stored = route.request().postDataJSON();saves.push(structuredClone(stored));return json({...status,config:stored});
@@ -49,6 +50,10 @@ const path = require('node:path');
     await page.locator('.account-tile-main[data-open-account="0"]').click();
     assert.equal(await page.locator('#account-detail').getByRole('button',{name:/签到/}).count(),0,'account details also have no checkin button');
     await page.locator('[data-view="features"]').click();
+    assert.equal(await page.locator('[data-view="features"]').innerText(),'插件中心');
+    assert.equal(await page.locator('#feature-center-title').innerText(),'插件中心');
+    assert.equal(await page.locator('#breadcrumb').innerText(),'插件中心');
+    assert.equal(await page.locator('#nav-layout-toggle').count(),0,'the horizontal menu switch is removed');
     assert.equal(await page.locator('#feature-catalog .feature-plugin-card').count(),4);
     await screenshot('checkin-feature-catalog');
     await page.locator('#open-checkin').click();
@@ -130,20 +135,44 @@ const path = require('node:path');
     await page.locator('#close-forward-pin').click();
     await page.locator('#open-checkin').click();
     await page.selectOption('#checkin-account-choice','0');
-    for (const layout of ['horizontal','vertical']) {
-      await page.evaluate(value => {localStorage.setItem('autocheckin-navigation-layout',value);},layout);
+    for (const preference of [null,'horizontal','vertical']) {
+      await page.evaluate(value => {if(value===null)localStorage.removeItem('autocheckin-navigation-layout');else localStorage.setItem('autocheckin-navigation-layout',value);},preference);
       await page.reload();await page.locator('#checkin-run').waitFor();
       for (const width of [1440,1024,768,390,320]) {
         await page.setViewportSize({width,height:950});
+        const nav=await page.locator('.nav').evaluate(el=>({direction:getComputedStyle(el).flexDirection,overflow:el.scrollWidth>el.clientWidth}));
+        assert.deepEqual(nav,{direction:'column',overflow:false},`${preference} ${width}: navigation always stacks without a horizontal scrollbar`);
+        assert.equal(await page.locator('#nav-drawer-open').isVisible(),width<=900);
         for (const section of ['bots','checkins']) {
           await page.locator(`[data-checkin-section="${section}"]`).click();
-          assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),`${layout} ${width} ${section} fits viewport`);
-          if (width===390 && section==='bots') await screenshot('checkin-feature-mobile-'+layout);
+          assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),`${preference} ${width} ${section} fits viewport`);
+          if (width===390 && section==='bots' && preference===null) await screenshot('checkin-feature-mobile');
         }
       }
     }
+    await page.setViewportSize({width:390,height:620});
+    await page.locator('#nav-drawer-open').click();
+    assert.equal(await page.locator('#primary-navigation').getAttribute('aria-modal'),'true');
+    assert.equal(await page.locator('.main').evaluate(el=>el.inert),true,'background controls are inert while the drawer is open');
+    assert.equal(await page.locator('.nav').evaluate(el=>el.scrollHeight>el.clientHeight),true,'long menus scroll vertically on short screens');
+    await page.locator('#admin-logout').focus();await page.keyboard.press('Tab');
+    assert.equal(await page.locator('.brand').evaluate(el=>el===document.activeElement),true,'Tab stays inside the drawer');
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await page.locator('#admin-logout').evaluate(el=>el===document.activeElement),true);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#nav-drawer-open').evaluate(el=>el===document.activeElement),true,'Escape returns focus to the opener');
+    assert.equal(await page.locator('.main').evaluate(el=>el.inert),false);
+    await page.locator('#nav-drawer-open').click();
+    await screenshot('sidebar-mobile');
+    await page.locator('#navigation-backdrop').click({position:{x:380,y:300}});
+    assert.equal(await page.locator('#nav-drawer-open').getAttribute('aria-expanded'),'false');
+    await page.locator('#nav-drawer-open').click();
+    await page.locator('[data-view="features"]').click();
+    assert.equal(await page.locator('#nav-drawer-open').getAttribute('aria-expanded'),'false','choosing a page closes the mobile menu');
+    assert.equal(await page.locator('.main').evaluate(el=>el.inert),false);
     // Deleting an account before the selected one must not attach its editor to a different user.
     await page.setViewportSize({width:1440,height:1000});
+    await page.locator('#close-checkin').click();await screenshot('sidebar-plugin-center');await page.locator('#open-checkin').click();
     await page.selectOption('#checkin-account-choice','1');
     await page.locator('#checkin-account-settings').click();
     await page.evaluate(() => openAccount(0));
@@ -159,6 +188,6 @@ const path = require('node:path');
     await page.locator('#checkin-no-accounts').waitFor();
     assert.ok(await page.locator('#checkin-run-all').isDisabled());
     assert.deepEqual(errors,[]);assert.ok(saves.length>=3);
-    console.log('Checkin feature browser PASS: moved entry points, account-owned drafts/save/reload, folder/records preserved, random/seconds, scoped logs, execution, deletion and 20 responsive layouts');
+    console.log('Checkin feature browser PASS: plugin labels, permanent vertical navigation including old preferences, mobile drawer/focus/Escape/backdrop, no horizontal menu overflow, account-owned drafts/save/reload, folder/records preserved, random/seconds, scoped logs, execution, deletion and 30 responsive layouts');
   } finally {await browser.close();}
 })().catch(error => {console.error(error);process.exitCode=1;});

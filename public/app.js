@@ -40,7 +40,6 @@ function lineIcon(name) {
   const paths = {
     menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',
     close:'<path d="m6 6 12 12M6 18 18 6"/>',
-    layout:'<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 3v18M5.5 7h1M5.5 11h1M5.5 15h1"/>',
     dashboard:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     features:'<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><path d="M17.5 14v7M14 17.5h7"/>',
     account:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
@@ -60,17 +59,13 @@ function lineIcon(name) {
 }
 document.querySelectorAll('[data-icon]').forEach(element => { element.innerHTML = lineIcon(element.dataset.icon); });
 (() => {
-  const preference='autocheckin-navigation-layout';
   const small=window.matchMedia('(max-width: 900px)');
-  const sidebar=$('#primary-navigation'),toggle=$('#nav-layout-toggle'),opener=$('#nav-drawer-open'),backdrop=$('#navigation-backdrop');
-  let layout='horizontal',drawerOpen=false;
-  try {if(localStorage.getItem(preference)==='vertical')layout='vertical';} catch {}
+  const sidebar=$('#primary-navigation'),main=$('.main'),opener=$('#nav-drawer-open'),backdrop=$('#navigation-backdrop');
+  let drawerOpen=false;
   function render() {
-    const drawer=layout==='vertical' && small.matches,open=drawer && drawerOpen;
-    document.documentElement.dataset.navLayout=layout;
-    toggle.setAttribute('aria-pressed',String(layout==='vertical'));
-    toggle.title=layout==='vertical' ? '点击切换为顶部横向菜单' : '点击切换为左侧竖向菜单';
+    const drawer=small.matches,open=drawer && drawerOpen;
     document.body.classList.toggle('nav-drawer-open',open);
+    main.inert=open;
     backdrop.hidden=!open;
     opener.setAttribute('aria-expanded',String(open));
     sidebar.inert=drawer && !open;
@@ -86,17 +81,11 @@ document.querySelectorAll('[data-icon]').forEach(element => { element.innerHTML 
     drawerOpen=true;window.UIControls?.close();render();
     sidebar.querySelector('.nav-item.active:not([hidden])')?.focus();
   }
-  toggle.addEventListener('click',()=>{
-    window.UIControls?.close();
-    layout=layout==='vertical' ? 'horizontal' : 'vertical';drawerOpen=false;
-    try {localStorage.setItem(preference,layout);} catch {}
-    render();if(layout==='vertical' && small.matches)openDrawer();
-  });
   opener.addEventListener('click',openDrawer);
   $('#nav-drawer-close').addEventListener('click',()=>closeDrawer());
   backdrop.addEventListener('click',()=>closeDrawer());
   sidebar.addEventListener('click',event=>{if(event.target.closest('[data-view],a'))closeDrawer();});
-  small.addEventListener('change',()=>{const contained=sidebar.contains(document.activeElement);closeDrawer(false);if(contained && layout==='vertical' && small.matches)opener.focus();});
+  small.addEventListener('change',()=>{const contained=sidebar.contains(document.activeElement);closeDrawer(false);if(contained && small.matches)opener.focus();});
   document.addEventListener('keydown',event=>{
     if(!drawerOpen)return;
     if(event.key==='Escape'){event.preventDefault();closeDrawer();return;}
@@ -156,7 +145,7 @@ function navigate(view, keepAccount = false, logAccount = null) {
     if (active) item.setAttribute('aria-current','page');else item.removeAttribute('aria-current');
   });
   $$('.view').forEach(item => item.classList.toggle('active', item.id === `view-${view==='admin-global-settings' ? 'global-settings' : view}`));
-  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', features:'功能中心', ai:'AI 管理', activity:'运行日志', users:'用户管理', 'global-settings':'全局设置','admin-global-settings':'管理员全局设置', audit:'后台审计',notifications:'TG 通知',health:'运行健康监控' })[view];
+  $('#breadcrumb').textContent = ({ overview:'总览', accounts:selectedAccountIndex === null ? '账号管理' : config.users[selectedAccountIndex]?.name || '账号配置', features:'插件中心', ai:'AI 管理', activity:'运行日志', users:'用户管理', 'global-settings':'全局设置','admin-global-settings':'管理员全局设置', audit:'后台审计',notifications:'TG 通知',health:'运行健康监控' })[view];
   const hash = `#${view === 'activity' && logAccount ? `activity?account=${encodeURIComponent(logAccount)}` : view}`;
   if (!restoringRoute && location.hash !== hash) history.pushState(null,'',hash);
   schedulePeerLookup();

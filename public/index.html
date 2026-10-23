@@ -37,29 +37,29 @@
       <nav class="nav" aria-label="主导航">
         <button class="nav-item active" data-view="overview"><span class="nav-icon" data-icon="dashboard">◫</span> 总览</button>
         <button class="nav-item" data-view="accounts"><span class="nav-icon" data-icon="account">♙</span> 账号管理</button>
-        <button class="nav-item" data-view="features"><span class="nav-icon" data-icon="features">⊞</span> 功能中心</button>
+        <button class="nav-item" data-view="features"><span class="nav-icon" data-icon="features">⊞</span> 插件中心</button>
         <button class="nav-item" data-view="ai"><span class="nav-icon" data-icon="ai">✧</span> AI 管理</button>
         <button class="nav-item" data-view="notifications"><span class="nav-icon" data-icon="message">✉</span> TG 通知</button>
-        <button class="nav-item" data-view="health"><span class="nav-icon" data-icon="dashboard">◫</span> 运行健康监控</button>
         <button class="nav-item" id="nav-users" data-view="users" hidden><span class="nav-icon" data-icon="account">♙</span> 用户管理</button>
         <button class="nav-item" id="nav-global-settings" data-view="global-settings" hidden><span class="nav-icon" data-icon="edit">⚙</span> <span id="global-settings-nav-label">全局设置</span></button>
         <button class="nav-item" id="nav-admin-global-settings" data-view="admin-global-settings" hidden><span class="nav-icon" data-icon="edit">⚙</span> 管理员全局设置</button>
+        <button class="nav-item" data-view="health"><span class="nav-icon" data-icon="dashboard">◫</span> 运行健康监控</button>
         <button class="nav-item" id="nav-audit" data-view="audit" hidden><span class="nav-icon" data-icon="log">☷</span> 后台审计</button>
         <button class="nav-item" data-view="activity"><span class="nav-icon" data-icon="log">☷</span> 运行日志</button>
       </nav>
       <div class="top-actions"><span id="web-user-name"></span><a class="text-link" id="web-password-link" href="/password" hidden>修改密码</a><span class="connection" role="status"><span class="live-dot"></span> <span id="connection-label">服务已连接</span></span><button class="outline-btn" id="admin-logout" type="button">退出登录</button><div class="avatar" aria-label="AutoCheckin 工作空间">AC</div></div>
     </header>
     <main class="main">
-      <div class="topbar"><div class="workspace-path"><button class="outline-btn nav-drawer-toggle" id="nav-drawer-open" type="button" aria-label="打开菜单" aria-controls="primary-navigation" aria-expanded="false"><span data-icon="menu" aria-hidden="true"></span>菜单</button><div class="breadcrumbs">工作空间 <span>/</span> <strong id="breadcrumb">总览</strong></div></div><div class="workspace-tools"><span class="workspace-tag">TELEGRAM AUTOMATION</span><button class="outline-btn nav-layout-toggle" id="nav-layout-toggle" type="button" aria-label="竖向菜单" aria-pressed="false"><span data-icon="layout" aria-hidden="true"></span><span>竖向菜单</span></button></div></div>
+      <div class="topbar"><div class="workspace-path"><button class="outline-btn nav-drawer-toggle" id="nav-drawer-open" type="button" aria-label="打开菜单" aria-controls="primary-navigation" aria-expanded="false"><span data-icon="menu" aria-hidden="true"></span>菜单</button><div class="breadcrumbs">工作空间 <span>/</span> <strong id="breadcrumb">总览</strong></div></div><div class="workspace-tools"><span class="workspace-tag">TELEGRAM AUTOMATION</span></div></div>
       <div class="content">
         <section class="view active" id="view-overview">
           <div class="hero"><div class="hero-copy"><span class="eyebrow"><i></i> YOUR DAILY AUTOMATION</span><h1>每一次签到，<br><em>轻松安排，</em><br>清晰掌控。</h1><p>把账号、Bot 与定时任务放在一起。<br>从日常签到到消息转发，让每一步都有条不紊。</p><div class="hero-actions"><button class="primary-btn" id="hero-checkin" data-open-checkin>配置签到 <span aria-hidden="true">→</span></button><button class="ghost-btn" data-go="accounts">管理账号 <span aria-hidden="true">↗</span></button></div></div><div class="hero-art"><div class="hero-task-card"><div class="hero-task-head"><span class="hero-task-icon" aria-hidden="true">✓</span><div><strong>你的自动化工作空间</strong><small>签到 · 定时消息 · 监听转发</small></div></div><div class="hero-task-label"><span>执行方式</span><strong>按计划，自动进行</strong></div><div class="art-progress" aria-hidden="true"><i></i></div><button class="primary-btn" data-go="features">配置我的任务 <span aria-hidden="true">→</span></button><span class="hero-sticker sticker-pink" aria-hidden="true">◎</span><span class="hero-sticker sticker-green" aria-hidden="true">✦</span><span class="hero-sticker sticker-lilac" aria-hidden="true">▦</span></div></div></div>
           <div class="section-heading"><div><span class="kicker">OVERVIEW</span><h2>工作台概览</h2><p>你的自动签到任务，一目了然。</p></div><span class="today" id="today"></span></div>
           <div class="stats"><article class="stat-card"><div class="stat-icon purple" data-icon="account">♙</div><span>管理账号</span><strong id="stat-users">—</strong><small>Telegram 账号</small></article><article class="stat-card"><div class="stat-icon blue" data-icon="bot">▦</div><span>签到 Bot</span><strong id="stat-bots">—</strong><small>已配置目标</small></article><article class="stat-card"><div class="stat-icon mint" data-icon="ai">✧</div><span>AI 服务</span><strong id="stat-providers">—</strong><small>诗词题辅助</small></article><article class="stat-card"><div class="stat-icon orange" data-icon="clock">◷</div><span>任务状态</span><strong class="status-stat" id="stat-status">待运行</strong><small id="stat-last">尚无运行记录</small></article></div>
-          <div class="overview-grid"><section class="panel quick-panel"><div class="panel-head"><div><span class="kicker">QUICK ACCESS</span><h3>快捷管理</h3></div></div><button class="quick-row" data-go="accounts"><span class="quick-icon lilac" data-icon="account">♙</span><span><strong>账号与 Session</strong><small>查看登录状态，维护账号资料</small></span><b>→</b></button><button class="quick-row" data-open-checkin><span class="quick-icon sky" data-icon="bot">▦</span><span><strong>Bot 自动签到</strong><small>在功能中心配置 Bot 与签到计划</small></span><b>→</b></button><button class="quick-row" data-go="automation"><span class="quick-icon peach" data-icon="clock">◴</span><span><strong>消息自动化</strong><small>配置账号的定时消息</small></span><b>→</b></button></section><section class="panel latest-panel"><div class="panel-head"><div><span class="kicker">ACTIVITY</span><h3>最新运行</h3></div><button class="text-link" data-go="activity">查看日志 →</button></div><div id="latest-activity" class="empty-activity"><span>◷</span><strong>等待第一次运行</strong><p>从功能中心启动签到，运行进度会显示在这里。</p></div></section></div>
+          <div class="overview-grid"><section class="panel quick-panel"><div class="panel-head"><div><span class="kicker">QUICK ACCESS</span><h3>快捷管理</h3></div></div><button class="quick-row" data-go="accounts"><span class="quick-icon lilac" data-icon="account">♙</span><span><strong>账号与 Session</strong><small>查看登录状态，维护账号资料</small></span><b>→</b></button><button class="quick-row" data-open-checkin><span class="quick-icon sky" data-icon="bot">▦</span><span><strong>Bot 自动签到</strong><small>在插件中心配置 Bot 与签到计划</small></span><b>→</b></button><button class="quick-row" data-go="automation"><span class="quick-icon peach" data-icon="clock">◴</span><span><strong>消息自动化</strong><small>配置账号的定时消息</small></span><b>→</b></button></section><section class="panel latest-panel"><div class="panel-head"><div><span class="kicker">ACTIVITY</span><h3>最新运行</h3></div><button class="text-link" data-go="activity">查看日志 →</button></div><div id="latest-activity" class="empty-activity"><span>◷</span><strong>等待第一次运行</strong><p>从插件中心启动签到，运行进度会显示在这里。</p></div></section></div>
         </section>
         <section class="view" id="view-accounts">
-          <div class="account-overview" id="account-overview"><div class="page-heading"><div><span class="kicker">TELEGRAM ACCOUNTS</span><h1>账号管理</h1><p>维护 Telegram 登录、账号资料与定时消息；签到统一在功能中心配置。</p></div><button class="primary-btn" id="add-account">＋ 添加账号</button></div><div class="account-grid" id="account-list"></div><div class="bottom-save"><button class="primary-btn save-btn">保存账号列表</button></div></div>
+          <div class="account-overview" id="account-overview"><div class="page-heading"><div><span class="kicker">TELEGRAM ACCOUNTS</span><h1>账号管理</h1><p>维护 Telegram 登录、账号资料与定时消息；签到统一在插件中心配置。</p></div><button class="primary-btn" id="add-account">＋ 添加账号</button></div><div class="account-grid" id="account-list"></div><div class="bottom-save"><button class="primary-btn save-btn">保存账号列表</button></div></div>
           <div class="account-detail" id="account-detail" hidden>
             <button class="account-back" id="account-back" type="button">← 返回账号列表</button>
             <div class="account-detail-header"><div class="account-detail-avatar">♙</div><div><span class="kicker">ACCOUNT WORKSPACE</span><h1 id="account-detail-name">账号</h1><p id="account-detail-subtitle"></p></div><div class="account-detail-actions"><button class="outline-btn" id="account-profile-refresh" type="button">↻ 同步 TG 资料</button><button class="primary-btn save-btn">保存此账号配置</button></div></div>
@@ -71,7 +71,7 @@
           </div>
         </section>
         <section class="view" id="view-features" aria-labelledby="feature-center-title">
-          <div class="page-heading" id="feature-center-heading"><div><span class="kicker">FEATURE CENTER</span><h1 id="feature-center-title">功能中心</h1><p>为你的账号添加更多自动化能力，每条规则都独立配置。</p></div></div>
+          <div class="page-heading" id="feature-center-heading"><div><span class="kicker">PLUGIN CENTER</span><h1 id="feature-center-title">插件中心</h1><p>为你的账号添加更多自动化能力，每条规则都独立配置。</p></div></div>
           <div id="feature-catalog" class="feature-catalog">
             <article class="panel feature-plugin-card"><div class="feature-plugin-heading"><span class="feature-plugin-icon" data-icon="bot" aria-hidden="true">▦</span><span class="feature-center-badge">签到插件</span></div><h2>Bot 自动签到</h2><p>按账号管理签到 Bot 与计划，支持命令、按钮和对话分组轮询，也可立即手动执行。</p><div class="feature-plugin-tags"><span>多账号并行</span><span>Bot 独立定时</span><span>分组轮询</span></div><div class="feature-plugin-footer"><small id="checkin-plugin-count">尚无账号</small><button class="primary-btn" id="open-checkin" type="button" data-open-checkin>配置插件 <span aria-hidden="true">→</span></button></div></article>
             <article class="panel feature-plugin-card"><div class="feature-plugin-heading"><span class="feature-plugin-icon" data-icon="forward" aria-hidden="true">↗</span><span class="feature-center-badge">消息插件</span></div><h2>监听转发并置顶</h2><p>监听多个群组或频道，筛选关键词，将新消息转发到目标会话，并按需置顶。</p><div class="feature-plugin-tags"><span>多来源监听</span><span>关键词过滤</span><span>可选置顶</span></div><div class="feature-plugin-footer"><small id="forward-pin-count">尚无规则</small><button class="primary-btn" id="open-forward-pin" type="button">配置插件 <span aria-hidden="true">→</span></button></div></article>
@@ -79,7 +79,7 @@
             <article class="panel feature-plugin-card"><div class="feature-plugin-heading"><span class="feature-plugin-icon" data-icon="gift" aria-hidden="true">♢</span><span class="feature-center-badge">红包插件</span></div><h2>抢红包</h2><p>监听群内 /red 指令，红包按钮出现立即领取，成功或领完后继续等待下一个。</p><div class="feature-plugin-tags"><span>实时监听</span><span>自动领取</span><span>多群配置</span></div><div class="feature-plugin-footer"><small id="red-packet-count">尚无规则</small><button class="primary-btn" id="open-red-packet" type="button">配置插件 <span aria-hidden="true">→</span></button></div></article>
           </div>
           <section id="checkin-plugin-editor" hidden aria-labelledby="checkin-plugin-title">
-            <button class="account-back" id="close-checkin" type="button">← 返回功能中心</button>
+            <button class="account-back" id="close-checkin" type="button">← 返回插件中心</button>
             <div class="page-heading"><div><span class="kicker">BOT CHECK-IN</span><h1 id="checkin-plugin-title">Bot 自动签到</h1><p>选择执行账号，管理签到目标与定时计划。已有配置和计划继续生效。</p></div><button class="outline-btn" id="checkin-run-all" type="button">▶ 全部账号签到</button></div>
             <section class="panel checkin-workspace" id="checkin-workspace">
               <div class="checkin-account-bar"><span class="account-tile-avatar" id="checkin-account-avatar" aria-hidden="true"></span><label class="field"><span>执行 TG 账号</span><select id="checkin-account-choice" aria-label="签到执行 TG 账号"></select></label><div class="checkin-account-actions"><button class="primary-btn" id="checkin-run" type="button">▶ 执行此账号签到</button><button class="outline-btn" id="checkin-account-logs" type="button">运行日志</button><button class="text-link" id="checkin-account-settings" type="button">账号资料 ↗</button></div></div>
@@ -91,7 +91,7 @@
             <div class="automation-empty checkin-no-accounts" id="checkin-no-accounts" hidden><strong>先添加 Telegram 账号</strong><p>登录账号后，即可配置签到 Bot 与定时任务。</p><button class="primary-btn" data-go="accounts" type="button">前往账号管理 →</button></div>
           </section>
           <section id="forward-pin-editor" hidden aria-labelledby="forward-pin-title">
-            <button class="account-back" id="close-forward-pin" type="button">← 返回功能列表</button>
+            <button class="account-back" id="close-forward-pin" type="button">← 返回插件中心</button>
             <div class="page-heading"><div><span class="kicker">LISTEN · FORWARD · PIN</span><h2 id="forward-pin-title">监听转发并置顶</h2><p>每条规则选择一个执行账号，监听一个或多个来源，并转发到指定目标。</p></div><button class="outline-btn" id="add-forward-pin" type="button">＋ 添加规则</button></div>
             <div class="notice feature-plugin-notice"><span>ⓘ</span><div><p>关键词命中任意一个即可转发，忽略大小写；不填关键词则转发全部新消息，支持文字及媒体说明。</p><p>执行账号需能访问来源并向目标发送消息；开启置顶还需要目标会话的置顶权限。签到与监听可同时运行；登录或群清理时监听会暂停。</p></div></div>
             <div class="feature-plugin-runtime"><span id="feature-runtime-status" role="status">读取运行状态…</span></div>
@@ -99,7 +99,7 @@
             <p class="rule-page-hint">每条规则独立保存，在卡片内查看该规则的运行日志。</p>
           </section>
           <section id="red-packet-editor" hidden aria-labelledby="red-packet-title">
-            <button class="account-back" id="close-red-packet" type="button">← 返回功能列表</button>
+            <button class="account-back" id="close-red-packet" type="button">← 返回插件中心</button>
             <div class="page-heading"><div><span class="kicker">RED PACKET MONITOR</span><h2 id="red-packet-title">抢红包</h2><p>选择执行账号与监听群组，保存规则后开始监听。</p></div><button class="outline-btn" id="add-red-packet" type="button">＋ 添加规则</button></div>
             <div class="notice feature-plugin-notice"><span>ⓘ</span><div><p>发现 /red 后临时刷新，优先响应新消息与消息编辑；领取成功、已领取或红包领完后停止本轮，继续监听。</p><p>仅点击匹配的领取按钮。等待超时自动结束；遇到 Telegram 限流会等待。签到与监听可同时运行；登录或群清理时监听会暂停。</p></div></div>
             <div class="feature-plugin-runtime"><span id="red-packet-runtime-status" role="status">读取运行状态…</span></div>
@@ -107,7 +107,7 @@
             <p class="rule-page-hint">每条规则独立保存，在卡片内查看该规则的运行日志。</p>
           </section>
           <section id="zero-speakers-editor" hidden aria-labelledby="zero-speakers-title">
-            <button class="account-back" id="close-zero-speakers" type="button">← 返回功能列表</button>
+            <button class="account-back" id="close-zero-speakers" type="button">← 返回插件中心</button>
             <div class="page-heading"><div><span class="kicker">GROUP MEMBER CLEANUP</span><h2 id="zero-speakers-title">清理0发言群员</h2><p>保存规则后手动启动检测，清理操作由执行账号在 Telegram 群内确认。</p></div><button class="outline-btn" id="add-zero-speakers" type="button">＋ 添加规则</button></div>
             <div class="notice feature-plugin-notice"><span>ⓘ</span><div><p>按执行账号可访问且未删除的群历史判断“0发言”，无法确认不可见或已删除的历史。Excel 会注明检测范围；执行账号和管理员不清理。</p><p>需要群管理员及移除成员权限。报告发出后，由执行账号在同一群发送“是”或“否”，其他成员回复无效；30分钟未确认会自动取消。</p><p>检测与等待确认期间会占用此 TG 账号，消息自动化暂停；其他账号仍可签到。成员移出后解除个人限制，下次进群沿用群原有申请规则。</p></div></div>
             <div id="zero-speakers-rules" class="automation-list"></div>

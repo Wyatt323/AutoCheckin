@@ -258,6 +258,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     await message.locator('[data-field="name"]').fill(messageName);
     await toggle(message).click();
     await page.setViewportSize({width:390,height:844});await noOverflow();await toggle(message).click();await noOverflow();
+    await page.locator('#nav-drawer-open').click();
     await page.locator('[data-view="features"]').click();await page.locator('#close-checkin').click();await page.locator('#open-red-packet').click();
     await noOverflow();await screenshot('rule-cards-mobile-collapsed');
     await first.locator('[data-rule-logs]').click();
