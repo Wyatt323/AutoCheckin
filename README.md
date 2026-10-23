@@ -282,6 +282,8 @@ git pull --ff-only
 docker compose up -d --build
 ```
 
+网页引用的脚本、样式和图标会自动附带根据部署文件内容生成的版本号，避免更新后继续命中 CDN 的旧资源。若使用 Cloudflare 或其他反向代理，请将本站 HTML、API、登录响应和受登录保护的资源设置为不缓存；服务端同时发送 `Cache-Control: no-store` 及 CDN 专用禁缓存响应头。已有 CDN 缓存需在代理端清除，浏览器强制刷新无法清除 CDN 中的旧文件。
+
 ### 从旧数据迁移
 
 1. 停止原服务并备份原数据目录，确保没有其他实例占用 Session。

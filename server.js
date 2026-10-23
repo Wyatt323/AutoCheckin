@@ -33,6 +33,21 @@ function send(res, status, data) {
   res.end(body);
 }
 
+function frontendDocument(file) {
+  const html = fs.readFileSync(path.join(PUBLIC, file), 'utf8');
+  const assetPattern = /\b(src|href)="\/([\w.-]+\.(?:js|css|svg))"/g;
+  const assets = [...new Set([...html.matchAll(assetPattern)].map(match => match[2]))];
+  // One content version keeps the document's dependent scripts and styles together.
+  // Derive it from the deployed files; Docker images do not need Git metadata.
+  const hash = createHash('sha256').update(html);
+  for (const asset of assets) {
+    const target = asset === 'checkin-results.js' ? path.join(ROOT, 'checkin_results.js') : path.join(PUBLIC, asset);
+    hash.update('\0' + asset + '\0').update(fs.readFileSync(target));
+  }
+  const version = hash.digest('hex').slice(0, 20);
+  return {version, html:html.replace(assetPattern, (_, attribute, asset) => `${attribute}="/${asset}?v=${version}"`)};
+}
+
 function bodyJson(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -934,6 +949,8 @@ async function boot() {
   }
   const types = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml'};
 http.createServer(async (req, res) => {
+  res.setHeader('CDN-Cache-Control', 'no-store');
+  res.setHeader('Cloudflare-CDN-Cache-Control', 'no-store');
   try {
     const security = requestSecurity(req, { publicHost: PUBLIC_HOST, port: Number(process.env.PUBLIC_PORT || PORT), strictPublicHost: process.env.STRICT_PUBLIC_HOST === 'true', trustProxy: process.env.TRUST_PROXY === 'true' });
     if (security.error) return send(res, 403, { error: security.error });
@@ -1103,6 +1120,11 @@ http.createServer(async (req, res) => {
     if (req.method !== 'GET') return send(res, 405, { error: '不支持的请求' });
     const file = url.pathname === '/' ? 'index.html' : ['/login','/password'].includes(url.pathname) ? 'auth.html' : url.pathname.slice(1);
     if (!['auth.html', 'auth.css', 'auth.js', 'index.html', 'app.js', 'features.js', 'rule-cards.js', 'rule-cards.css', 'sortable.js', 'sortable.css', 'login.js', 'styles.css', 'controls.css', 'automation.css', 'account-dashboard.css', 'run-log.js', 'checkin-results.js', 'run-log.css', 'ui-controls.js', 'users.js', 'audit.js', 'notifications.js', 'health.js', 'ui-controls.css', 'theme.css', 'favicon.svg'].includes(file)) return send(res, 404, { error: '页面不存在' });
+    if (file.endsWith('.html')) {
+      const page = frontendDocument(file);
+      res.writeHead(200, { 'Content-Type': types['.html'], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-AutoCheckin-UI':page.version });
+      return res.end(page.html);
+    }
     const target = file==='checkin-results.js' ? path.join(ROOT,'checkin_results.js') : path.join(PUBLIC, file);
     res.writeHead(200, { 'Content-Type': types[path.extname(file)], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     fs.createReadStream(target).pipe(res);
