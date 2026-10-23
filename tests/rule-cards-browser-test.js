@@ -54,10 +54,26 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     const switchRule=async card=>{await Promise.all([page.waitForResponse(r=>r.url().endsWith('/api/rules')&&r.request().method()==='PATCH'),card.locator('.automation-card-actions .auto-switch').click()]);await page.waitForFunction(()=>!savingConfig);};
     const catalog=async close=>{await page.locator(close).click();await page.locator('#feature-catalog').waitFor();};
     const noOverflow=async()=>assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'rules fit mobile viewport');
+    const compactHeader=async(card,name)=>{
+      const layout=await card.evaluate(card=>{
+        const head=card.querySelector('.automation-card-head,.checkin-rule-head'),toggle=head.querySelector('[data-rule-toggle]');
+        const center=el=>{const rect=el.getBoundingClientRect();return rect.top+rect.height/2;};
+        const actions=[...card.querySelectorAll('[data-rule-logs],.delete-btn,[data-cleanup-run],[data-cleanup-stop],[data-cleanup-report]')].filter(el=>el.getClientRects().length && !el.hidden);
+        return {inHeader:actions.every(el=>head.contains(el)),sameRow:actions.every(el=>Math.abs(center(el)-center(toggle))<2),
+          statusInHeader:head.contains(card.querySelector('[data-rule-save-status]')),
+          saveInBody:card.querySelector('.rule-card-body').contains(card.querySelector('[data-rule-save]')),
+          runtimeBeforeBody:!card.querySelector('.cleanup-rule-runtime') || Boolean(card.querySelector('.cleanup-rule-runtime').compareDocumentPosition(card.querySelector('.rule-card-body')) & Node.DOCUMENT_POSITION_FOLLOWING)};
+      });
+      assert.deepEqual(layout,{inHeader:true,sameRow:true,statusInHeader:true,saveInBody:true,runtimeBeforeBody:true},name+' keeps actions on one desktop row and save inside configuration');
+      if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR)await card.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,'rule-card-'+name+'.png')});
+      for(const width of [390,768]){await page.setViewportSize({width,height:844});await noOverflow();}
+      await page.setViewportSize({width:1440,height:1100});
+    };
     await page.goto('https://autocheckin-offline.test/#features');
     await page.locator('#open-red-packet').click();
     const packets=page.locator('#red-packet-rules'),first=packets.locator('[data-red-packet-rule]').first();
     await isOpen(first,false);
+    await compactHeader(first,'red-packet');
     assert.equal(await first.locator('.rule-card-body').evaluate(el=>el.inert),true);
     assert.equal(await first.locator('.rule-card-body').evaluate(el=>el.getBoundingClientRect().height),0);
     assert.match(await toggle(first).innerText(),/Labubu.*1 个群组/);
@@ -124,6 +140,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     await screenshot('rule-cards-desktop-collapsed');
     await catalog('#close-red-packet');await page.locator('#open-forward-pin').click();
     const forward=page.locator('[data-feature-rule]').first();await isOpen(forward,false);
+    await compactHeader(forward,'forward');
     assert.match(await toggle(forward).innerText(),/重要通知同步/);await switchRule(forward);
     assert.equal(stored.automations.forwardPins[0].enabled,false);await toggle(forward).click();
     await forward.locator('[data-feature-add-keyword]').click();await isOpen(forward,true);
@@ -131,12 +148,13 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     assert.equal(await forward.locator('[data-feature-keyword]').last().inputValue(),'测试');await save(forward);await isOpen(forward,false);
     await catalog('#close-forward-pin');await page.locator('#open-zero-speakers').click();
     const cleanup=page.locator('[data-cleanup-rule]').first();await isOpen(cleanup,false);
+    await compactHeader(cleanup,'cleanup');
     assert.ok(await cleanup.locator('[data-cleanup-run]').isVisible(),'cleanup actions remain visible when folded');
     await toggle(cleanup).click();await cleanup.locator('[data-cleanup-field="name"]').fill('检查任务草稿');
     await toggle(cleanup).click();await toggle(cleanup).click();assert.equal(await cleanup.locator('[data-cleanup-field="name"]').inputValue(),'检查任务草稿');
     await save(cleanup);await isOpen(cleanup,false);
     await catalog('#close-zero-speakers');await page.locator('#open-checkin').click();await page.locator('[data-checkin-section="checkins"]').click();
-    const checkin=page.locator('.checkin-rule').first();await isOpen(checkin,false);await switchRule(checkin);
+    const checkin=page.locator('.checkin-rule').first();await isOpen(checkin,false);await compactHeader(checkin,'checkin');await switchRule(checkin);
     assert.equal(stored.users[0].checkinSchedules[0].enabled,false);await toggle(checkin).click();
     await page.selectOption('.checkin-rule [data-field="timeMode"]','random');await isOpen(checkin,true);
     await checkin.locator('[data-field="rangeStart"]').fill('11:12:13');await checkin.locator('[data-field="rangeEnd"]').fill('12:13:14');
@@ -147,7 +165,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     await save(checkin);await isOpen(checkin,false);
     assert.equal(stored.users[1].checkinSchedules[0].time,'09:30:15','other account schedules are untouched');
     await page.locator('#checkin-account-settings').click();await page.locator('[data-account-section="messages"]').click();
-    const message=page.locator('#schedule-list article').first();await isOpen(message,false);await switchRule(message);
+    const message=page.locator('#schedule-list article').first();await isOpen(message,false);await compactHeader(message,'message');await switchRule(message);
     assert.equal(stored.automations.schedules[0].enabled,false);await toggle(message).click();
     await message.locator('[data-auto-select][data-field="repeat"]').click();await page.locator('[data-auto-option="once"]').click();
     assert.equal(await message.locator('[data-field="time"]').getAttribute('type'),'datetime-local');
@@ -200,6 +218,6 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     assert.equal(stored.automations.redPackets[0].name,'未通过校验的草稿');
     assert.equal(await first.locator('[data-red-packet-field="name"]').inputValue(),'请求期间继续编辑');
     assert.deepEqual(errors,[]);
-    console.log('Rule cards PASS: all five editors, scoped save/delete, sibling drafts, failed/in-flight save edits, rule log isolation/reset, folded actions, keyboard/inert, polling, animation and mobile layout');
+    console.log('Rule cards PASS: all five compact headers, desktop action alignment, 390/768px layouts, scoped save/delete, sibling drafts, failed/in-flight save edits, rule log isolation/reset, folded actions, keyboard/inert, polling and animation');
   }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

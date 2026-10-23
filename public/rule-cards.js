@@ -36,42 +36,50 @@
     const fresh = !card.hasAttribute('data-rule-key');
     if (fresh) {
       const head = card.querySelector('.automation-card-head,.checkin-rule-head');
-      const actions = head.querySelector('.automation-card-actions');
+      const actions = head.querySelector('.automation-card-actions') || document.createElement('div');
+      actions.classList.add('automation-card-actions');
       const symbol = head.querySelector('.automation-card-symbol');
       const toggle = document.createElement('button');
       toggle.type = 'button';
       toggle.className = 'rule-card-toggle';
       toggle.dataset.ruleToggle = '';
-      toggle.innerHTML = '<span class="rule-card-heading"><strong data-rule-title></strong><small data-rule-summary></small></span><span class="rule-toggle-affordance"><span data-rule-toggle-label></span><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5 7 5 5 5-5"/></svg></span>';
+      toggle.innerHTML = '<span class="rule-card-heading"><span class="rule-card-title-row"><strong data-rule-title></strong><small data-rule-save-status role="status"></small></span><small data-rule-summary></small></span><span class="rule-toggle-affordance"><span data-rule-toggle-label></span><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m5 7 5 5 5-5"/></svg></span>';
       if (symbol) toggle.prepend(symbol);
       head.replaceChildren(toggle);
-      if (actions) head.append(actions);
+      const cleanupActions = card.querySelector('.cleanup-rule-actions');
+      if (cleanupActions) actions.prepend(cleanupActions);
+      const logs = document.createElement('button');
+      logs.type = 'button';
+      logs.className = 'outline-btn';
+      logs.dataset.ruleLogs = '';
+      logs.textContent = '规则日志';
+      actions.insertBefore(logs, actions.querySelector('.delete-btn'));
+      head.append(actions);
       const body = document.createElement('div');
       body.id = `rule-body-${++sequence}`;
       body.className = 'rule-card-body';
       const content = document.createElement('div');
       content.className = 'rule-card-content';
       for (const child of [...card.children]) {
-        // Runtime and cleanup actions remain accessible while settings are folded.
-        if (child !== head && !child.matches('[data-red-packet-runtime],[data-cleanup-runtime],.cleanup-rule-actions')) content.append(child);
+        // Keep runtime visible; only configuration and save actions fold away.
+        if (child !== head && !child.matches('[data-red-packet-runtime],[data-cleanup-runtime]')) content.append(child);
       }
       body.append(content);
       head.after(body);
+      const runtime = card.querySelector('[data-red-packet-runtime],[data-cleanup-runtime]');
+      if (runtime) head.after(runtime);
       toggle.setAttribute('aria-controls', body.id);
       card.dataset.ruleKey = key;
       card.classList.add('rule-card');
       setExpanded(card, expanded.get(key) === true, false);
-      const footer = document.createElement('div');
-      footer.className = 'rule-card-footer';
-      footer.innerHTML = '<small data-rule-save-status role="status"></small><div class="rule-card-buttons"><button type="button" class="outline-btn" data-rule-logs>规则日志</button></div>';
       const saveActions = document.createElement('div');
       saveActions.className = 'rule-card-save-actions';
       saveActions.innerHTML = `<small>修改内容后保存${head.querySelector('input[type="checkbox"]') ? '；已保存规则的启用开关立即生效。' : '。'}</small><button type="button" class="primary-btn" data-rule-save>保存规则</button>`;
       content.append(saveActions);
-      card.append(footer);
     }
     const heading = card.querySelector('[data-rule-title]');
     if (heading.textContent !== title) heading.textContent = title;
+    heading.title = title;
     const caption = card.querySelector('[data-rule-summary]');
     if (caption.textContent !== summary) caption.textContent = summary;
     caption.title = summary;

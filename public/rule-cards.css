@@ -1,45 +1,58 @@
+/* Shared compact rule layout. Configuration nodes remain mounted when folded. */
+.rule-card { min-width:0; padding:18px 20px; }
 .rule-card > .automation-card-head,
-.rule-card > .checkin-rule-head { margin-bottom:0; gap:16px; align-items:center; }
-.rule-card-toggle { display:flex; align-items:center; flex:1; min-width:0; gap:12px; padding:3px 0; border:0; border-radius:8px; background:transparent; box-shadow:none; color:var(--ink); text-align:left; cursor:pointer; }
+.rule-card > .checkin-rule-head { margin-bottom:0; gap:12px; align-items:center; flex-wrap:wrap; }
+.rule-card-toggle { display:flex; align-items:center; flex:1 1 280px; min-width:0; gap:12px; padding:3px 0; border:0; border-radius:8px; background:transparent; box-shadow:none; color:var(--ink); text-align:left; cursor:pointer; }
 .rule-card-toggle:hover,.rule-card-toggle:active { background:transparent; box-shadow:none; transform:none; }
 .rule-card-toggle:focus-visible { outline:2px solid var(--ink); outline-offset:5px; }
 .rule-card-heading { display:block; flex:1; min-width:0; }
-.rule-card-toggle .rule-card-heading strong { display:block; font-size:15px; color:var(--ink); line-height:1.6; overflow-wrap:anywhere; }
-.rule-card-toggle .rule-card-heading small { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; margin-top:4px; color:var(--muted); font-size:12px; font-weight:400; line-height:1.7; overflow-wrap:anywhere; }
+.rule-card-title-row { display:flex; align-items:center; flex-wrap:wrap; gap:5px 10px; }
+.rule-card-toggle [data-rule-title] { display:block; min-width:0; max-width:100%; font-size:15px; color:var(--ink); line-height:1.6; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.rule-card-toggle [data-rule-save-status] { display:inline-block; flex:none; max-width:100%; margin:0; padding:3px 7px; border-radius:6px; background:#f1f4f5; color:var(--muted); font-size:10px; font-weight:400; line-height:1.5; overflow-wrap:anywhere; }
+.rule-card-toggle [data-rule-save-status][data-dirty="true"] { background:#fff3d9; color:#9b6a1f; }
+.rule-card-toggle [data-rule-summary] { display:block; overflow:hidden; margin-top:4px; color:var(--muted); font-size:11px; font-weight:400; line-height:1.7; white-space:nowrap; text-overflow:ellipsis; }
 .rule-toggle-affordance { display:flex; align-items:center; flex:none; gap:6px; color:var(--muted); font-size:12px; font-weight:600; white-space:nowrap; }
-.rule-toggle-affordance svg { width:18px; height:18px; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; transition:transform .24s ease; }
+.rule-toggle-affordance svg { width:16px; height:16px; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; transition:transform .24s ease; }
 .rule-card[data-expanded="true"] .rule-toggle-affordance svg { transform:rotate(180deg); }
+.rule-card .automation-card-actions { flex-wrap:wrap; justify-content:flex-end; gap:10px; max-width:100%; }
+.rule-card .automation-card-actions > button,
+.rule-card .cleanup-rule-actions > :is(button,a) { min-height:34px; padding:7px 11px; border-width:2px; border-radius:11px; font-size:12px; white-space:nowrap; }
+.rule-card .automation-card-actions > .outline-btn,
+.rule-card .cleanup-rule-actions > :is(button,a) { box-shadow:2px 2px 0 var(--ink); }
+.rule-card .cleanup-rule-actions { margin:0; gap:10px; }
+.rule-card .auto-switch { white-space:nowrap; }
 .rule-card-body { display:grid; grid-template-rows:0fr; opacity:0; transition:grid-template-rows .24s ease,opacity .18s ease; }
 .rule-card[data-expanded="true"] > .rule-card-body { grid-template-rows:1fr; opacity:1; }
 .rule-card-content { min-height:0; overflow:clip; }
-.rule-card-content::before { content:""; display:block; height:22px; }
+.rule-card-content::before { content:""; display:block; margin-top:18px; border-top:1px solid var(--line,#e9e9e6); height:20px; }
 .rule-card-content > :last-child { margin-bottom:3px; }
 .rule-list-tools { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; padding:2px 2px 4px; }
 .rule-list-tools > small { color:var(--muted); font-size:12px; }
 .rule-list-tools > div { display:flex; gap:16px; }
 .rule-list-tools button { padding:5px 0; background:transparent; border:0; box-shadow:none; cursor:pointer; }
 .rule-list-tools button:disabled { opacity:.4; cursor:default; }
-.rule-card[data-expanded="false"] > .cleanup-rule-runtime { margin-top:14px; padding:12px 14px; }
-.rule-card[data-expanded="false"] > .cleanup-rule-runtime strong { font-size:13px; }
+.rule-card > .cleanup-rule-runtime { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 16px; margin-top:14px; padding:12px 14px; border-width:1px; border-radius:11px; }
+.rule-card > .cleanup-rule-runtime strong { min-width:0; font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
+.rule-card > .cleanup-rule-runtime small { min-width:0; font-size:11px; line-height:1.7; }
+.rule-card > [data-red-packet-runtime] small:last-child { flex-basis:100%; }
 .rule-card[data-expanded="false"] > [data-red-packet-runtime] small:last-child { display:none; }
-.rule-card[data-expanded="false"] > [data-red-packet-runtime] small { overflow-wrap:anywhere; }
-.rule-card-footer { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-top:18px; padding-top:16px; border-top:1px solid var(--line,#e9e9e6); }
-.rule-card-footer > small { color:var(--muted); font-size:12px; }
-.rule-card-footer > small[data-dirty="true"] { color:#9b6a1f; }
-.rule-card-buttons { display:flex; align-items:center; gap:10px; margin-left:auto; }
-.rule-card-buttons button { min-height:38px; padding:8px 15px; font-size:12px; }
 .rule-card-save-actions { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-top:20px; padding-top:16px; border-top:1px solid var(--line,#e9e9e6); }
-.rule-card-save-actions > small { color:var(--muted); font-size:12px; line-height:1.7; }
-.rule-card-save-actions button { margin-left:auto; min-height:38px; padding:8px 15px; font-size:12px; }
+.rule-card-save-actions > small { color:var(--muted); font-size:11px; line-height:1.7; }
+.rule-card-save-actions button { margin-left:auto; min-height:36px; padding:8px 16px; border-width:2px; border-radius:11px; box-shadow:2px 2px 0 var(--ink); font-size:12px; }
 .rule-card[data-expanded="false"] .rule-card-save-actions { visibility:hidden; }
 .rule-page-hint { margin:18px 2px 0; font-size:12px; color:var(--muted); }
 @media(max-width:720px) {
-  .rule-card > .automation-card-head,.rule-card > .checkin-rule-head { flex-wrap:wrap; gap:14px; }
-  .rule-card-toggle { flex-basis:100%; }
+  .rule-card { padding:16px 14px; }
+  .rule-card > .automation-card-head,.rule-card > .checkin-rule-head { gap:12px; }
+  .rule-card-toggle { flex-basis:100%; gap:9px; }
   .rule-card > .automation-card-head > .automation-card-actions,
-  .rule-card > .checkin-rule-head > .automation-card-actions { flex-basis:100%; margin-left:0; justify-content:flex-end; gap:14px; }
+  .rule-card > .checkin-rule-head > .automation-card-actions { flex-basis:100%; margin-left:0; justify-content:flex-end; gap:10px; }
   .rule-card-toggle .automation-card-symbol { width:34px; height:34px; }
+  .rule-card-title-row { gap:4px 7px; }
+  .rule-card-toggle [data-rule-title] { font-size:14px; }
   .rule-toggle-affordance { gap:2px; font-size:11px; }
+  .rule-card > .cleanup-rule-runtime { gap:5px; padding:10px 12px; }
+  .rule-card > .cleanup-rule-runtime small { flex-basis:100%; }
 }
 @media(prefers-reduced-motion:reduce) {
   .rule-card-body,.rule-toggle-affordance svg { transition:none; }
