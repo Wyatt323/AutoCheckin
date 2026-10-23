@@ -274,9 +274,19 @@ for line in sys.stdin:
       const charlieState=(await(await page.request.get(base+'/api/state')).json()).config;
       assert.equal(charlieState.telegram.useSystem,true);assert.equal(charlieState.useSystemAI,true);
       await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+      // Open the real mobile drawer before exercising sidebar actions.
+      await page.locator('#nav-drawer-open').click();
+      assert.equal(await page.locator('#nav-drawer-open').getAttribute('aria-expanded'),'true');
+      await page.locator('#nav-global-settings').waitFor({state:'visible'});
+      assert.equal(await page.locator('#nav-global-settings').isVisible(),true);
+      assert.equal(await page.locator('#nav-users').isVisible(),false,'regular user cannot see management even in the open drawer');
+      assert.equal(await page.locator('#nav-audit').isVisible(),false);
       await page.click('#admin-logout');await page.waitForURL('**/login');
       await page.fill('#auth-username','admin');await page.fill('#admin-password','admin-secret');await page.click('#auth-submit');await page.waitForURL(base+'/');
+      await page.locator('#nav-drawer-open').click();
       await page.locator('#nav-users').click();
+      assert.equal(await page.locator('#nav-drawer-open').getAttribute('aria-expanded'),'false','selecting management closes the drawer');
+      assert.equal(await page.locator('.main').evaluate(el=>el.inert),false);
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'administrator settings fit mobile viewport');
       if(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR) await page.screenshot({path:path.join(process.env.AUTOCHECKIN_TEST_SCREENSHOT_DIR,'web-user-management-mobile.png'),fullPage:true});
       const row=page.locator('#web-users-list tr[data-web-username="charlie"]');

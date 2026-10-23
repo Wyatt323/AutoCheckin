@@ -199,7 +199,15 @@ const {spawn,spawnSync}=require('node:child_process');
       await userPage.locator('#settings-reset-ai').click();await userPage.locator('.ui-confirm-dialog').getByRole('button',{name:'恢复',exact:true}).click();
       await userPage.locator('#system-ai-summary').filter({hasText:'继承管理员配置'}).waitFor();
       assert.equal((await(await request('/api/settings',alice)).json()).settings.telegram.apiId,654,'restoring AI does not clear Telegram');
+      // Responsive checks leave this page mobile; use its actual navigation drawer.
+      await userPage.locator('#nav-drawer-open').click();
+      assert.equal(await userPage.locator('#nav-drawer-open').getAttribute('aria-expanded'),'true');
+      await userPage.locator('#nav-global-settings').waitFor({state:'visible'});
+      assert.equal(await userPage.locator('#nav-global-settings').isVisible(),true);
+      assert.equal(await userPage.locator('#nav-admin-global-settings').isVisible(),false,'admin entry remains hidden in an open regular-user drawer');
       await userPage.locator('#nav-global-settings').click();await userPage.locator('#global-settings-title').filter({hasText:'全局设置'}).waitFor();
+      assert.equal(await userPage.locator('#nav-drawer-open').getAttribute('aria-expanded'),'false');
+      assert.equal(await userPage.locator('.main').evaluate(el=>el.inert),false);
       await userPage.locator('#settings-inheritance-summary').filter({hasText:'我的配置'}).waitFor();
       assert.equal(await userPage.locator('#system-api-hash').inputValue(),'');
       assert.equal(await userPage.locator('#system-api-id').inputValue(),'654');

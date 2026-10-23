@@ -113,7 +113,13 @@ const { createAdminAuth, requestSecurity } = require('../admin_auth');
       await page.setViewportSize({ width: 390, height: 844 }); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       if (artifacts) await page.screenshot({ path: path.join(artifacts, 'admin-login-mobile.png'), fullPage: true });
       await page.fill('#admin-password', 'integration-secret'); await page.click('#auth-reveal'); assert.equal(await page.locator('#admin-password').getAttribute('type'), 'text'); await page.click('#auth-reveal');
-      await page.click('#auth-submit'); await page.waitForURL(base + '/'); await page.locator('#admin-logout').waitFor();
+      await page.click('#auth-submit'); await page.waitForURL(base + '/');
+      // Mobile navigation is a closed drawer, including the logout action.
+      assert.equal(await page.locator('#admin-logout').isVisible(), false);
+      await page.locator('#nav-drawer-open').click();
+      assert.equal(await page.locator('#nav-drawer-open').getAttribute('aria-expanded'), 'true');
+      assert.equal(await page.locator('.main').evaluate(el => el.inert), true);
+      await page.locator('#admin-logout').waitFor();
       assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
       await page.click('#admin-logout'); await page.waitForURL('**/login');
       assert.equal((await page.request.get(base + '/api/state')).status(), 401);
