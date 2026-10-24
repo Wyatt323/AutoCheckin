@@ -499,7 +499,12 @@ async def main():
                 await client.send_message(target, rule["message"])
                 sent[key] = dt.datetime.now(CHINA_TIME).isoformat(timespec="seconds")
                 save_sent(sent, planned, claimed)
-                emit_rule(rule, 'message', f"定时消息已发送至 {rule['target']}")
+                try:
+                    await client.send_read_acknowledge(target)
+                except Exception as error:
+                    emit_rule(rule, 'message', f"定时消息已发送至 {rule['target']}，但会话标记已读失败：{error}", "warning", state="completed")
+                else:
+                    emit_rule(rule, 'message', f"定时消息已发送至 {rule['target']}，会话已标记为已读")
             except Exception as error:
                 wait = getattr(error, "seconds", None)
                 retry_after[key] = time.monotonic() + (wait + 1 if isinstance(wait, int) and wait > 0 else 30)
