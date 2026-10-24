@@ -14,6 +14,7 @@ if (changeMode) {
   document.querySelector('.auth-intro').textContent = '首次登录须修改初始密码，完成后进入独立工作空间。';
   document.querySelector('#auth-password-label').textContent = '原密码';
   submit.textContent = '保存新密码';
+  password.focus();
 }
 document.querySelector('#auth-reveal').addEventListener('click', event => {
   const visible = password.type === 'password';
@@ -41,7 +42,6 @@ form.addEventListener('submit', async event => {
   } finally { submit.disabled = false; }
 });
 fetch('/api/auth/status').then(r => r.json()).then(data => {
-  if (!changeMode && data.adminUsername && username.value === 'admin') username.value = data.adminUsername;
   if (data.authenticated && !changeMode) location.replace(data.user?.mustChangePassword ? '/password' : '/');
   else if (changeMode && !data.authenticated) location.replace('/login');
   else if (changeMode && data.user?.role === 'admin') location.replace('/');
