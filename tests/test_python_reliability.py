@@ -234,6 +234,10 @@ class WorkerLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 return True
             async def get_input_entity(self, target):
                 return target
+            def add_event_handler(self, *args):
+                pass
+            def remove_event_handler(self, *args):
+                pass
             async def send_message(self, *args):
                 entered.set()
                 try:

@@ -18,6 +18,7 @@ def install_stubs():
     telegram = types.ModuleType('telethon')
     telegram.TelegramClient = deny_network
     telegram.events = types.SimpleNamespace(NewMessage=lambda **kw: kw, MessageEdited=object())
+    telegram.utils = types.SimpleNamespace(get_peer_id=lambda peer: peer)
     telegram.functions = types.SimpleNamespace(messages=types.SimpleNamespace(GetDialogFiltersRequest=lambda: None))
     errors = types.ModuleType('telethon.errors')
     errors.FloodWaitError = type('FloodWaitError', (Exception,), {})

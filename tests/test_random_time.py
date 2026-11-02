@@ -87,10 +87,14 @@ class WorkerDispatchTests(unittest.IsolatedAsyncioTestCase):
             async def is_user_authorized(self): return True
             async def disconnect(self): pass
             async def get_input_entity(self, chat): return chat
+            def add_event_handler(self, *args): pass
+            def remove_event_handler(self, *args): pass
+            async def send_read_acknowledge(self, *args, **kwargs): pass
             async def send_message(self, target, message): sent.append((self.session, message))
         fake = types.ModuleType('telethon')
         fake.TelegramClient = Client
-        fake.events = types.SimpleNamespace()
+        fake.events = types.SimpleNamespace(NewMessage=lambda **kwargs: kwargs)
+        fake.utils = types.SimpleNamespace(get_peer_id=lambda peer: peer)
         schedules = [{"id":"shared_id", "account":account,"target":"@test", "repeat":"daily", "timeMode":"random", "rangeStart":"09:00:03", "rangeEnd":"09:00:03", "message":"verbatim /sign with spaces"} for account in ('a','b')]
         config = {"telegram":{"users":[{"name":account,"session":account,"api_id":123,"api_hash":"offline"} for account in ('a','b')]},"automations":{"schedules":schedules,"forwards":[]}}
         async def run_briefly():

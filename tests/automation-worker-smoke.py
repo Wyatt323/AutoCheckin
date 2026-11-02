@@ -37,12 +37,15 @@ class FakeClient:
     def add_event_handler(self, handler, event):
         self.handlers.append(handler)
 
+    def remove_event_handler(self, handler):
+        self.handlers.remove(handler)
+
     async def send_message(self, target, message):
         if target == '@send_failed':
             raise RuntimeError('offline send failure')
         self.sent.append((target, message))
 
-    async def send_read_acknowledge(self, target):
+    async def send_read_acknowledge(self, target, *, max_id=None):
         self.read.append(target)
         if target == '@read_failed':
             raise RuntimeError('offline read failure')
@@ -58,6 +61,7 @@ async def exercise():
     fake = types.ModuleType("telethon")
     fake.TelegramClient = FakeClient
     fake.events = types.SimpleNamespace(NewMessage=lambda **kwargs: kwargs)
+    fake.utils = types.SimpleNamespace(get_peer_id=lambda peer: peer)
     sys.modules["telethon"] = fake
     with tempfile.TemporaryDirectory(dir=TEMP_ROOT, prefix="autocheckin-worker-") as directory:
         worker.CONFIG_PATH = Path(directory) / "config.json"
@@ -76,10 +80,15 @@ async def exercise():
             await asyncio.sleep(0.1)
             assert FakeClient.sent == [("@target_group", "hello"), ("@read_failed", "hello")]
             assert FakeClient.read == ["@target_group", "@read_failed"]
-            assert len(FakeClient.instances[0].handlers) == 1
+            assert len(FakeClient.instances[0].handlers) == 2
             await FakeClient.instances[0].handlers[0](types.SimpleNamespace(message="new post"))
             await asyncio.sleep(0.05)
             assert FakeClient.forwarded == [("@target_group", "new post")]
+            # A delayed Bot reply arrives after the original post-send receipt.
+            await FakeClient.instances[0].handlers[1](types.SimpleNamespace(
+                chat_id='@target_group', message=types.SimpleNamespace(out=False, id=101)))
+            await asyncio.sleep(0.3)
+            assert FakeClient.read == ["@target_group", "@read_failed", "@target_group"]
             assert len(json.loads(worker.STATE_PATH.read_text(encoding="utf-8"))["sent"]) == 2
         finally:
             task.cancel()
@@ -92,7 +101,7 @@ async def exercise():
         try:
             await asyncio.sleep(0.1)
             assert FakeClient.sent == [("@target_group", "hello"), ("@read_failed", "hello")]
-            assert FakeClient.read == ["@target_group", "@read_failed"]
+            assert FakeClient.read == ["@target_group", "@read_failed", "@target_group"]
         finally:
             task.cancel()
             try:

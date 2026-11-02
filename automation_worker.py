@@ -6,6 +6,7 @@ from outgoing_proxy import telegram_proxy_kwargs, install_network_guard
 from storage import read_document, write_document, database_enabled, parse_config_text
 from worker_health import heartbeat
 from checkin_logging import write_raw, output_to, install_json_output
+from scheduled_reply_reads import ScheduledReplyReader
 import asyncio
 import datetime as dt
 import json
@@ -305,6 +306,7 @@ async def main():
     clients = {}
     forward_tasks = []
     schedule_tasks = set()
+    reply_readers = {}
     connected_clients = []
     packet_monitors = []
     health_tasks = []
@@ -496,7 +498,16 @@ async def main():
             try:
                 client = clients[rule["account"]]
                 target = await client.get_input_entity(chat_value(rule["target"]))
-                await client.send_message(target, rule["message"])
+                reader = reply_readers.get(rule['account'])
+                if reader is None:
+                    reader = reply_readers[rule['account']] = ScheduledReplyReader(client, emit_rule)
+                watch = reader.begin(rule, target)
+                try:
+                    await client.send_message(target, rule["message"])
+                except (Exception, asyncio.CancelledError):
+                    reader.failed(watch)
+                    raise
+                reader.sent(watch, rule)
                 sent[key] = dt.datetime.now(CHINA_TIME).isoformat(timespec="seconds")
                 save_sent(sent, planned, claimed)
                 try:
@@ -571,6 +582,8 @@ async def main():
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        for reader in reply_readers.values():
+            await reader.close()
         # Include clients whose connect/authorization was interrupted.
         results = await asyncio.gather(
             *(client.disconnect() for client in connected_clients),

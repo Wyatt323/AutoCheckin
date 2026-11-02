@@ -21,6 +21,7 @@ RUN python -m pip install --upgrade pip \
 COPY --chown=node:node server.js database.js storage.py bot_discovery.py admin_auth.js user_auth.js system_settings.js telegram_notifications.js checkin_results.js automation.js login.js run_history.js schedule_time.js checkin_scheduler.js account_profiles.js account_profile.py chat_resolver.js chat_lookup.py allinone.py checkin_logging.py automation_worker.py login_worker.py telegram_credentials.js telegram_credentials.py config.example.json ./
 COPY --chown=node:node public ./public
 COPY --chown=node:node cleanup.js cleanup_worker.py ./
+COPY --chown=node:node scheduled_reply_reads.py ./
 COPY --chown=node:node red_packet.py ./
 COPY --chown=node:node health_monitor.js health_worker.py worker_health.py ./
 COPY --chown=node:node outgoing_proxy.js outgoing_proxy.py ./
